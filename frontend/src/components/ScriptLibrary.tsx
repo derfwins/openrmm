@@ -64,14 +64,14 @@ const ScriptLibrary = () => {
     
     setGenerating(true)
     try {
-      const result = await aiService.generateScript(generatePrompt, 'windows', 'powershell')
-      if (result.script) {
+      const scriptContent = await aiService.generateScript(generatePrompt, 'powershell')
+      if (scriptContent) {
         const newScript: Script = {
           id: Date.now().toString(),
           name: `Generated: ${generatePrompt.slice(0, 30)}...`,
           description: generatePrompt,
           language: 'powershell',
-          content: result.script,
+          content: scriptContent,
           category: 'generated',
           author: 'AI',
           createdAt: new Date().toISOString(),

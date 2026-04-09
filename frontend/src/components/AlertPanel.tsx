@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react'
 import type { Alert } from '../types/alert'
-import apiService from '../services/apiService'
 
 interface AlertPanelProps {
   deviceId?: string
-  showAll?: boolean
 }
 
-const AlertPanel = ({ deviceId, showAll = false }: AlertPanelProps) => {
+const AlertPanel = ({ deviceId }: AlertPanelProps) => {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'critical' | 'warning' | 'info'>('all')

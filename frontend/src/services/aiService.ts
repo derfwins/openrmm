@@ -20,7 +20,7 @@ export interface AIResponse {
 }
 
 export const aiService = {
-  async askQuestion(query: string, context?: any): Promise<AIResponse> {
+  async askQuestion(query: string, _context?: any): Promise<AIResponse> {
     if (!GROQ_API_KEY) {
       return {
         answer: 'AI Copilot is not configured. Please add your Groq API key in settings.',
