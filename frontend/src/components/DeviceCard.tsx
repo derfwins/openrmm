@@ -1,4 +1,4 @@
-import { Device } from '../types/device'
+import type { Device } from '../types/device'
 
 interface DeviceCardProps {
   device: Device

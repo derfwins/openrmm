@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Device } from '../types/device'
+import type { Device } from '../types/device'
 import apiService from '../services/apiService'
 import wsService from '../services/websocketService'
 
@@ -28,11 +28,11 @@ export const useDevices = () => {
         console.log('WebSocket disconnected')
       })
 
-      wsService.on('device_update', (data) => {
+      wsService.on('device_update', (data: Device) => {
         updateDevice(data)
       })
 
-      wsService.on('device_offline', (data) => {
+      wsService.on('device_offline', (data: { device_id: string }) => {
         markDeviceOffline(data.device_id)
       })
     }

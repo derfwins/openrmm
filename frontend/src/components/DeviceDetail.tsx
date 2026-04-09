@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Device } from '../types/device'
+import type { Device } from '../types/device'
 import apiService from '../services/apiService'
 
 const DeviceDetail = () => {
