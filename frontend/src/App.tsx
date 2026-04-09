@@ -1,14 +1,34 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
+import Login from './components/Login'
+import DeviceDetail from './components/DeviceDetail'
 
 function App() {
+  const isAuthenticated = () => {
+    return localStorage.getItem('token') !== null
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Dashboard />
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route 
+          path="/login" 
+          element={isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} 
+        />
+        <Route 
+          path="/dashboard" 
+          element={isAuthenticated() ? <Dashboard /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="/device/:id" 
+          element={isAuthenticated() ? <DeviceDetail /> : <Navigate to="/login" />} 
+        />
+        <Route 
+          path="/" 
+          element={<Navigate to="/dashboard" />} 
+        />
+      </Routes>
+    </BrowserRouter>
   )
 }
 
