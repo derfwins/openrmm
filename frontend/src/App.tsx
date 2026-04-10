@@ -4,6 +4,9 @@ import Login from './components/Login'
 import DeviceDetail from './components/DeviceDetail'
 import ScriptLibrary from './components/ScriptLibrary'
 import AlertPanel from './components/AlertPanel'
+import PatchManager from './components/PatchManager'
+import AutomationBuilder from './components/AutomationBuilder'
+import Reports from './components/Reports'
 import Sidebar from './components/Sidebar'
 
 // Layout wrapper for authenticated pages
@@ -61,6 +64,36 @@ function App() {
           element={<AuthenticatedLayout>
             <div className="p-6">
               <AlertPanel />
+            </div>
+          </AuthenticatedLayout>
+          } 
+        />
+        
+        <Route 
+          path="/patches" 
+          element={<AuthenticatedLayout>
+            <div className="p-6">
+              <PatchManager />
+            </div>
+          </AuthenticatedLayout>
+          } 
+        />
+        
+        <Route 
+          path="/automation" 
+          element={<AuthenticatedLayout>
+            <div className="p-6">
+              <AutomationBuilder />
+            </div>
+          </AuthenticatedLayout>
+          } 
+        />
+        
+        <Route 
+          path="/reports" 
+          element={<AuthenticatedLayout>
+            <div className="p-6">
+              <Reports />
             </div>
           </AuthenticatedLayout>
           } 
