@@ -8,6 +8,7 @@ import PatchManager from './components/PatchManager'
 import AutomationBuilder from './components/AutomationBuilder'
 import Reports from './components/Reports'
 import SoftwareManager from './components/SoftwareManager'
+import Settings from './components/Settings'
 import Sidebar from './components/Sidebar'
 
 // Layout wrapper for authenticated pages
@@ -40,6 +41,7 @@ function App() {
           path="/login" 
           element={isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} 
         />
+        
         <Route 
           path="/dashboard" 
           element={isAuthenticated() ? <Dashboard /> : <Navigate to="/login" />} 
@@ -105,6 +107,16 @@ function App() {
           element={<AuthenticatedLayout>
             <div className="p-6">
               <Reports />
+            </div>
+          </AuthenticatedLayout>
+          } 
+        />
+        
+        <Route 
+          path="/settings" 
+          element={<AuthenticatedLayout>
+            <div className="p-6">
+              <Settings />
             </div>
           </AuthenticatedLayout>
           } 
