@@ -7,6 +7,7 @@ import AlertPanel from './components/AlertPanel'
 import PatchManager from './components/PatchManager'
 import AutomationBuilder from './components/AutomationBuilder'
 import Reports from './components/Reports'
+import SoftwareManager from './components/SoftwareManager'
 import Sidebar from './components/Sidebar'
 
 // Layout wrapper for authenticated pages
@@ -64,6 +65,16 @@ function App() {
           element={<AuthenticatedLayout>
             <div className="p-6">
               <AlertPanel />
+            </div>
+          </AuthenticatedLayout>
+          } 
+        />
+        
+        <Route 
+          path="/software" 
+          element={<AuthenticatedLayout>
+            <div className="p-6">
+              <SoftwareManager />
             </div>
           </AuthenticatedLayout>
           } 
