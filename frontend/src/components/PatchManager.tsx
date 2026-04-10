@@ -3,12 +3,12 @@ import type { Patch, DevicePatch, PatchPolicy } from '../types/patch'
 
 const PatchManager = () => {
   const [patches, setPatches] = useState<Patch[]>([])
-  const [devicePatches, setDevicePatches] = useState<DevicePatch[]>([])
+  const [_devicePatches, _setDevicePatches] = useState<DevicePatch[]>([])
   const [policies, setPolicies] = useState<PatchPolicy[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'overview' | 'patches' | 'policies' | 'history'>('overview')
-  const [selectedDevice, setSelectedDevice] = useState<string>('all')
-  const [showPolicyModal, setShowPolicyModal] = useState(false)
+  const [_selectedDevice, _setSelectedDevice] = useState<string>('all')
+  const [_showPolicyModal, _setShowPolicyModal] = useState(false)
 
   useEffect(() => {
     loadPatches()
@@ -112,13 +112,13 @@ const PatchManager = () => {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => scanForPatches(selectedDevice)}
+              onClick={() => scanForPatches(_selectedDevice)}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               🔍 Scan for Updates
             </button>
             <button
-              onClick={() => setShowPolicyModal(true)}
+              onClick={() => _setShowPolicyModal(true)}
               className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
             >
               ⚙️ Policies
@@ -207,7 +207,7 @@ const PatchManager = () => {
                         </div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => installPatch(patch.id, selectedDevice)}
+                            onClick={() => installPatch(patch.id, _selectedDevice)}
                             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                           >
                             Install

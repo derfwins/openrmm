@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 const Reports = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'devices' | 'patches' | 'activity'>('overview')
+  const [_activeTab, _setActiveTab] = useState<'overview' | 'devices' | 'patches' | 'activity'>('overview')
 
   const reportTypes = [
     { id: 'device_inventory', name: 'Device Inventory', description: 'Complete list of all managed devices', icon: '💻' },
