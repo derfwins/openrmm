@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Automation, AutomationTrigger, AutomationCondition, AutomationAction } from '../types/automation'
+import type { Automation, AutomationTrigger, AutomationAction } from '../types/automation'
 
 const AutomationBuilder = () => {
   const [automations, setAutomations] = useState<Automation[]>([])
