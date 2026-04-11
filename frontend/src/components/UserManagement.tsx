@@ -46,8 +46,8 @@ const UserManagement = () => {
   ])
 
   const [showAddModal, setShowAddModal] = useState(false)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [_showEditModal, _setShowEditModal] = useState(false)
+  const [_editingUser, _setEditingUser] = useState<User | null>(null)
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
@@ -174,8 +174,8 @@ const UserManagement = () => {
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
-                          setEditingUser(user)
-                          setShowEditModal(true)
+                          _setEditingUser(user)
+                          _setShowEditModal(true)
                         }}
                         className="text-blue-600 hover:text-blue-900"
                       >
