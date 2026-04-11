@@ -1,0 +1,74 @@
+# Apache Guacamole Remote Desktop Gateway
+# Integration with OpenRMM
+
+version: '3.8'
+
+services:
+  # Guacamole Web Application
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openrmm-guacamole
+    environment:
+      GUACD_HOSTNAME: guacd
+      MYSQL_HOSTNAME: guacamole-db
+      MYSQL_DATABASE: guacamole_db
+      MYSQL_USER: guacamole_user
+      MYSQL_PASSWORD: ${GUACAMOLE_DB_PASSWORD:-changeme}
+      OPENID_AUTHORIZATION_ENDPOINT: ${OPENID_AUTH_ENDPOINT:-}
+      OPENID_JWKS_ENDPOINT: ${OPENID_JWKS_ENDPOINT:-}
+      OPENID_CLIENT_ID: ${OPENID_CLIENT_ID:-}
+      OPENID_REDIRECT_URI: ${OPENID_REDIRECT_URI:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - guacd
+      - guacamole-db
+    restart: unless-stopped
+    networks:
+      - openrmm-network
+
+  # Guacamole Daemon (handles connections)
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: openrmm-guacd
+    restart: unless-stopped
+    networks:
+      - openrmm-network
+
+  # Guacamole Database
+  guacamole-db:
+    image: mariadb:10.6
+    container_name: openrmm-guacamole-db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GUACAMOLE_ROOT_PASSWORD:-changeme}
+      MYSQL_DATABASE: guacamole_db
+      MYSQL_USER: guacamole_user
+      MYSQL_PASSWORD: ${GUACAMOLE_DB_PASSWORD:-changeme}
+    volumes:
+      - guacamole_db_data:/var/lib/mysql
+      - ./scripts/guacamole/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+    restart: unless-stopped
+    networks:
+      - openrmm-network
+
+  # Connection Proxy (for secure WebSocket)
+  guacamole-proxy:
+    image: nginx:alpine
+    container_name: openrmm-guacamole-proxy
+    volumes:
+      - ./docker/nginx/guacamole.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8443:443"
+    depends_on:
+      - guacamole
+    restart: unless-stopped
+    networks:
+      - openrmm-network
+
+volumes:
+  guacamole_db_data:
+
+networks:
+  openrmm-network:
+    external: true
+    name: openrmm-network
