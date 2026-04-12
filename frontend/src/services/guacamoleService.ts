@@ -80,6 +80,7 @@ class GuacamoleService {
       headers: {
         'Content-Type': 'application/json',
         'Guacamole-Token': this.token,
+      },
       body: JSON.stringify({
         name: connection.name,
         parentIdentifier: 'ROOT',
