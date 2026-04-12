@@ -42,7 +42,7 @@ export interface GuacamoleUser {
 }
 
 class GuacamoleService {
-  private token: string | null = null
+  private token: string = ''
 
   // Authenticate with Guacamole API
   async authenticate(username: string, password: string): Promise<string> {
@@ -68,7 +68,7 @@ class GuacamoleService {
 
   // Get authentication token for WebSocket
   getAuthToken(): string | null {
-    return this.token
+    return this.token || null
   }
 
   // Create a new connection
@@ -173,7 +173,7 @@ class GuacamoleService {
 
     // Generate WebSocket URL for this connection
     const wsToken = btoa(`${connectionId}\0c\0${this.token}`)
-    const websocketUrl = `${GUACAMOLE_PROXY_URL}/guacamole/websocket-tunnel?token=${wsToken}& GUAC_DATA_SOURCE=mysql&GUAC_ID=${connectionId}&GUAC_TYPE=c&GUAC_TIME=${Date.now()}`
+    const websocketUrl = `${GUACAMOLE_PROXY_URL}/guacamole/websocket-tunnel?token=${wsToken}&GUAC_DATA_SOURCE=mysql&GUAC_ID=${connectionId}&GUAC_TYPE=c&GUAC_TIME=${Date.now()}`
 
     return {
       id: `session-${Date.now()}`,
@@ -226,7 +226,7 @@ class GuacamoleService {
 
   // Logout
   logout(): void {
-    this.token = null
+    this.token = ''
   }
 }
 
