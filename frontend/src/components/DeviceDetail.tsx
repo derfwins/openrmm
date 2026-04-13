@@ -1,181 +1,192 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
-import type { Device } from '../types/device'
+import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
-  const [device, setDevice] = useState<Device | null>(null)
+  const [agent, setAgent] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'hardware' | 'software' | 'logs'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events'>('overview')
+  const [commandInput, setCommandInput] = useState('')
+  const [commandOutput, setCommandOutput] = useState<string | null>(null)
+  const [commandRunning, setCommandRunning] = useState(false)
 
   useEffect(() => {
-    if (id) {
-      loadDevice(id)
-    }
+    if (id) loadAgent()
   }, [id])
 
-  const loadDevice = async (deviceId: string) => {
+  const loadAgent = async () => {
     try {
-      const data = await apiService.getDevice(deviceId)
-      setDevice(data)
-    } catch (error) {
-      console.error('Failed to load device:', error)
+      setLoading(true)
+      const data = await apiService.getDevice(id!)
+      setAgent(data)
+    } catch (err) {
+      console.error('Failed to load agent:', err)
     } finally {
       setLoading(false)
     }
   }
 
+  const runCommand = async () => {
+    if (!commandInput.trim() || !id) return
+    setCommandRunning(true)
+    setCommandOutput(null)
+    try {
+      const result = await apiService.sendCommand(id, commandInput, agent?.plat === 'linux' ? 'bash' : 'powershell')
+      setCommandOutput(JSON.stringify(result, null, 2))
+    } catch (err: any) {
+      setCommandOutput(`Error: ${err.message}`)
+    } finally {
+      setCommandRunning(false)
+    }
+  }
+
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-500 border-t-transparent"></div>
       </div>
     )
   }
 
-  if (!device) {
+  if (!agent) {
     return (
-      <div className="text-center text-gray-500 py-12">
-        Device not found
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <div className="text-4xl mb-3">🔍</div>
+          <p className="text-gray-500 dark:text-gray-400">Agent not found</p>
+          <Link to="/devices" className="text-blue-500 hover:underline text-sm mt-2 inline-block">← Back to devices</Link>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      <div className="bg-white rounded-lg shadow-md">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+    <div className="p-6 space-y-4">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <Link to="/devices" className="hover:text-blue-500">Devices</Link>
+        <span>/</span>
+        <span className="text-gray-900 dark:text-white font-medium">{agent.hostname || id}</span>
+      </div>
+
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className={`w-3 h-3 rounded-full ${
-              device.status === 'online' ? 'bg-green-500' : 'bg-red-500'
-            }`} />
-            <h1 className="text-2xl font-bold text-gray-900">{device.name}</h1>
-            <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-sm">
-              {device.platform}
-            </span>
+            <div className={`w-4 h-4 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
+            <div>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-white">{agent.hostname || 'Unknown'}</h1>
+              <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <span>{agent.plat === 'windows' ? '🪟' : agent.plat === 'linux' ? '🐧' : '🍎'} {agent.plat || 'Unknown'}</span>
+                <span>·</span>
+                <span className="font-mono">{agent.local_ip || agent.wan_ip || '—'}</span>
+                <span>·</span>
+                <span>{agent.client_name || '—'} / {agent.site_name || '—'}</span>
+              </div>
+            </div>
           </div>
-          
           <div className="flex gap-2">
-            <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-              Remote Control
-            </button>
-            <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-              Run Script
-            </button>
-            <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-              Send Command
-            </button>
+            <a
+              href="http://10.10.0.122:8080"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              🖥️ Remote Desktop
+            </a>
           </div>
         </div>
+      </div>
 
-        {/* Tabs */}
-        <div className="px-6 border-b border-gray-200">
-          <div className="flex gap-6">
-            {['overview', 'hardware', 'software', 'logs'].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab as any)}
-                className={`py-4 text-sm font-medium border-b-2 ${
-                  activeTab === tab
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
-          </div>
+      {/* Tabs */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
+          {(['overview', 'checks', 'scripts', 'events'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-5 py-3 text-sm font-medium transition-colors ${
+                activeTab === tab
+                  ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 dark:bg-blue-900/20'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </div>
 
-        {/* Content */}
-        <div className="p-6">
+        <div className="p-5">
           {activeTab === 'overview' && (
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <h3 className="text-lg font-semibold mb-4">System Information</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-600">IP Address</span>
-                    <span className="font-medium">{device.ip}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Last Seen</span>
-                    <span className="font-medium">{new Date(device.last_seen).toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Site</span>
-                    <span className="font-medium">{device.site}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Client</span>
-                    <span className="font-medium">{device.client}</span>
-                  </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* System Info */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">System Information</h3>
+                <div className="space-y-2">
+                  <InfoRow label="Hostname" value={agent.hostname} />
+                  <InfoRow label="Operating System" value={agent.operating_system || agent.os_detail || '—'} />
+                  <InfoRow label="IP Address (LAN)" value={agent.local_ip || '—'} />
+                  <InfoRow label="IP Address (WAN)" value={agent.wan_ip || '—'} />
+                  <InfoRow label="Agent Version" value={agent.version || '—'} />
+                  <InfoRow label="Last Seen" value={agent.last_seen ? new Date(agent.last_seen).toLocaleString() : '—'} />
+                  <InfoRow label="Time Zone" value={agent.time_zone || '—'} />
+                  <InfoRow label="Monitoring Type" value={agent.monitoring_type || '—'} />
                 </div>
               </div>
 
-              <div>
-                <h3 className="text-lg font-semibold mb-4">Resource Usage</h3>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm text-gray-600">CPU</span>
-                      <span className="text-sm font-medium">{device.cpu_usage}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${device.cpu_usage}%` }}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm text-gray-600">Memory</span>
-                      <span className="text-sm font-medium">{device.memory_usage}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-purple-600 h-2 rounded-full"
-                        style={{ width: `${device.memory_usage}%` }}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm text-gray-600">Disk</span>
-                      <span className="text-sm font-medium">{device.disk_usage}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${device.disk_usage > 90 ? 'bg-red-600' : 'bg-green-600'}`}
-                        style={{ width: `${device.disk_usage}%` }}
-                      />
-                    </div>
-                  </div>
+              {/* Quick Stats */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Health</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <MiniStat label="Checks" value={agent.checks?.length || 0} icon="✅" />
+                  <MiniStat label="Pending Updates" value={agent.pending_updates_count || 0} icon="📦" />
+                  <MiniStat label="Services" value={agent.services?.length || 0} icon="⚙️" />
+                  <MiniStat label="Uptime" value={agent.uptime || '—'} icon="⏱️" />
                 </div>
               </div>
             </div>
           )}
 
-          {activeTab === 'hardware' && (
-            <div className="text-gray-500">
-              Hardware information will be displayed here...
+          {activeTab === 'checks' && (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <div className="text-4xl mb-3">✅</div>
+              <p className="text-sm">Checks will appear here when the agent reports back</p>
             </div>
           )}
 
-          {activeTab === 'software' && (
-            <div className="text-gray-500">
-              Installed software list will be displayed here...
+          {activeTab === 'scripts' && (
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Run Command</h3>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={commandInput}
+                  onChange={e => setCommandInput(e.target.value)}
+                  placeholder={agent.plat === 'linux' ? 'Enter bash command...' : 'Enter PowerShell command...'}
+                  className="flex-1 px-4 py-2 text-sm font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:text-white"
+                  onKeyDown={e => e.key === 'Enter' && runCommand()}
+                />
+                <button
+                  onClick={runCommand}
+                  disabled={commandRunning || !commandInput.trim()}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {commandRunning ? 'Running...' : 'Run'}
+                </button>
+              </div>
+              {commandOutput && (
+                <pre className="bg-gray-900 text-green-400 p-4 rounded-lg text-sm font-mono overflow-x-auto max-h-96">
+                  {commandOutput}
+                </pre>
+              )}
             </div>
           )}
 
-          {activeTab === 'logs' && (
-            <div className="text-gray-500">
-              System logs will be displayed here...
+          {activeTab === 'events' && (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <div className="text-4xl mb-3">📋</div>
+              <p className="text-sm">Event log will appear here</p>
             </div>
           )}
         </div>
@@ -183,5 +194,22 @@ const DeviceDetail = () => {
     </div>
   )
 }
+
+const InfoRow = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-gray-700">
+    <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
+    <span className="text-sm font-medium text-gray-900 dark:text-white">{value}</span>
+  </div>
+)
+
+const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: string }) => (
+  <div className="bg-gray-50 dark:bg-gray-750 rounded-lg p-3 flex items-center gap-3">
+    <span className="text-lg">{icon}</span>
+    <div>
+      <p className="text-lg font-bold text-gray-900 dark:text-white">{value}</p>
+      <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+    </div>
+  </div>
+)
 
 export default DeviceDetail

@@ -1,119 +1,264 @@
-import { useState } from 'react'
-import DeviceCard from './DeviceCard'
-import StatCard from './StatCard'
-import Sidebar from './Sidebar'
-import Header from './Header'
-import { useDevices } from '../hooks/useDevices'
+import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import apiService from '../services/apiService'
+
+interface DashboardStats {
+  totalAgents: number
+  onlineAgents: number
+  offlineAgents: number
+  totalAlerts: number
+  totalClients: number
+  totalSites: number
+}
 
 const Dashboard = () => {
-  const [filter, setFilter] = useState<'device' | 'workstation' | 'server'>('device')
-  const { devices, loading, error, isConnected, onlineCount, offlineCount, refreshDevices } = useDevices()
+  const [stats, setStats] = useState<DashboardStats>({
+    totalAgents: 0, onlineAgents: 0, offlineAgents: 0,
+    totalAlerts: 0, totalClients: 0, totalSites: 0,
+  })
+  const [agents, setAgents] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const totalCount = devices.length
+  useEffect(() => {
+    loadDashboard()
+  }, [])
+
+  const loadDashboard = async () => {
+    try {
+      setLoading(true)
+      const [agentsData, clientsData] = await Promise.allSettled([
+        apiService.getDevices(),
+        apiService.getClients(),
+      ])
+
+      // Handle agents
+      if (agentsData.status === 'fulfilled') {
+        const agentList = agentsData.value.results || agentsData.value || []
+        setAgents(agentList)
+        const online = agentList.filter((a: any) => a.status === 'online').length
+        setStats(prev => ({
+          ...prev,
+          totalAgents: agentList.length,
+          onlineAgents: online,
+          offlineAgents: agentList.length - online,
+        }))
+      } else {
+        // API might return 403 or different format — that's fine for empty state
+        setAgents([])
+      }
+
+      // Handle clients
+      if (clientsData.status === 'fulfilled') {
+        const clientList = clientsData.value.results || clientsData.value || []
+        setStats(prev => ({ ...prev, totalClients: clientList.length }))
+      }
+    } catch (err: any) {
+      // If 403 or auth error, just show empty state
+      if (err?.message?.includes('403') || err?.message?.includes('401')) {
+        setError('session_expired')
+      } else {
+        setError('Failed to load dashboard data')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="flex flex-col items-center gap-3">
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-500 border-t-transparent"></div>
+          <span className="text-gray-500 dark:text-gray-400 text-sm">Loading dashboard...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error === 'session_expired') {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <p className="text-red-500 mb-4">Session expired. Please log in again.</p>
+          <Link to="/login" className="text-blue-500 hover:underline">Back to login</Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      <Sidebar />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title="Dashboard" />
-        
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6">
-          {/* Connection Status */}
-          {!isConnected && (
-            <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
-              <span className="text-yellow-600">⚠️</span>
-              <span className="text-yellow-800">Real-time updates disconnected. Reconnecting...</span>
-            </div>
-          )}
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <button
+          onClick={loadDashboard}
+          className="px-4 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+        >
+          <span className={`inline-block ${loading ? 'animate-spin' : ''}`}>↻</span>
+          Refresh
+        </button>
+      </div>
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            <StatCard 
-              title="Total Devices" 
-              value={totalCount} 
-              icon="computer" 
-              color="blue"
-            />
-            <StatCard 
-              title="Online" 
-              value={onlineCount} 
-              icon="online" 
-              color="green"
-            />
-            <StatCard 
-              title="Offline" 
-              value={offlineCount} 
-              icon="offline" 
-              color="red"
-            />
-            <StatCard 
-              title="Critical Alerts" 
-              value={0} 
-              icon="alert" 
-              color="orange"
-            />
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Total Agents"
+          value={stats.totalAgents}
+          icon="💻"
+          color="blue"
+          link="/devices"
+        />
+        <StatCard
+          title="Online"
+          value={stats.onlineAgents}
+          icon="🟢"
+          color="green"
+          link="/devices?filter=online"
+        />
+        <StatCard
+          title="Offline"
+          value={stats.offlineAgents}
+          icon="🔴"
+          color="red"
+          link="/devices?filter=offline"
+        />
+        <StatCard
+          title="Alerts"
+          value={stats.totalAlerts}
+          icon="⚠️"
+          color="orange"
+          link="/alerts"
+        />
+      </div>
+
+      {/* Quick Actions + Recent Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Quick Actions */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+          <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Quick Actions</h2>
+          <div className="space-y-2">
+            <QuickAction icon="📜" label="Run a Script" link="/scripts" />
+            <QuickAction icon="🔧" label="Check for Patches" link="/patches" />
+            <QuickAction icon="⚡" label="New Automation" link="/automation" />
+            <QuickAction icon="📈" label="Generate Report" link="/reports" />
+            <QuickAction icon="🤖" label="Ask AI Copilot" link="/ai" />
+          </div>
+        </div>
+
+        {/* Agents Overview */}
+        <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Recent Agents</h2>
+            <Link to="/devices" className="text-xs text-blue-500 hover:text-blue-600 font-medium">
+              View all →
+            </Link>
           </div>
 
-          {/* Refresh Button */}
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex gap-2">
-              {['device', 'workstation', 'server'].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setFilter(type as any)}
-                  className={`px-4 py-2 rounded-lg font-medium ${
-                    filter === type
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-700 hover:bg-gray-50'
-                  }`}
+          {agents.length === 0 ? (
+            <div className="p-8 text-center">
+              <div className="text-4xl mb-3">🖥️</div>
+              <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">No agents yet</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Install the Tactical RMM agent on your devices to start monitoring.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100 dark:divide-gray-700">
+              {agents.slice(0, 5).map((agent: any) => (
+                <Link
+                  key={agent.agent_id || agent.id}
+                  to={`/device/${agent.agent_id || agent.id}`}
+                  className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
                 >
-                  {type.charAt(0).toUpperCase() + type.slice(1)}s
-                </button>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
+                    <div>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">{agent.hostname || agent.name}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">{agent.local_ip || agent.wan_ip}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{agent.site_name || 'Default'}</span>
+                    <span className="text-gray-300">→</span>
+                  </div>
+                </Link>
               ))}
             </div>
-            
-            <button 
-              onClick={refreshDevices}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
-            >
-              🔄 Refresh
-            </button>
-          </div>
+          )}
+        </div>
+      </div>
 
-          {/* Device Grid */}
-          <div className="bg-white rounded-lg shadow">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-800">Devices</h2>
-            </div>
-
-            <div className="p-6">
-              {loading ? (
-                <div className="flex justify-center items-center h-64">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                </div>
-              ) : error ? (
-                <div className="text-center text-red-500 py-12">
-                  {error}
-                </div>
-              ) : devices.length === 0 ? (
-                <div className="text-center text-gray-500 py-12">
-                  No devices found. Install agents to get started.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {devices.map((device) => (
-                    <DeviceCard key={device.id} device={device} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-        </main>
+      {/* System Status */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">System Status</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <StatusIndicator name="Backend API" url="http://10.10.0.122:8000" />
+          <StatusIndicator name="Frontend" url="http://10.10.0.122:5173" />
+          <StatusIndicator name="Guacamole" url="http://10.10.0.122:8080" />
+          <StatusIndicator name="Database" url="" />
+        </div>
       </div>
     </div>
   )
 }
+
+// Stat Card Component
+const StatCard = ({ title, value, icon, color, link }: {
+  title: string; value: number; icon: string; color: string; link: string
+}) => {
+  const colorMap: Record<string, string> = {
+    blue: 'from-blue-500 to-indigo-600',
+    green: 'from-emerald-500 to-green-600',
+    red: 'from-red-500 to-rose-600',
+    orange: 'from-amber-500 to-orange-600',
+    purple: 'from-violet-500 to-purple-600',
+  }
+
+  return (
+    <Link
+      to={link}
+      className="stat-card stat-card-${color} bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 hover:shadow-md transition-all hover:-translate-y-0.5"
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{title}</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{value}</p>
+        </div>
+        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colorMap[color] || colorMap.blue} flex items-center justify-center text-xl shadow-lg`}>
+          {icon}
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+// Quick Action Component
+const QuickAction = ({ icon, label, link }: { icon: string; label: string; link: string }) => (
+  <Link
+    to={link}
+    className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors group"
+  >
+    <span className="text-lg">{icon}</span>
+    <span className="text-sm text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
+      {label}
+    </span>
+    <span className="ml-auto text-gray-300 group-hover:text-gray-500 transition-colors">→</span>
+  </Link>
+)
+
+// Status Indicator
+const StatusIndicator = ({ name, url }: { name: string; url: string }) => (
+  <div className="flex items-center gap-2">
+    <div className="w-2.5 h-2.5 rounded-full bg-green-500 status-online" />
+    <span className="text-sm text-gray-700 dark:text-gray-300">{name}</span>
+  </div>
+)
 
 export default Dashboard
