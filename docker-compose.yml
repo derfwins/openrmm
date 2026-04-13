@@ -96,7 +96,73 @@ services:
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
              python manage.py createsuperuser --noinput --username admin --email admin@openrmm.local || true &&
-             gunicorn tacticalrmm.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
+             uvicorn tacticalrmm.asgi:application --host 0.0.0.0 --port 8000 --workers 4"
+    restart: unless-stopped
+
+  # Celery Worker (async task processing)
+  celery-worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: openrmm-celery-worker
+    environment:
+      DJANGO_SETTINGS_MODULE: tacticalrmm.settings
+      DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+      DEBUG: "True"
+      POSTGRES_DB: openrmm
+      POSTGRES_USER: openrmm
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      NATS_HOST: nats
+      MESH_USERNAME: admin
+      MESH_SITE: "http://10.10.0.122"
+      MESH_TOKEN_KEY: "devkey1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+    volumes:
+      - ./api/tacticalrmm:/app/tacticalrmm
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A tacticalrmm worker -l INFO -Q default,checks,alerts,scripts,tasks -c 4"
+    restart: unless-stopped
+
+  # Celery Beat (scheduled tasks)
+  celery-beat:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: openrmm-celery-beat
+    environment:
+      DJANGO_SETTINGS_MODULE: tacticalrmm.settings
+      DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+      DEBUG: "True"
+      POSTGRES_DB: openrmm
+      POSTGRES_USER: openrmm
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      NATS_HOST: nats
+      MESH_USERNAME: admin
+      MESH_SITE: "http://10.10.0.122"
+      MESH_TOKEN_KEY: "devkey1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+    volumes:
+      - ./api/tacticalrmm:/app/tacticalrmm
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A tacticalrmm beat -l INFO"
     restart: unless-stopped
 
   # React Frontend
@@ -116,6 +182,8 @@ services:
     ports:
       - "5173:5173"
     command: npm run dev -- --host
+    depends_on:
+      - backend
     restart: unless-stopped
 
   # Guacamole Remote Desktop Gateway
