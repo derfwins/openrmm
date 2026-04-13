@@ -199,10 +199,10 @@ const Dashboard = () => {
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">System Status</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatusIndicator name="Backend API" url="http://10.10.0.122:8000" />
-          <StatusIndicator name="Frontend" url="http://10.10.0.122:5173" />
-          <StatusIndicator name="Guacamole" url="http://10.10.0.122:8080" />
-          <StatusIndicator name="Database" url="" />
+          <StatusIndicator name="Backend API" />
+          <StatusIndicator name="Frontend" />
+          <StatusIndicator name="Guacamole" />
+          <StatusIndicator name="Database" />
         </div>
       </div>
     </div>
@@ -254,7 +254,7 @@ const QuickAction = ({ icon, label, link }: { icon: string; label: string; link:
 )
 
 // Status Indicator
-const StatusIndicator = ({ name, url }: { name: string; url: string }) => (
+const StatusIndicator = ({ name }: { name: string }) => (
   <div className="flex items-center gap-2">
     <div className="w-2.5 h-2.5 rounded-full bg-green-500 status-online" />
     <span className="text-sm text-gray-700 dark:text-gray-300">{name}</span>
