@@ -1,5 +1,5 @@
 # OpenRMM Docker Compose Configuration
-# Development and Production Setup
+# Full Stack: Django Backend + Celery Workers + React Frontend + Guacamole
 
 version: '3.8'
 
@@ -99,7 +99,7 @@ services:
              uvicorn tacticalrmm.asgi:application --host 0.0.0.0 --port 8000 --workers 4"
     restart: unless-stopped
 
-  # Celery Worker (async task processing)
+  # Celery Worker (async task processing - checks, alerts, scripts, tasks)
   celery-worker:
     build:
       context: ./api
@@ -110,6 +110,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
       DEBUG: "True"
+      PYTHONPATH: /app
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
       POSTGRES_HOST: postgres
@@ -129,10 +130,10 @@ services:
       nats:
         condition: service_healthy
     command: >
-      sh -c "celery -A tacticalrmm worker -l INFO -Q default,checks,alerts,scripts,tasks -c 4"
+      sh -c "celery -A tacticalrmm.celery worker -l INFO -Q default,checks,alerts,scripts,tasks -c 4"
     restart: unless-stopped
 
-  # Celery Beat (scheduled tasks)
+  # Celery Beat (scheduled tasks - periodic checks, cleanup, etc)
   celery-beat:
     build:
       context: ./api
@@ -143,6 +144,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
       DEBUG: "True"
+      PYTHONPATH: /app
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
       POSTGRES_HOST: postgres
@@ -162,7 +164,7 @@ services:
       nats:
         condition: service_healthy
     command: >
-      sh -c "celery -A tacticalrmm beat -l INFO"
+      sh -c "celery -A tacticalrmm.celery beat -l INFO"
     restart: unless-stopped
 
   # React Frontend
