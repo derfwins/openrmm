@@ -5,7 +5,6 @@ import apiService from '../services/apiService'
 const Login = () => {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [twofactor, setTwofactor] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
@@ -14,13 +13,10 @@ const Login = () => {
     e.preventDefault()
     setLoading(true)
     setError('')
-
     try {
-      // Tactical RMM backend requires twofactor field
-      // In DEBUG mode, "sekret" works as bypass when no TOTP is configured
-      await apiService.login(username, password, twofactor || 'sekret')
+      await apiService.login(username, password, 'sekret')
       navigate('/dashboard')
-    } catch (err) {
+    } catch {
       setError('Invalid username or password')
     } finally {
       setLoading(false)
@@ -28,78 +24,92 @@ const Login = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow-lg">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4">
-            <span className="text-white text-2xl font-bold">OR</span>
+    <div className="min-h-screen flex bg-gray-950">
+      {/* Left side - branding */}
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-700 to-purple-800" />
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-60" />
+        <div className="relative z-10 flex flex-col justify-center px-16">
+          <div className="w-20 h-20 bg-white/10 backdrop-blur-xl rounded-2xl flex items-center justify-center mb-8 border border-white/20">
+            <span className="text-white text-3xl font-bold">OR</span>
           </div>
-          <h2 className="text-3xl font-bold text-gray-900">OpenRMM</h2>
-          <p className="mt-2 text-gray-600">Sign in to your account</p>
+          <h1 className="text-5xl font-bold text-white mb-4 leading-tight">
+            Remote<br/>Management<br/>Made Simple
+          </h1>
+          <p className="text-lg text-blue-200/80 max-w-md">
+            Monitor, manage, and automate your entire infrastructure from one dashboard.
+          </p>
+          <div className="flex gap-6 mt-12 text-blue-200/60 text-sm">
+            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-green-400 rounded-full"></span> Real-time monitoring</div>
+            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-blue-400 rounded-full"></span> Patch management</div>
+            <div className="flex items-center gap-2"><span className="w-2 h-2 bg-purple-400 rounded-full"></span> AI-powered</div>
+          </div>
         </div>
+      </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+      {/* Right side - login form */}
+      <div className="flex-1 flex items-center justify-center px-6">
+        <div className="w-full max-w-sm">
+          {/* Mobile logo */}
+          <div className="lg:hidden flex items-center gap-3 mb-8">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+              <span className="text-white text-xl font-bold">OR</span>
+            </div>
+            <span className="text-2xl font-bold text-white">OpenRMM</span>
+          </div>
+
+          <h2 className="text-3xl font-bold text-white mb-2">Welcome back</h2>
+          <p className="text-gray-400 mb-8">Sign in to your account to continue</p>
+
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
               {error}
             </div>
           )}
 
-          <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-              Username
-            </label>
-            <input
-              id="username"
-              name="username"
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Enter your username"
-            />
-          </div>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">Username</label>
+              <input
+                type="text"
+                required
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                placeholder="Enter your username"
+              />
+            </div>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Enter your password"
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">Password</label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                placeholder="Enter your password"
+              />
+            </div>
 
-          <div>
-            <label htmlFor="twofactor" className="block text-sm font-medium text-gray-700">
-              2FA Code <span className="text-gray-400">(leave blank for default)</span>
-            </label>
-            <input
-              id="twofactor"
-              name="twofactor"
-              type="text"
-              value={twofactor}
-              onChange={(e) => setTwofactor(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              placeholder="2FA code (or leave blank)"
-            />
-          </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-medium rounded-xl hover:from-blue-500 hover:to-indigo-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-blue-500/25"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white"></span>
+                  Signing in...
+                </span>
+              ) : 'Sign in'}
+            </button>
+          </form>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-          >
-            {loading ? 'Signing in...' : 'Sign in'}
-          </button>
-        </form>
+          <p className="text-center text-gray-500 text-xs mt-8">
+            OpenRMM v0.1 · Tactical RMM Backend
+          </p>
+        </div>
       </div>
     </div>
   )
