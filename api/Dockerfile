@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0t64 \
+    libgdk-pixbuf-2.0-0 \
     libcairo2 \
     shared-mime-info \
     fonts-liberation \
