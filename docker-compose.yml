@@ -22,6 +22,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # Redis Cache
   redis:
@@ -37,6 +38,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # NATS Message Queue (for agent communication)
+  nats:
+    image: nats:2-alpine
+    container_name: openrmm-nats
+    command: "-m 8222"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # Django Backend API
   backend:
@@ -56,6 +75,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       REDIS_HOST: redis
+      NATS_HOST: nats
       MESH_USERNAME: admin
       MESH_SITE: "http://10.10.0.122"
       MESH_TOKEN_KEY: "devkey1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
@@ -70,11 +90,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nats:
+        condition: service_healthy
     command: >
-      sh -c "python manage.py migrate &&
+      sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
              python manage.py createsuperuser --noinput --username admin --email admin@openrmm.local || true &&
              gunicorn tacticalrmm.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
+    restart: unless-stopped
 
   # React Frontend
   frontend:
@@ -84,11 +107,38 @@ services:
     container_name: openrmm-frontend
     environment:
       VITE_API_URL: http://10.10.0.122:8000
+      VITE_WS_URL: ws://10.10.0.122:8000/ws
+      VITE_GUACAMOLE_API_URL: http://10.10.0.122:8080
+      VITE_GUACAMOLE_PROXY_URL: wss://10.10.0.122:8443
     volumes:
       - ./frontend:/app
       - /app/node_modules
     ports:
       - "5173:5173"
+    command: npm run dev -- --host
+    restart: unless-stopped
+
+  # Guacamole Remote Desktop Gateway
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: openrmm-guacd
+    restart: unless-stopped
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openrmm-guacamole
+    environment:
+      GUACD_HOSTNAME: guacd
+      MYSQL_HOSTNAME: postgres
+      MYSQL_DATABASE: guacamole_db
+      MYSQL_USER: openrmm
+      MYSQL_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - guacd
+      - postgres
+    restart: unless-stopped
 
   # Nginx Reverse Proxy
   nginx:
@@ -104,12 +154,15 @@ services:
     depends_on:
       - backend
       - frontend
+      - guacamole
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+  nats_data:
   static_files:
-  media_data:
+  media_files:
 
 networks:
   default:
