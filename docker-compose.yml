@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d
@@ -45,7 +45,7 @@ services:
     command: "-m 8222"
     ports:
       - "4222:4222"
-      - "8222:8222"  # Monitoring
+      - "8222:8222"
     volumes:
       - nats_data:/data
     healthcheck:
@@ -62,13 +62,14 @@ services:
     container_name: openrmm-backend
     environment:
       DJANGO_SETTINGS_MODULE: tacticalrmm.settings
-      DATABASE_URL: postgres://openrmm:${DB_PASSWORD:-changeme}@postgres:5432/openrmm
+      DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      DATABASE_URL: postgres://openrmm:${DB_PASSWORD:-openrmm_dev_2026}@postgres:5432/openrmm
       REDIS_URL: redis://redis:6379/0
       NATS_URL: nats://nats:4222
-      SECRET_KEY: ${SECRET_KEY:-changeme}
-      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+      DEBUG: "True"
+      ALLOWED_HOSTS: "*"
     volumes:
-      - ./api:/app
       - static_files:/app/static
       - media_files:/app/media
     ports:
@@ -83,7 +84,8 @@ services:
     command: >
       sh -c "python manage.py migrate &&
              python manage.py collectstatic --noinput &&
-             gunicorn tacticalrmm.wsgi:application --bind 0.0.0.0:8000 --workers 4"
+             python manage.py createsuperuser --noinput --username admin --email admin@openrmm.local || true &&
+             gunicorn tacticalrmm.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120"
 
   # React Frontend
   frontend:
@@ -92,27 +94,12 @@ services:
       dockerfile: Dockerfile
     container_name: openrmm-frontend
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://10.10.0.122:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
     ports:
       - "5173:5173"
-    command: npm run dev -- --host
-
-  # Go NATS API
-  natsapi:
-    build:
-      context: .
-      dockerfile: ./natsapi/Dockerfile
-    container_name: openrmm-natsapi
-    environment:
-      NATS_URL: nats://nats:4222
-      API_URL: http://backend:8000
-    depends_on:
-      - nats
-      - backend
-    restart: unless-stopped
 
   # Nginx Reverse Proxy
   nginx:
