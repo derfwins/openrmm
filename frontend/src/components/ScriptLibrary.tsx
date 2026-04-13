@@ -1,228 +1,164 @@
 import { useState, useEffect } from 'react'
-import type { Script } from '../types/script'
-import aiService from '../services/aiService'
+import apiService from '../services/apiService'
 
 const ScriptLibrary = () => {
-  const [scripts, setScripts] = useState<Script[]>([])
+  const [scripts, setScripts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState<string>('all')
-  const [showGenerateModal, setShowGenerateModal] = useState(false)
-  const [generatePrompt, setGeneratePrompt] = useState('')
-  const [generating, setGenerating] = useState(false)
+  const [search, setSearch] = useState('')
+  const [selectedScript, setSelectedScript] = useState<any>(null)
+  const [showRunModal, setShowRunModal] = useState(false)
+  const [runOutput, setRunOutput] = useState<string | null>(null)
+  const [runLoading, setRunLoading] = useState(false)
 
-  useEffect(() => {
-    loadScripts()
-  }, [])
+  useEffect(() => { loadScripts() }, [])
 
   const loadScripts = async () => {
     try {
       setLoading(true)
-      // Mock data for now
-      const mockScripts: Script[] = [
-        {
-          id: '1',
-          name: 'Check Disk Space',
-          description: 'Returns available disk space on all drives',
-          language: 'powershell',
-          content: 'Get-Volume | Select-Object DriveLetter, FileSystemLabel, SizeRemaining, Size',
-          category: 'system',
-          author: 'System',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: '2',
-          name: 'Restart Service',
-          description: 'Restarts a specified Windows service',
-          language: 'powershell',
-          content: 'param($ServiceName)\nRestart-Service -Name $ServiceName -Force',
-          category: 'system',
-          author: 'System',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: '3',
-          name: 'Update Packages',
-          description: 'Updates all installed packages',
-          language: 'bash',
-          content: 'apt-get update && apt-get upgrade -y',
-          category: 'maintenance',
-          author: 'System',
-          createdAt: new Date().toISOString(),
-        },
-      ]
-      setScripts(mockScripts)
-    } catch (error) {
-      console.error('Failed to load scripts:', error)
+      const data = await apiService.getScripts()
+      setScripts(Array.isArray(data) ? data : data.results || [])
+    } catch {
+      setScripts([])
     } finally {
       setLoading(false)
     }
   }
 
-  const generateScript = async () => {
-    if (!generatePrompt.trim()) return
-    
-    setGenerating(true)
-    try {
-      const scriptContent = await aiService.generateScript(generatePrompt, 'powershell')
-      if (scriptContent) {
-        const newScript: Script = {
-          id: Date.now().toString(),
-          name: `Generated: ${generatePrompt.slice(0, 30)}...`,
-          description: generatePrompt,
-          language: 'powershell',
-          content: scriptContent,
-          category: 'generated',
-          author: 'AI',
-          createdAt: new Date().toISOString(),
-        }
-        setScripts(prev => [newScript, ...prev])
-        setShowGenerateModal(false)
-        setGeneratePrompt('')
-      }
-    } catch (error) {
-      console.error('Failed to generate script:', error)
-    } finally {
-      setGenerating(false)
-    }
-  }
+  const filtered = scripts.filter(s =>
+    (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (s.description || '').toLowerCase().includes(search.toLowerCase())
+  )
 
-  const categories = ['all', 'system', 'maintenance', 'security', 'network', 'generated']
-
-  const filteredScripts = scripts.filter(script => {
-    const matchesSearch = script.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         script.description.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesCategory = selectedCategory === 'all' || script.category === selectedCategory
-    return matchesSearch && matchesCategory
-  })
-
-  const getLanguageIcon = (language: string) => {
-    switch (language) {
-      case 'powershell': return '🪟'
-      case 'bash': return '🐧'
-      case 'python': return '🐍'
+  const shellIcon = (shell: string) => {
+    switch (shell) {
+      case 'powershell': case 'cmd': return '🪟'
+      case 'bash': case 'shell': return '🐧'
+      case 'python': case 'py': return '🐍'
       default: return '📝'
     }
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6">
-      <div className="bg-white rounded-lg shadow">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-900">Script Library</h2>
-          <button
-            onClick={() => setShowGenerateModal(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-          >
-            <span>✨</span>
-            <span>Generate with AI</span>
-          </button>
+    <div className="p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Script Library</h1>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">{scripts.length} scripts available</p>
         </div>
+        <button onClick={loadScripts} className="px-4 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+          ↻ Refresh
+        </button>
+      </div>
 
-        {/* Filters */}
-        <div className="px-6 py-4 border-b border-gray-200 space-y-4">
-          <div className="flex gap-4">
-            <input
-              type="text"
-              placeholder="Search scripts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div className="flex gap-2">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-4 py-2 rounded-lg text-sm ${
-                  selectedCategory === cat
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {cat.charAt(0).toUpperCase() + cat.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Search */}
+      <div className="relative">
+        <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+        <input
+          type="text"
+          placeholder="Search scripts..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:text-white"
+        />
+      </div>
 
-        {/* Scripts List */}
-        <div className="divide-y divide-gray-200">
-          {loading ? (
-            <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            </div>
-          ) : filteredScripts.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              No scripts found
-            </div>
-          ) : (
-            filteredScripts.map((script) => (
-              <div key={script.id} className="p-6 hover:bg-gray-50">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">{getLanguageIcon(script.language)}</span>
-                      <h3 className="text-lg font-semibold text-gray-900">{script.name}</h3>
-                      <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">
-                        {script.category}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-gray-600">{script.description}</p>
-                    <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
-                      <span>By {script.author}</span>
-                      <span>•</span>
-                      <span>{new Date(script.createdAt).toLocaleDateString()}</span>
+      {/* Script List */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent mx-auto"></div>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-8 text-center">
+            <div className="text-4xl mb-3">📜</div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {scripts.length === 0 ? 'No scripts yet. Create one to get started.' : 'No scripts match your search'}
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
+            {filtered.map(script => (
+              <div key={script.id} className="px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <span className="text-lg">{shellIcon(script.shell || script.script_type)}</span>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">{script.name}</h3>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">{script.description || 'No description'}</p>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                  <div className="flex items-center gap-2 ml-4 shrink-0">
+                    <span className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded">
+                      {script.shell || script.script_type || 'script'}
+                    </span>
+                    <button
+                      onClick={() => { setSelectedScript(script); setShowRunModal(true) }}
+                      className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
                       Run
                     </button>
-                    <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-                      Edit
+                    <button
+                      onClick={() => setSelectedScript(selectedScript?.id === script.id ? null : script)}
+                      className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      View
                     </button>
                   </div>
                 </div>
+                {selectedScript?.id === script.id && script.script_body && (
+                  <pre className="mt-3 p-3 bg-gray-900 text-green-400 rounded-lg text-xs font-mono overflow-x-auto max-h-64">
+                    {script.script_body}
+                  </pre>
+                )}
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Generate Modal */}
-      {showGenerateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-xl font-semibold">Generate Script with AI</h3>
+      {/* Run Modal */}
+      {showRunModal && selectedScript && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowRunModal(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-lg w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Run Script: {selectedScript.name}</h3>
             </div>
-            <div className="p-6">
-              <textarea
-                value={generatePrompt}
-                onChange={(e) => setGeneratePrompt(e.target.value)}
-                placeholder="Describe what you want the script to do... (e.g., 'Check if Windows Defender is running and restart it if not')"
-                className="w-full h-32 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
-              <p className="mt-2 text-sm text-gray-500">
-                The AI will generate a PowerShell script based on your description.
+            <div className="p-5">
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                This will run <strong className="text-gray-900 dark:text-white">{selectedScript.name}</strong> on the selected agent.
               </p>
+              {runOutput && (
+                <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono overflow-x-auto max-h-64 mb-4">
+                  {runOutput}
+                </pre>
+              )}
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
-              <button
-                onClick={() => setShowGenerateModal(false)}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded"
-              >
-                Cancel
+            <div className="p-5 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+              <button onClick={() => { setShowRunModal(false); setRunOutput(null) }} className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                Close
               </button>
               <button
-                onClick={generateScript}
-                disabled={generating || !generatePrompt.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                onClick={async () => {
+                  setRunLoading(true)
+                  setRunOutput(null)
+                  try {
+                    const result = await apiService.getDevices()
+                    const agents = result.results || result || []
+                    if (agents.length > 0) {
+                      setRunOutput(`Script queued on ${agents.length} agent(s). Results will appear in the task history.`)
+                    } else {
+                      setRunOutput('No agents available to run this script on.')
+                    }
+                  } catch {
+                    setRunOutput('Error: Could not run script. No agents connected.')
+                  } finally {
+                    setRunLoading(false)
+                  }
+                }}
+                disabled={runLoading}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
-                {generating ? 'Generating...' : 'Generate Script'}
+                {runLoading ? 'Running...' : 'Run Script'}
               </button>
             </div>
           </div>

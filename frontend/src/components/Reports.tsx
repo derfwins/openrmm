@@ -1,8 +1,4 @@
-import { useState } from 'react'
-
 const Reports = () => {
-  const [_activeTab, _setActiveTab] = useState<'overview' | 'devices' | 'patches' | 'activity'>('overview')
-
   const reportTypes = [
     { id: 'device_inventory', name: 'Device Inventory', description: 'Complete list of all managed devices', icon: '💻' },
     { id: 'patch_status', name: 'Patch Status', description: 'Update compliance across all devices', icon: '🔧' },
@@ -13,35 +9,31 @@ const Reports = () => {
   ]
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
-      <div className="bg-white rounded-lg shadow">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-2xl font-bold text-gray-900">Reports</h2>
-          <p className="text-gray-600 mt-1">Generate and download system reports</p>
-        </div>
+    <div className="p-6 space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Reports</h1>
+        <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Generate and download system reports</p>
+      </div>
 
-        {/* Report Grid */}
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {reportTypes.map((report) => (
-            <div
-              key={report.id}
-              className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer"
-            >
-              <div className="text-4xl mb-4">{report.icon}</div>
-              <h3 className="text-lg font-semibold text-gray-900">{report.name}</h3>
-              <p className="text-gray-600 mt-2">{report.description}</p>
-              <div className="mt-4 flex gap-2">
-                <button className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                  Generate
-                </button>
-                <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-                  ⬇️
-                </button>
-              </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {reportTypes.map(report => (
+          <div
+            key={report.id}
+            className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer group"
+          >
+            <div className="text-3xl mb-3">{report.icon}</div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{report.name}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{report.description}</p>
+            <div className="mt-4 flex gap-2">
+              <button className="flex-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+                Generate
+              </button>
+              <button className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                ⬇️
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   )

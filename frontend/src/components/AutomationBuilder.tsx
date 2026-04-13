@@ -1,268 +1,121 @@
 import { useState } from 'react'
-import type { Automation, AutomationTrigger, AutomationAction } from '../types/automation'
+
+interface Automation {
+  id: string
+  name: string
+  description: string
+  trigger: string
+  enabled: boolean
+}
 
 const AutomationBuilder = () => {
   const [automations, setAutomations] = useState<Automation[]>([])
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [editingAutomation, setEditingAutomation] = useState<Automation | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
 
-  const [newAutomation, setNewAutomation] = useState<Partial<Automation>>({
-    name: '',
-    description: '',
-    enabled: true,
-    trigger: { type: 'manual' },
-    conditions: [],
-    actions: [],
-  })
-
-  const saveAutomation = () => {
-    if (!newAutomation.name) return
-
-    const automation: Automation = {
-      id: editingAutomation?.id || Date.now().toString(),
-      name: newAutomation.name || '',
-      description: newAutomation.description || '',
-      trigger: newAutomation.trigger as AutomationTrigger,
-      conditions: newAutomation.conditions || [],
-      actions: newAutomation.actions || [],
-      enabled: newAutomation.enabled || true,
-      createdAt: editingAutomation?.createdAt || new Date().toISOString(),
-      runCount: editingAutomation?.runCount || 0,
-    }
-
-    if (editingAutomation) {
-      setAutomations(prev => prev.map(a => a.id === editingAutomation.id ? automation : a))
-    } else {
-      setAutomations(prev => [...prev, automation])
-    }
-
-    setShowCreateModal(false)
-    setEditingAutomation(null)
-    setNewAutomation({
-      name: '',
-      description: '',
+  const create = () => {
+    if (!name.trim()) return
+    setAutomations(prev => [...prev, {
+      id: Date.now().toString(),
+      name: name.trim(),
+      description: desc.trim(),
+      trigger: 'manual',
       enabled: true,
-      trigger: { type: 'manual' },
-      conditions: [],
-      actions: [],
-    })
+    }])
+    setName('')
+    setDesc('')
+    setShowCreate(false)
   }
 
-  const deleteAutomation = (id: string) => {
+  const toggle = (id: string) => {
+    setAutomations(prev => prev.map(a => a.id === id ? { ...a, enabled: !a.enabled } : a))
+  }
+
+  const remove = (id: string) => {
     setAutomations(prev => prev.filter(a => a.id !== id))
   }
 
-  const toggleAutomation = (id: string) => {
-    setAutomations(prev =>
-      prev.map(a =>
-        a.id === id ? { ...a, enabled: !a.enabled } : a
-      )
-    )
-  }
-
-  const getTriggerDescription = (trigger: AutomationTrigger) => {
-    switch (trigger.type) {
-      case 'schedule':
-        return `⏰ ${trigger.schedule?.frequency} at ${trigger.schedule?.time}`
-      case 'event':
-        return `📡 On ${trigger.event?.type}`
-      case 'webhook':
-        return '🔗 Webhook'
-      case 'manual':
-        return '👤 Manual'
-      default:
-        return 'Unknown'
-    }
-  }
-
-  const getActionCount = (actions: AutomationAction[]) => {
-    return actions.length
-  }
-
   return (
-    <div className="max-w-7xl mx-auto p-6">
-      <div className="bg-white rounded-lg shadow">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">Automation Workflows</h2>
-            <p className="text-gray-600 mt-1">Create automated tasks and responses</p>
-          </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            + Create Automation
-          </button>
+    <div className="p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Automation Workflows</h1>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">{automations.length} automations</p>
         </div>
-
-        {/* Automation List */}
-        <div className="divide-y divide-gray-200">
-          {automations.length === 0 ? (
-            <div className="p-12 text-center text-gray-500">
-              <div className="text-6xl mb-4">🤖</div>
-              <h3 className="text-lg font-semibold mb-2">No automations yet</h3>
-              <p>Create your first automation to get started</p>
-            </div>
-          ) : (
-            automations.map((automation) => (
-              <div key={automation.id} className="p-6 hover:bg-gray-50">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        {automation.name}
-                      </h3>
-                      <span
-                        className={`px-2 py-1 text-xs font-medium rounded ${
-                          automation.enabled
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        {automation.enabled ? 'Active' : 'Disabled'}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-gray-600">{automation.description}</p>
-                    <div className="mt-2 flex items-center gap-4 text-sm text-gray-500">
-                      <span>{getTriggerDescription(automation.trigger)}</span>
-                      <span>•</span>
-                      <span>{automation.conditions.length} conditions</span>
-                      <span>•</span>
-                      <span>{getActionCount(automation.actions)} actions</span>
-                      <span>•</span>
-                      <span>Run {automation.runCount} times</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => toggleAutomation(automation.id)}
-                      className={`px-3 py-1 rounded text-sm ${
-                        automation.enabled
-                          ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          : 'bg-green-100 text-green-700 hover:bg-green-200'
-                      }`}
-                    >
-                      {automation.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingAutomation(automation)
-                        setNewAutomation(automation)
-                        setShowCreateModal(true)
-                      }}
-                      className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteAutomation(automation.id)}
-                      className="px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          + Create Automation
+        </button>
       </div>
 
-      {/* Create/Edit Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-xl font-semibold">
-                {editingAutomation ? 'Edit Automation' : 'Create Automation'}
-              </h3>
+      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        {automations.length === 0 ? (
+          <div className="p-8 text-center">
+            <div className="text-4xl mb-3">⚡</div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">No automations yet. Create one to automate repetitive tasks.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
+            {automations.map(a => (
+              <div key={a.id} className="px-5 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-gray-900 dark:text-white">{a.name}</h3>
+                    <span className={`px-2 py-0.5 text-xs rounded ${a.enabled ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'}`}>
+                      {a.enabled ? 'Active' : 'Disabled'}
+                    </span>
+                  </div>
+                  {a.description && <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{a.description}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => toggle(a.id)} className="px-3 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-200 dark:hover:bg-gray-600">
+                    {a.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                  <button onClick={() => remove(a.id)} className="px-3 py-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded hover:bg-red-200 dark:hover:bg-red-900/50">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCreate(false)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-lg w-full mx-4" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Create Automation</h3>
             </div>
-            <div className="p-6 space-y-6">
-              {/* Name & Description */}
+            <div className="p-5 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Name
-                </label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
                 <input
                   type="text"
-                  value={newAutomation.name}
-                  onChange={(e) =>
-                    setNewAutomation({ ...newAutomation, name: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g., Reboot Server on High CPU"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="e.g., Reboot on High CPU"
+                  className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:text-white"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Description
-                </label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
                 <textarea
-                  value={newAutomation.description}
-                  onChange={(e) =>
-                    setNewAutomation({ ...newAutomation, description: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg h-20"
+                  value={desc}
+                  onChange={e => setDesc(e.target.value)}
                   placeholder="What does this automation do?"
+                  rows={3}
+                  className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 dark:text-white resize-none"
                 />
-              </div>
-
-              {/* Trigger */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Trigger
-                </label>
-                <select
-                  value={newAutomation.trigger?.type}
-                  onChange={(e) =>
-                    setNewAutomation({
-                      ...newAutomation,
-                      trigger: { type: e.target.value as any },
-                    })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                >
-                  <option value="manual">👤 Manual</option>
-                  <option value="schedule">⏰ Schedule</option>
-                  <option value="event">📡 Event</option>
-                  <option value="webhook">🔗 Webhook</option>
-                </select>
-              </div>
-
-              {/* Enabled Toggle */}
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="enabled"
-                  checked={newAutomation.enabled}
-                  onChange={(e) =>
-                    setNewAutomation({ ...newAutomation, enabled: e.target.checked })
-                  }
-                  className="h-4 w-4 text-blue-600 rounded"
-                />
-                <label htmlFor="enabled" className="ml-2 text-sm text-gray-700">
-                  Enable automation immediately
-                </label>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowCreateModal(false)
-                  setEditingAutomation(null)
-                }}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveAutomation}
-                disabled={!newAutomation.name}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {editingAutomation ? 'Save Changes' : 'Create Automation'}
-              </button>
+            <div className="p-5 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+              <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Cancel</button>
+              <button onClick={create} disabled={!name.trim()} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">Create</button>
             </div>
           </div>
         </div>
