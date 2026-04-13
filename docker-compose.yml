@@ -110,7 +110,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
       DEBUG: "True"
-      PYTHONPATH: /app
+      PYTHONPATH: /app/tacticalrmm
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
       POSTGRES_HOST: postgres
@@ -144,7 +144,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
       DEBUG: "True"
-      PYTHONPATH: /app
+      PYTHONPATH: /app/tacticalrmm
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
       POSTGRES_HOST: postgres
