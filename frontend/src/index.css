@@ -1,20 +1,8 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
-  --color-primary-50: #f0f9ff;
-  --color-primary-100: #e0f2fe;
-  --color-primary-200: #bae6fd;
-  --color-primary-300: #7dd3fc;
-  --color-primary-400: #38bdf8;
-  --color-primary-500: #0ea5e9;
-  --color-primary-600: #0284c7;
-  --color-primary-700: #0369a1;
-  --color-primary-800: #075985;
-  --color-primary-900: #0c4a6e;
-  --color-gray-750: #2d3748;
-  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, Consolas, monospace;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 #root {
   width: 100%;
@@ -23,8 +11,14 @@
 
 body {
   margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth transitions for theme */
+.sidebar, .topbar, .card {
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 /* Custom scrollbar */
@@ -51,7 +45,6 @@ body {
 .stat-accent-green::after { background: linear-gradient(90deg, #10b981, #6ee7b7); }
 .stat-accent-red::after { background: linear-gradient(90deg, #ef4444, #fca5a5); }
 .stat-accent-orange::after { background: linear-gradient(90deg, #f59e0b, #fcd34d); }
-.stat-accent-purple::after { background: linear-gradient(90deg, #8b5cf6, #c4b5fd); }
 
 /* Pulse for online status dot */
 @keyframes pulse-dot {
@@ -60,23 +53,4 @@ body {
 }
 .dot-online {
   animation: pulse-dot 2s ease-in-out infinite;
-}
-
-/* Code output */
-pre.code-output {
-  background: #0a0a0a;
-  color: #4ade80;
-  padding: 1rem;
-  border-radius: 0.5rem;
-  font-size: 0.75rem;
-  font-family: var(--font-mono);
-  overflow-x: auto;
-}
-
-/* Data table rows */
-tr.data-row:hover {
-  background-color: rgba(0, 0, 0, 0.02);
-}
-.dark tr.data-row:hover {
-  background-color: rgba(255, 255, 255, 0.05);
 }
