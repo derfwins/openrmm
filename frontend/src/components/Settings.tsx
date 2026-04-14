@@ -38,7 +38,9 @@ const Settings = () => {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [domain, setDomain] = useState('')
+  const [apiDomain, setApiDomain] = useState('')
+  const [uiDomain, setUiDomain] = useState('')
+  const [meshDomain, setMeshDomain] = useState('')
 
   const token = localStorage.getItem('token')
   const serverBase = window.location.hostname === 'localhost'
@@ -58,11 +60,14 @@ const Settings = () => {
       if (data.mesh_site) {
         try {
           const url = new URL(data.mesh_site)
-          setDomain(url.hostname)
+          setMeshDomain(url.hostname)
         } catch {
-          setDomain(data.mesh_site.replace(/^https?:\/\//, ''))
+          setMeshDomain(data.mesh_site.replace(/^https?:\/\//, ''))
         }
       }
+      // Try to get current API/UI domains from server base
+      const apiHost = serverBase.replace(/^https?:\/\//, '')
+      if (!apiDomain) setApiDomain(apiHost)
     } catch {
       setError('Failed to load settings')
     } finally {
@@ -102,11 +107,12 @@ const Settings = () => {
   }
 
   const applyDomain = async () => {
-    if (!domain.trim()) return
+    if (!apiDomain.trim()) return
     setSaving(true)
     setError('')
-    const meshSite = `https://${domain.trim()}`
     try {
+      // Update mesh_site in CoreSettings
+      const meshSite = meshDomain.trim() ? `https://${meshDomain.trim()}` : settings!.mesh_site
       const updated = { ...settings!, mesh_site: meshSite }
       const resp = await fetch(`${serverBase}/core/settings/`, {
         method: 'PUT',
@@ -114,11 +120,19 @@ const Settings = () => {
         body: JSON.stringify(updated),
       })
       if (!resp.ok) {
-        setError('Failed to apply domain')
+        setError('Failed to save backend settings')
         setSaving(false)
         return
       }
       setSettings(updated)
+
+      // Update ALLOWED_HOSTS and server config via a server-side script
+      const configResp = await fetch(`${serverBase}/core/settings/`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(updated),
+      })
+
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {
@@ -145,8 +159,7 @@ const Settings = () => {
     )
   }
 
-  const domainBase = domain ? domain.split('.').slice(-2).join('.') : 'yourdomain.com'
-  const domainSub = domain ? domain.split('.')[0] : 'rmm'
+  const domainBase = apiDomain ? apiDomain.split('.').slice(-2).join('.') : 'yourdomain.com'
 
   return (
     <div className="p-6 space-y-4">
@@ -190,55 +203,91 @@ const Settings = () => {
           {activeTab === 'domain' && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Custom Domain</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Set your domain — Cloudflare handles SSL, DNS, and tunneling</p>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Custom Domains</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Set domains for each service — Cloudflare handles SSL, DNS, and tunneling</p>
               </div>
 
               <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Domain Name</label>
+                {/* API Domain */}
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">🖥️ API + Admin Backend</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Django backend, REST API, and Django Admin. Agents connect here.</p>
                   <input
                     type="text"
-                    value={domain}
-                    onChange={e => setDomain(e.target.value)}
-                    placeholder="rmm.yourdomain.com"
+                    value={apiDomain}
+                    onChange={e => setApiDomain(e.target.value)}
+                    placeholder="rmm.derfwins.com"
                     className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   />
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Agents will connect to <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">https://{domain || 'rmm.yourdomain.com'}</code>
-                  </p>
+                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>Cloudflare tunnel →</span>
+                    <code>http://localhost:8000</code>
+                  </div>
                 </div>
 
+                {/* UI Domain */}
+                <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-green-700 dark:text-green-400">🎨 Frontend UI</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">React dashboard and web interface</p>
+                  <input
+                    type="text"
+                    value={uiDomain}
+                    onChange={e => setUiDomain(e.target.value)}
+                    placeholder="rmmapp.derfwins.com"
+                    className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>Cloudflare tunnel →</span>
+                    <code>http://localhost:5173</code>
+                  </div>
+                </div>
+
+                {/* Mesh Domain */}
+                <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-purple-700 dark:text-purple-400">🔗 Mesh Central</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Remote desktop, terminal, and file transfer</p>
+                  <input
+                    type="text"
+                    value={meshDomain}
+                    onChange={e => setMeshDomain(e.target.value)}
+                    placeholder="mesh.derfwins.com"
+                    className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>Cloudflare tunnel →</span>
+                    <code>http://localhost:8080</code>
+                  </div>
+                </div>
+
+                {/* Cloudflare Docs */}
                 <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-4 space-y-3">
                   <h3 className="text-sm font-medium text-orange-700 dark:text-orange-400">☁️ Cloudflare Tunnel Setup</h3>
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-3">
-                    <p>Cloudflare Tunnels expose your server without opening any ports. SSL is automatic.</p>
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3 font-mono text-xs space-y-1.5">
-                      <div><span className="text-blue-500">RMM API + Admin</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8000</div>
-                      <div><span className="text-green-500">Frontend</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; app.{domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:5173</div>
-                      <div><span className="text-purple-500">Mesh Central</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mesh.{domainBase} &nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8080</div>
-                    </div>
-                    <ol className="list-decimal list-inside text-xs space-y-2 mt-3">
+                    <p>For each domain above, create a tunnel in Cloudflare Zero Trust:</p>
+                    <ol className="list-decimal list-inside text-xs space-y-2">
                       <li>Go to <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Cloudflare Zero Trust</a> → Networks → Tunnels</li>
-                      <li>Create a tunnel, then run the connector install command on this server (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>)</li>
-                      <li>Add a <strong>Public Hostname</strong> for the API + Admin: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8000</code></li>
-                      <li>Add one for the Frontend: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">app.{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:5173</code></li>
-                      <li>Add one for Mesh: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">mesh.{domainBase}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8080</code></li>
+                      <li>Create a tunnel and install the connector (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>) on this server</li>
+                      <li>Add a <strong>Public Hostname</strong> for each service, pointing to the localhost URL shown above</li>
                       <li>SSL is handled automatically — no certbot needed ✅</li>
                     </ol>
                   </div>
                 </div>
 
-                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">Current URLs</h3>
+                {/* Current config */}
+                <div className="bg-gray-500/5 border border-gray-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-gray-700 dark:text-gray-400">Current Configuration</h3>
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                     <div className="flex justify-between">
-                      <span>Mesh Central:</span>
+                      <span>API:</span>
                       <code className="text-gray-900 dark:text-white">{settings?.mesh_site || 'Not set'}</code>
                     </div>
                     <div className="flex justify-between">
-                      <span>API (agents):</span>
-                      <code className="text-gray-900 dark:text-white">{serverBase.replace(/^https?:\/\//, '')}</code>
+                      <span>Frontend:</span>
+                      <code className="text-gray-900 dark:text-white">{uiDomain || 'Not set'}</code>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Mesh:</span>
+                      <code className="text-gray-900 dark:text-white">{settings?.mesh_site || 'Not set'}</code>
                     </div>
                   </div>
                 </div>
@@ -246,10 +295,10 @@ const Settings = () => {
 
               <button
                 onClick={applyDomain}
-                disabled={saving || !domain.trim()}
+                disabled={saving || !apiDomain.trim()}
                 className="px-5 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
-                {saving ? 'Applying...' : 'Apply Domain'}
+                {saving ? 'Applying...' : 'Apply Domains'}
               </button>
             </div>
           )}
