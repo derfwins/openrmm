@@ -174,6 +174,11 @@ const UserManagement = () => {
   const [editingRole, setEditingRole] = useState<Role | null>(null)
   const [roleForm, setRoleForm] = useState<Partial<Role>>({ name: '', is_superuser: false })
 
+  // Edit user state
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', email: '', is_active: true, role: 0 as number | null, block_dashboard_login: false })
+  const [newPassword, setNewPassword] = useState('')
+
   const token = localStorage.getItem('token')
   const serverBase = API_BASE_URL
 
@@ -250,6 +255,83 @@ const UserManagement = () => {
       })
       alert('Password reset successfully')
     } catch { setError('Failed to reset password') }
+  }
+
+  const openEditUser = (user: User) => {
+    setEditingUser(user)
+    setEditForm({
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      is_active: user.is_active,
+      role: user.role,
+      block_dashboard_login: user.block_dashboard_login,
+    })
+    setNewPassword('')
+  }
+
+  const saveEditUser = async () => {
+    if (!editingUser) return
+    setSaving(true)
+    setError('')
+    try {
+      const resp = await fetch(`${serverBase}/accounts/${editingUser.id}/users/`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(editForm),
+      })
+      if (!resp.ok) {
+        const err = await resp.text()
+        setError(err)
+        setSaving(false)
+        return
+      }
+      // If password was provided, reset it separately
+      if (newPassword) {
+        const pwResp = await fetch(`${serverBase}/accounts/users/reset/`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ id: editingUser.id, password: newPassword }),
+        })
+        if (!pwResp.ok) {
+          setError('User saved but password reset failed')
+          setSaving(false)
+          return
+        }
+      }
+      setEditingUser(null)
+      setNewPassword('')
+      await fetchData()
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { setError('Failed to update user') }
+    setSaving(false)
+  }
+
+  const resetMFA = async (userId: number) => {
+    if (!confirm('Reset this user\'s 2FA/MFA? They will need to set it up again on next login.')) return
+    try {
+      await fetch(`${serverBase}/accounts/users/reset_totp/`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ id: userId }),
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { setError('Failed to reset MFA') }
+  }
+
+  const setupMFA = async (userId: number) => {
+    if (!confirm('Enable 2FA/MFA for this user? A TOTP key will be generated. They will need an authenticator app.')) return
+    try {
+      await fetch(`${serverBase}/accounts/users/setup_totp/`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id: userId }),
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { setError('Failed to setup MFA') }
   }
 
   const createRole = async () => {
@@ -407,6 +489,78 @@ const UserManagement = () => {
             </div>
           )}
 
+          {/* Edit User Modal */}
+          {editingUser && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Edit User: {editingUser.username}</h2>
+                <button onClick={() => { setEditingUser(null); setNewPassword('') }} className="text-gray-400 hover:text-gray-600">✕</button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">First Name</label>
+                  <input type="text" value={editForm.first_name} onChange={e => setEditForm({ ...editForm, first_name: e.target.value })} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Last Name</label>
+                  <input type="text" value={editForm.last_name} onChange={e => setEditForm({ ...editForm, last_name: e.target.value })} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                  <input type="email" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
+                  <select value={editForm.role || 0} onChange={e => setEditForm({ ...editForm, role: e.target.value ? parseInt(e.target.value) : null })} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
+                    <option value={0}>No role</option>
+                    {roles.map(r => <option key={r.id} value={r.id}>{r.name}{r.is_superuser ? ' (Superuser)' : ''}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Password</label>
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Leave blank to keep current" className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white" />
+                </div>
+                <div className="flex items-end gap-4">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setEditForm({ ...editForm, is_active: !editForm.is_active })} className={`relative w-10 h-6 rounded-full transition-colors ${editForm.is_active ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`} >
+                      <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${editForm.is_active ? 'translate-x-4' : ''}`} />
+                    </button>
+                    <span className="text-sm text-gray-700 dark:text-gray-300">{editForm.is_active ? 'Active' : 'Disabled'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setEditForm({ ...editForm, block_dashboard_login: !editForm.block_dashboard_login })} className={`relative w-10 h-6 rounded-full transition-colors ${editForm.block_dashboard_login ? 'bg-red-600' : 'bg-gray-300 dark:bg-gray-600'}`} >
+                      <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${editForm.block_dashboard_login ? 'translate-x-4' : ''}`} />
+                    </button>
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Block Login</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-4 space-y-3">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white">🔒 MFA / Two-Factor Authentication</h3>
+                <div className="flex gap-3">
+                  <button onClick={() => setupMFA(editingUser.id)} className="px-3 py-1.5 text-xs bg-green-500/10 text-green-700 dark:text-green-400 rounded-lg hover:bg-green-500/20">
+                    🔑 Setup MFA
+                  </button>
+                  <button onClick={() => resetMFA(editingUser.id)} className="px-3 py-1.5 text-xs bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-lg hover:bg-yellow-500/20">
+                    🔄 Reset MFA
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Setup MFA generates a TOTP key. The user will need an authenticator app (Google Authenticator, Authy, etc.). Reset MFA removes the key so the user can log in without 2FA or set it up again.</p>
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={saveEditUser} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button onClick={() => { setEditingUser(null); setNewPassword('') }} className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Users Table */}
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
             <table className="w-full text-sm">
@@ -447,11 +601,8 @@ const UserManagement = () => {
                     </td>
                     <td className="px-5 py-3 text-gray-400 text-xs">{user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}</td>
                     <td className="px-5 py-3 text-right space-x-1">
-                      <button onClick={() => toggleUserActive(user)} className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-200 dark:hover:bg-gray-600">
-                        {user.is_active ? 'Disable' : 'Enable'}
-                      </button>
-                      <button onClick={() => resetPassword(user.id)} className="px-2 py-1 text-xs bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded hover:bg-yellow-500/20">
-                        Reset PW
+                      <button onClick={() => openEditUser(user)} className="px-2 py-1 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-500/20">
+                        Edit
                       </button>
                       <button onClick={() => deleteUser(user.id, user.username)} className="px-2 py-1 text-xs bg-red-500/10 text-red-600 dark:text-red-400 rounded hover:bg-red-500/20">
                         Delete
