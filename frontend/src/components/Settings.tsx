@@ -1,33 +1,34 @@
+import { useState, useEffect } from 'react'
 import { API_BASE_URL } from '../config'
 
 interface CoreSettings {
   id: number
-  mesh_site: string
-  mesh_token: string
-  mesh_username: string
-  mesh_device_group: string
-  mesh_company_name: string | null
-  default_time_zone: string
-  smtp_from_email: string
-  smtp_from_name: string | null
-  smtp_host: string
-  smtp_host_user: string
-  smtp_host_password: string
-  smtp_port: number
-  smtp_requires_auth: boolean
-  open_ai_token: string | null
-  open_ai_model: string
-  agent_auto_update: boolean
-  agent_debug_level: string
-  enable_server_scripts: boolean
-  enable_server_webterminal: boolean
-  notify_on_info_alerts: boolean
-  notify_on_warning_alerts: boolean
+  company_name: string
+  timezone: string
   date_format: string
-  check_history_prune_days: number
-  resolved_alerts_prune_days: number
-  agent_history_prune_days: number
-  sync_mesh_with_trmm: boolean
+  agent_auto_update: boolean
+  api_url: string
+  frontend_url: string
+  mesh_site: string
+  mesh_username: string
+  mesh_token_key: string
+  mesh_device_group: string
+  mesh_sync: boolean
+  smtp_host: string
+  smtp_port: number
+  smtp_username: string
+  smtp_password: string
+  smtp_from: string
+  smtp_use_tls: boolean
+  alert_warning: boolean
+  alert_info: boolean
+  server_scripts: boolean
+  web_terminal: boolean
+  enable_sso: boolean
+  debug_level: number
+  data_retention_days: number
+  openai_api_key: string
+  ai_model: string
   all_timezones?: string[]
 }
 
@@ -63,7 +64,6 @@ const Settings = () => {
           setMeshDomain(data.mesh_site.replace(/^https?:\/\//, ''))
         }
       }
-      // Try to get current API/UI domains from server base
       const apiHost = serverBase.replace(/^https?:\/\//, '')
       if (!apiDomain) setApiDomain(apiHost)
     } catch {
@@ -105,32 +105,28 @@ const Settings = () => {
   }
 
   const applyDomain = async () => {
-    if (!apiDomain.trim()) return
+    if (!settings || !apiDomain.trim()) return
     setSaving(true)
     setError('')
     try {
-      // Update mesh_site in CoreSettings
-      const meshSite = meshDomain.trim() ? `https://${meshDomain.trim()}` : settings!.mesh_site
-      const updated = { ...settings!, mesh_site: meshSite }
+      const meshSite = meshDomain.trim() ? `https://${meshDomain.trim()}` : settings.mesh_site
+      const updated = {
+        ...settings,
+        api_url: `https://${apiDomain.trim()}`,
+        frontend_url: uiDomain.trim() ? `https://${uiDomain.trim()}` : settings.frontend_url,
+        mesh_site: meshSite,
+      }
       const resp = await fetch(`${serverBase}/core/settings/`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(updated),
       })
       if (!resp.ok) {
-        setError('Failed to save backend settings')
+        setError('Failed to save domain settings')
         setSaving(false)
         return
       }
       setSettings(updated)
-
-      // Update ALLOWED_HOSTS and server config via a server-side script
-      const configResp = await fetch(`${serverBase}/core/settings/`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(updated),
-      })
-
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch {
@@ -157,7 +153,13 @@ const Settings = () => {
     )
   }
 
-  const domainBase = apiDomain ? apiDomain.split('.').slice(-2).join('.') : 'yourdomain.com'
+  if (!settings) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <p className="text-red-500">Failed to load settings</p>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -208,8 +210,8 @@ const Settings = () => {
               <div className="space-y-5">
                 {/* API Domain */}
                 <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">🖥️ API + Admin Backend</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Django backend, REST API, and Django Admin. Agents connect here.</p>
+                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">🖥️ API Backend</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">FastAPI backend, REST API, and admin. Agents connect here.</p>
                   <input
                     type="text"
                     value={apiDomain}
@@ -277,15 +279,15 @@ const Settings = () => {
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                     <div className="flex justify-between">
                       <span>API:</span>
-                      <code className="text-gray-900 dark:text-white">{settings?.mesh_site || 'Not set'}</code>
+                      <code className="text-gray-900 dark:text-white">{settings.api_url || apiDomain || 'Not set'}</code>
                     </div>
                     <div className="flex justify-between">
                       <span>Frontend:</span>
-                      <code className="text-gray-900 dark:text-white">{uiDomain || 'Not set'}</code>
+                      <code className="text-gray-900 dark:text-white">{settings.frontend_url || uiDomain || 'Not set'}</code>
                     </div>
                     <div className="flex justify-between">
                       <span>Mesh:</span>
-                      <code className="text-gray-900 dark:text-white">{settings?.mesh_site || 'Not set'}</code>
+                      <code className="text-gray-900 dark:text-white">{settings.mesh_site || 'Not set'}</code>
                     </div>
                   </div>
                 </div>
@@ -305,21 +307,20 @@ const Settings = () => {
           {activeTab === 'general' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">General</h2>
-              <Field label="Company Name" value={settings.mesh_company_name || ''} onChange={v => update('mesh_company_name', v)} />
+              <Field label="Company Name" value={settings.company_name} onChange={v => update('company_name', v)} />
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Timezone</label>
-                <select value={settings.default_time_zone} onChange={e => update('default_time_zone', e.target.value)} className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
-                  {(settings.all_timezones || []).map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                <select value={settings.timezone} onChange={e => update('timezone', e.target.value)} className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
+                  {(settings.all_timezones || ['UTC', 'US/Eastern', 'US/Central', 'US/Mountain', 'US/Pacific', 'Europe/London', 'Europe/Berlin', 'Asia/Tokyo']).map(tz => <option key={tz} value={tz}>{tz}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date Format</label>
                 <select value={settings.date_format} onChange={e => update('date_format', e.target.value)} className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
-                  <option value="MMM-DD-YYYY - HH:mm">MMM-DD-YYYY - HH:mm</option>
-                  <option value="DD-MMM-YYYY - HH:mm">DD-MMM-YYYY - HH:mm</option>
-                  <option value="YYYY-MM-DD - HH:mm">YYYY-MM-DD - HH:mm</option>
-                  <option value="MM/DD/YYYY - HH:mm">MM/DD/YYYY - HH:mm</option>
-                  <option value="DD/MM/YYYY - HH:mm">DD/MM/YYYY - HH:mm</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                  <option value="MMM-DD-YYYY">MMM-DD-YYYY</option>
                 </select>
               </div>
               <Toggle label="Agent Auto Update" desc="Automatically update agents when new versions are available" checked={settings.agent_auto_update} onChange={v => update('agent_auto_update', v)} />
@@ -333,9 +334,9 @@ const Settings = () => {
               <p className="text-sm text-gray-500 dark:text-gray-400">Remote desktop, terminal, and file transfer</p>
               <Field label="Mesh Site URL" value={settings.mesh_site} onChange={v => update('mesh_site', v)} placeholder="https://mesh.yourdomain.com" />
               <Field label="Mesh Username" value={settings.mesh_username} onChange={v => update('mesh_username', v)} />
-              <Field label="Mesh Token" value={settings.mesh_token || ''} onChange={v => update('mesh_token', v)} type="password" />
+              <Field label="Mesh Token" value={settings.mesh_token_key} onChange={v => update('mesh_token_key', v)} type="password" />
               <Field label="Device Group" value={settings.mesh_device_group} onChange={v => update('mesh_device_group', v)} />
-              <Toggle label="Sync Mesh with TRMM" desc="Automatically sync mesh agent groups" checked={settings.sync_mesh_with_trmm} onChange={v => update('sync_mesh_with_trmm', v)} />
+              <Toggle label="Sync Mesh Agents" desc="Automatically sync mesh agent groups" checked={settings.mesh_sync} onChange={v => update('mesh_sync', v)} />
             </div>
           )}
 
@@ -343,13 +344,12 @@ const Settings = () => {
           {activeTab === 'email' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Email / SMTP</h2>
-              <Field label="From Email" value={settings.smtp_from_email} onChange={v => update('smtp_from_email', v)} />
-              <Field label="From Name" value={settings.smtp_from_name || ''} onChange={v => update('smtp_from_name', v)} />
+              <Field label="From Email" value={settings.smtp_from} onChange={v => update('smtp_from', v)} />
               <Field label="SMTP Host" value={settings.smtp_host} onChange={v => update('smtp_host', v)} />
-              <Field label="SMTP User" value={settings.smtp_host_user} onChange={v => update('smtp_host_user', v)} />
-              <Field label="SMTP Password" value={settings.smtp_host_password} onChange={v => update('smtp_host_password', v)} type="password" />
+              <Field label="SMTP User" value={settings.smtp_username} onChange={v => update('smtp_username', v)} />
+              <Field label="SMTP Password" value={settings.smtp_password} onChange={v => update('smtp_password', v)} type="password" />
               <Field label="SMTP Port" value={String(settings.smtp_port)} onChange={v => update('smtp_port', parseInt(v) || 587)} type="number" />
-              <Toggle label="SMTP Requires Auth" desc="Enable SMTP authentication" checked={settings.smtp_requires_auth} onChange={v => update('smtp_requires_auth', v)} />
+              <Toggle label="Use TLS" desc="Enable TLS for SMTP connections" checked={settings.smtp_use_tls} onChange={v => update('smtp_use_tls', v)} />
             </div>
           )}
 
@@ -357,8 +357,8 @@ const Settings = () => {
           {activeTab === 'notifications' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Notifications</h2>
-              <Toggle label="Notify on Warning Alerts" desc="Send alerts for warning-level check failures" checked={settings.notify_on_warning_alerts} onChange={v => update('notify_on_warning_alerts', v)} />
-              <Toggle label="Notify on Info Alerts" desc="Send alerts for info-level notifications" checked={settings.notify_on_info_alerts} onChange={v => update('notify_on_info_alerts', v)} />
+              <Toggle label="Notify on Warning Alerts" desc="Send alerts for warning-level check failures" checked={settings.alert_warning} onChange={v => update('alert_warning', v)} />
+              <Toggle label="Notify on Info Alerts" desc="Send alerts for info-level notifications" checked={settings.alert_info} onChange={v => update('alert_info', v)} />
             </div>
           )}
 
@@ -366,27 +366,23 @@ const Settings = () => {
           {activeTab === 'security' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Security</h2>
-              <Toggle label="Server Scripts" desc="Allow running scripts on the server" checked={settings.enable_server_scripts} onChange={v => update('enable_server_scripts', v)} />
-              <Toggle label="Web Terminal" desc="Enable web-based terminal access" checked={settings.enable_server_webterminal} onChange={v => update('enable_server_webterminal', v)} />
-              <Toggle label="Block Local User Logon" desc="Prevent local user login (SSO only)" checked={settings.block_local_user_logon} onChange={v => update('block_local_user_logon', v)} />
-              <Toggle label="SSO Enabled" desc="Enable Single Sign-On" checked={settings.sso_enabled} onChange={v => update('sso_enabled', v)} />
+              <Toggle label="Server Scripts" desc="Allow running scripts on the server" checked={settings.server_scripts} onChange={v => update('server_scripts', v)} />
+              <Toggle label="Web Terminal" desc="Enable web-based terminal access" checked={settings.web_terminal} onChange={v => update('web_terminal', v)} />
+              <Toggle label="Enable SSO" desc="Enable Single Sign-On authentication" checked={settings.enable_sso} onChange={v => update('enable_sso', v)} />
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Agent Debug Level</label>
-                <select value={settings.agent_debug_level} onChange={e => update('agent_debug_level', e.target.value)} className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
-                  <option value="info">Info</option>
-                  <option value="warning">Warning</option>
-                  <option value="error">Error</option>
-                  <option value="debug">Debug</option>
-                  <option value="trace">Trace</option>
+                <select value={settings.debug_level} onChange={e => update('debug_level', parseInt(e.target.value))} className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white">
+                  <option value={0}>None (0)</option>
+                  <option value={1}>Info (1)</option>
+                  <option value={2}>Warning (2)</option>
+                  <option value={3}>Error (3)</option>
+                  <option value={4}>Debug (4)</option>
+                  <option value={5}>Trace (5)</option>
                 </select>
               </div>
               <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Data Retention (days)</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Check History" value={String(settings.check_history_prune_days)} onChange={v => update('check_history_prune_days', parseInt(v) || 0)} type="number" />
-                  <Field label="Resolved Alerts" value={String(settings.resolved_alerts_prune_days)} onChange={v => update('resolved_alerts_prune_days', parseInt(v) || 0)} type="number" />
-                  <Field label="Agent History" value={String(settings.agent_history_prune_days)} onChange={v => update('agent_history_prune_days', parseInt(v) || 0)} type="number" />
-                </div>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Data Retention</h3>
+                <Field label="Retention Days" value={String(settings.data_retention_days)} onChange={v => update('data_retention_days', parseInt(v) || 0)} type="number" />
               </div>
             </div>
           )}
@@ -395,8 +391,8 @@ const Settings = () => {
           {activeTab === 'ai' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">AI Integration</h2>
-              <Field label="OpenAI API Key" value={settings.open_ai_token || ''} onChange={v => update('open_ai_token', v)} type="password" placeholder="sk-..." />
-              <Field label="Model" value={settings.open_ai_model} onChange={v => update('open_ai_model', v)} />
+              <Field label="OpenAI API Key" value={settings.openai_api_key} onChange={v => update('openai_api_key', v)} type="password" placeholder="sk-..." />
+              <Field label="Model" value={settings.ai_model} onChange={v => update('ai_model', v)} placeholder="gpt-4" />
               <p className="text-xs text-gray-500 dark:text-gray-400">Used for AI-powered script generation and copilot features</p>
             </div>
           )}
