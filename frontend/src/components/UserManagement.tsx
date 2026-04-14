@@ -195,9 +195,12 @@ const UserManagement = () => {
         fetch(`${serverBase}/accounts/users/`, { headers }),
         fetch(`${serverBase}/accounts/roles/`, { headers }),
       ])
-      setUsers(await usersResp.json())
-      setRoles(await rolesResp.json())
-    } catch { setError('Failed to load data') }
+      const usersData = usersResp.ok ? await usersResp.json() : []
+      const rolesData = rolesResp.ok ? await rolesResp.json() : []
+      setUsers(Array.isArray(usersData) ? usersData : [])
+      setRoles(Array.isArray(rolesData) ? rolesData : [])
+      if (!usersResp.ok || !rolesResp.ok) setError('Failed to load some data — check API connection')
+    } catch (e) { setError('Failed to load data: ' + (e instanceof Error ? e.message : String(e))) }
     setLoading(false)
   }
 
