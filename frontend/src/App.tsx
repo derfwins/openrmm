@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect, Component, ReactNode } from 'react'
+import { API_BASE_URL } from './config'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import DeviceList from './components/DeviceList'
@@ -30,6 +31,7 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
     const saved = localStorage.getItem('darkMode')
     return saved !== null ? JSON.parse(saved) : true  // Default to dark
   })
+  const [currentUsername, setCurrentUsername] = useState(AuthContext.getUsername())
 
   useEffect(() => {
     localStorage.setItem('darkMode', JSON.stringify(darkMode))
@@ -39,6 +41,28 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
   // Set dark on load
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
+  }, [])
+
+  // Fetch real username from /v2/me/ on mount
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const token = AuthContext.getToken()
+        if (!token) return
+        const base = API_BASE_URL
+        const resp = await fetch(`${base}/v2/me/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        if (resp.ok) {
+          const data = await resp.json()
+          if (data.username) {
+            setCurrentUsername(data.username)
+            AuthContext.setUsername(data.username)
+          }
+        }
+      } catch {}
+    }
+    fetchUser()
   }, [])
 
   if (!AuthContext.isAuthenticated()) return <Navigate to="/login" />
@@ -61,9 +85,9 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
-                {AuthContext.getUsername()[0]?.toUpperCase() || 'A'}
+                {currentUsername[0]?.toUpperCase() || 'A'}
               </div>
-              <span className="text-sm text-gray-300 font-medium">{AuthContext.getUsername()}</span>
+              <span className="text-sm text-gray-300 font-medium">{currentUsername}</span>
             </div>
             <button
               onClick={AuthContext.logout}
