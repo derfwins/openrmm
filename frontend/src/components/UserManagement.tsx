@@ -169,15 +169,16 @@ const UserManagement = () => {
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '', first_name: '', last_name: '', role: 0 })
 
-  // Add role form
-  const [showAddRole, setShowAddRole] = useState(false)
-  const [editingRole, setEditingRole] = useState<Role | null>(null)
-  const [roleForm, setRoleForm] = useState<Partial<Role>>({ name: '', is_superuser: false })
-
   // Edit user state
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', email: '', is_active: true, role: 0 as number | null, block_dashboard_login: false })
   const [newPassword, setNewPassword] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  // Add role form
+  const [showAddRole, setShowAddRole] = useState(false)
+  const [editingRole, setEditingRole] = useState<Role | null>(null)
+  const [roleForm, setRoleForm] = useState<Partial<Role>>({ name: '', is_superuser: false })
 
   const token = localStorage.getItem('token')
   const serverBase = API_BASE_URL

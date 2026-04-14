@@ -21,6 +21,7 @@ const Login = () => {
       if (data.totp === false) {
         // No 2FA set up — checkcreds already logged in and returned token
         localStorage.setItem('token', data.token)
+        localStorage.setItem('username', username)
         navigate('/dashboard')
       } else {
         // 2FA required — show the code input
@@ -40,6 +41,7 @@ const Login = () => {
     setError('')
     try {
       await apiService.login(username, password, twofactor || 'sekret')
+      localStorage.setItem('username', username)
       navigate('/dashboard')
     } catch {
       setError('Invalid 2FA code')

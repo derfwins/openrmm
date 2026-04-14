@@ -19,8 +19,10 @@ import Sidebar from './components/Sidebar'
 
 export const AuthContext = {
   isAuthenticated: () => localStorage.getItem('token') !== null,
-  logout: () => { localStorage.removeItem('token'); window.location.href = '/login' },
+  logout: () => { localStorage.removeItem('token'); localStorage.removeItem('username'); window.location.href = '/login' },
   getToken: () => localStorage.getItem('token'),
+  getUsername: () => localStorage.getItem('username') || 'admin',
+  setUsername: (name: string) => localStorage.setItem('username', name),
 }
 
 const AppLayout = ({ children }: { children: React.ReactNode }) => {
@@ -59,9 +61,9 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
-                A
+                {AuthContext.getUsername()[0]?.toUpperCase() || 'A'}
               </div>
-              <span className="text-sm text-gray-300 font-medium">admin</span>
+              <span className="text-sm text-gray-300 font-medium">{AuthContext.getUsername()}</span>
             </div>
             <button
               onClick={AuthContext.logout}
