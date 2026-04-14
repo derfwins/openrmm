@@ -2,38 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies required by Tactical RMM
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    postgresql-client \
-    libpq-dev \
-    git \
-    curl \
-    wget \
-    build-essential \
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    shared-mime-info \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for caching
-COPY tacticalrmm/requirements.txt ./requirements.txt
+# Python deps
+COPY requirements.new.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire Django project
-COPY tacticalrmm/ /app/
+# Copy the new backend
+COPY v2/ /app/v2/
 
-# Collect static files (will be overridden by volume mount in dev)
-RUN python manage.py collectstatic --noinput 2>/dev/null || true
-
+# Expose port
 EXPOSE 8000
 
-# Dev mode: uvicorn with auto-reload
-CMD ["uvicorn", "tacticalrmm.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Run
+CMD ["uvicorn", "v2.main:app", "--host", "0.0.0.0", "--port", "8000"]
