@@ -1,104 +1,140 @@
 # OpenRMM
 
-AI-Powered Remote Monitoring & Management Platform
-
-## Overview
-
-OpenRMM is a modern, AI-enhanced RMM platform built on the proven Tactical RMM foundation. We've replaced the frontend with React + Tailwind CSS, added AI capabilities via Groq API, and optimized for scale with Kubernetes support.
+A modern, open-source Remote Monitoring and Management platform built from scratch.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────┐
-│         React Frontend                 │
-│         - TypeScript                    │
-│         - Tailwind CSS                  │
-│         - Modern UI/UX                  │
-└─────────────────┬───────────────────────┘
-                  │ REST API
-┌─────────────────▼───────────────────────┐
-│         Django Backend                 │
-│         - Proven at scale               │
-│         - Tactical RMM foundation       │
-└─────────────────┬───────────────────────┘
-                  │ NATS / Redis
-┌─────────────────▼───────────────────────┐
-│         Go Agent                       │
-│         - Cross-platform                │
-│         - Fast & lightweight            │
-└─────────────────────────────────────────┘
-```
+| Component | Technology | Port |
+|-----------|-----------|------|
+| **Backend API** | FastAPI + SQLAlchemy (async) | 8000 |
+| **Frontend** | React + Vite + Tailwind CSS | 5173 |
+| **Database** | PostgreSQL 15 | 5432 |
+| **Cache** | Redis 7 | 6379 |
+| **Message Queue** | NATS 2 | 4222 |
+| **Remote Desktop** | Apache Guacamole | 8080 |
+| **Reverse Proxy** | Nginx | 80/443 |
 
 ## Quick Start
 
-### Prerequisites
-
-- Docker & Docker Compose
-- Node.js 18+
-- Python 3.11+
-- Go 1.21+
-
-### Development Setup
-
 ```bash
-# Clone repository
+# Clone
 git clone https://github.com/Derfwins/openrmm.git
 cd openrmm
 
-# Start backend services
-docker-compose up -d
+# Start all services
+docker compose up -d
 
-# Install frontend dependencies
-cd frontend
-npm install
-npm run dev
-
-# Access the app
+# Access
 # Frontend: http://localhost:5173
-# Backend API: http://localhost:8000
+# API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
 ```
+
+### Default Login
+- **Username:** admin
+- **Password:** admin
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `POST /v2/checkcreds/` | POST | Verify credentials (step 1 of login) |
+| `POST /v2/login/` | POST | Full login with optional 2FA |
+| `GET /accounts/users/` | GET | List all users |
+| `POST /accounts/users/` | POST | Create a user |
+| `PUT /accounts/{id}/users/` | PUT | Update a user |
+| `DELETE /accounts/{id}/users/` | DELETE | Delete a user |
+| `POST /accounts/users/reset/` | POST | Reset user password |
+| `PUT /accounts/users/reset_totp/` | PUT | Reset user MFA |
+| `POST /accounts/users/setup_totp/` | POST | Setup MFA for user |
+| `GET /accounts/roles/` | GET | List roles |
+| `POST /accounts/roles/` | POST | Create role |
+| `GET /clients/` | GET | List clients with sites |
+| `POST /clients/` | POST | Create client + initial site |
+| `DELETE /clients/{id}/` | DELETE | Delete client |
+| `POST /clients/sites/` | POST | Create site under client |
+| `GET /agents/` | GET | List all agents |
+| `POST /agents/installer/` | POST | Generate install script |
+| `POST /agents/heartbeat/` | POST | Agent heartbeat |
+| `GET /core/settings/` | GET | Get core settings |
+| `PUT /core/settings/` | PUT | Update settings |
+
+Full interactive docs available at `/docs` (Swagger UI) when the backend is running.
+
+## Authentication
+
+OpenRMM uses JWT Bearer tokens. Login flow:
+
+1. `POST /v2/checkcreds/` with `{username, password}`
+   - If no MFA: returns `{token, expiry, totp: false}` — you're logged in
+   - If MFA enabled: returns `{totp: true}` — proceed to step 2
+2. `POST /v2/login/` with `{username, password, twofactor}` — returns token
+
+All authenticated requests use `Authorization: Bearer <token>` header.
 
 ## Project Structure
 
 ```
 openrmm/
-├── api/              # Django backend (Tactical RMM base)
-├── frontend/         # React + TypeScript frontend (NEW)
-├── natsapi/          # NATS message queue API
-├── docker/           # Docker configurations
-├── ansible/          # Deployment automation
-└── .github/          # CI/CD workflows
+├── api/                    # FastAPI backend
+│   ├── v2/
+│   │   ├── main.py         # Application entry point
+│   │   ├── config.py       # Settings & configuration
+│   │   ├── database.py     # SQLAlchemy setup
+│   │   ├── auth.py         # JWT auth & password hashing
+│   │   ├── models/         # SQLAlchemy models
+│   │   │   ├── user.py     # User & Role
+│   │   │   ├── client.py   # Client & Site
+│   │   │   ├── agent.py    # Agent & Check
+│   │   │   └── settings.py # CoreSettings
+│   │   └── routers/        # API route handlers
+│   │       ├── auth.py     # Login/checkcreds
+│   │       ├── accounts.py # Users & roles CRUD
+│   │       ├── clients.py  # Clients & sites CRUD
+│   │       ├── agents.py   # Agents & installer
+│   │       └── core.py     # Settings CRUD
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/               # React frontend
+│   ├── src/
+│   │   ├── components/     # React components
+│   │   ├── services/       # API service layer
+│   │   ├── config.ts       # Smart API URL detection
+│   │   ├── App.tsx         # Main app with routing
+│   │   └── index.css       # Tailwind styles
+│   ├── Dockerfile
+│   └── package.json
+├── docker/
+│   ├── nginx/              # Nginx config
+│   └── postgres/           # DB init scripts
+├── docker-compose.yml      # Full stack deployment
+└── scripts/
+    └── deploy.sh           # Deployment helper
 ```
 
-## Features
+## Configuration
 
-### Core RMM (From Tactical RMM)
-- ✅ Device discovery & management
-- ✅ Remote desktop (via MeshCentral)
-- ✅ Patch management
-- ✅ Scripting & automation
-- ✅ Multi-tenancy
-- ✅ Audit logging
+Environment variables (set in docker-compose.yml or .env):
 
-### New Additions
-- 🆕 Modern React UI
-- 🆕 AI Copilot (Groq API)
-- 🆕 Kubernetes deployment
-- 🆕 TimescaleDB for metrics
-- 🆕 Enhanced security
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_HOST` | localhost | PostgreSQL host |
+| `POSTGRES_PASSWORD` | openrmm_dev_2026 | DB password |
+| `REDIS_HOST` | localhost | Redis host |
+| `SECRET_KEY` | (dev key) | JWT signing key |
+| `DEBUG` | True | Debug mode |
+| `CORS_ORIGINS` | (multiple) | Allowed CORS origins |
 
-## Contributing
+## Deployment with Cloudflare Tunnels
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+For production, use Cloudflare tunnels instead of certbot:
+
+- `rmm.derfwins.com` → Backend API (:8000)
+- `rmmapp.derfwins.com` → Frontend (:5173)  
+- `mesh.derfwins.com` → Mesh Central (:8080)
+
+The frontend auto-detects the API URL based on hostname.
 
 ## License
 
-MIT License - See LICENSE.md
-
-## Credits
-
-Built on the excellent [Tactical RMM](https://github.com/amidaware/tacticalrmm) by Amidaware.
+OpenRMM is released under the MIT License.
