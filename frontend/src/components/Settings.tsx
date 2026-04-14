@@ -47,7 +47,7 @@ const Settings = () => {
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Token ${token}`,
+    'Authorization': `Bearer ${token}`,
   }
 
   const fetchSettings = async () => {

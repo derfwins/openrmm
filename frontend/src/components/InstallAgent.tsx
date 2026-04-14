@@ -35,7 +35,7 @@ const InstallAgent = () => {
 
   const headers = {
     'Content-Type': 'application/json',
-    'Authorization': `Token ${token}`,
+    'Authorization': `Bearer ${token}`,
   }
 
   useEffect(() => {

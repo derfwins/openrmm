@@ -37,7 +37,7 @@ const Clients = () => {
 
   const headers = {
     'Content-Type': 'application/json',
-    'Authorization': `Token ${token}`,
+    'Authorization': `Bearer ${token}`,
   }
 
   const fetchClients = async () => {

@@ -180,7 +180,7 @@ const Login = () => {
           )}
 
           <p className="text-center text-gray-500 text-xs mt-8">
-            OpenRMM v0.1 · Tactical RMM Backend
+            OpenRMM v0.1 · Custom Backend
           </p>
         </div>
       </div>
