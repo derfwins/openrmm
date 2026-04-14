@@ -214,14 +214,16 @@ const Settings = () => {
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-3">
                     <p>Cloudflare Tunnels expose your server without opening any ports. SSL is automatic.</p>
                     <div className="bg-white dark:bg-gray-900 rounded-lg p-3 font-mono text-xs space-y-1.5">
-                      <div><span className="text-blue-500">RMM API + Frontend</span> &nbsp;&nbsp; {domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8000</div>
-                      <div><span className="text-purple-500">Mesh Central</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mesh.{domainBase} &nbsp; → &nbsp; http://10.10.0.122:8080</div>
+                      <div><span className="text-blue-500">RMM API + Admin</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8000</div>
+                      <div><span className="text-green-500">Frontend</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; app.{domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:5173</div>
+                      <div><span className="text-purple-500">Mesh Central</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mesh.{domainBase} &nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8080</div>
                     </div>
                     <ol className="list-decimal list-inside text-xs space-y-2 mt-3">
                       <li>Go to <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Cloudflare Zero Trust</a> → Networks → Tunnels</li>
                       <li>Create a tunnel, then run the connector install command on this server (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>)</li>
-                      <li>Add a <strong>Public Hostname</strong>: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8000</code></li>
-                      <li>Add another for Mesh: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">mesh.{domainBase}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8080</code></li>
+                      <li>Add a <strong>Public Hostname</strong> for the API + Admin: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8000</code></li>
+                      <li>Add one for the Frontend: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">app.{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:5173</code></li>
+                      <li>Add one for Mesh: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">mesh.{domainBase}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8080</code></li>
                       <li>SSL is handled automatically — no certbot needed ✅</li>
                     </ol>
                   </div>
