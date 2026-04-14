@@ -1,31 +1,89 @@
-import { useState } from 'react'
-import apiService from '../services/apiService'
+import { useState, useEffect } from 'react'
+
+interface Site {
+  id: number
+  name: string
+  client: number
+  client_name: string
+  agent_count?: number
+}
+
+interface Client {
+  id: number
+  name: string
+  sites: Site[]
+}
 
 const InstallAgent = () => {
   const [loading, setLoading] = useState(false)
-  const [installScript, setInstallScript] = useState<{ cmd: string; ps: string } | null>(null)
+  const [clients, setClients] = useState<Client[]>([])
+  const [selectedClient, setSelectedClient] = useState<number | null>(null)
+  const [selectedSite, setSelectedSite] = useState<number | null>(null)
+  const [availableSites, setAvailableSites] = useState<Site[]>([])
+  const [installScript, setInstallScript] = useState('')
   const [platform, setPlatform] = useState<'windows' | 'linux'>('windows')
-  const [client, setClient] = useState('1')
-  const [site, setSite] = useState('1')
   const [agentType, setAgentType] = useState<'server' | 'workstation'>('server')
   const [copied, setCopied] = useState(false)
+  const [fetchingClients, setFetchingClients] = useState(true)
+  const [error, setError] = useState('')
+
+  const token = localStorage.getItem('token')
+  const apiUrl = window.location.hostname === 'localhost'
+    ? 'http://10.10.0.122:8000'
+    : `${window.location.protocol}//${window.location.hostname}:8000`
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Token ${token}`,
+  }
+
+  useEffect(() => {
+    const fetchClients = async () => {
+      try {
+        const resp = await fetch(`${apiUrl}/clients/`, { headers })
+        const data = await resp.json()
+        setClients(data)
+        if (data.length > 0) {
+          setSelectedClient(data[0].id)
+          const sites = data[0].sites || data[0].filtered_sites || []
+          setAvailableSites(sites)
+          if (sites.length > 0) setSelectedSite(sites[0].id)
+        }
+      } catch {
+        setError('Failed to load clients')
+      } finally {
+        setFetchingClients(false)
+      }
+    }
+    fetchClients()
+  }, [])
+
+  useEffect(() => {
+    if (!selectedClient) return
+    const client = clients.find(c => c.id === selectedClient)
+    if (client) {
+      const sites = client.sites || client.filtered_sites || []
+      setAvailableSites(sites)
+      setSelectedSite(sites.length > 0 ? sites[0].id : null)
+    }
+  }, [selectedClient, clients])
 
   const generateScript = async () => {
+    if (!selectedClient || !selectedSite) {
+      setError('Please select a client and site')
+      return
+    }
     setLoading(true)
+    setError('')
     try {
-      const token = localStorage.getItem('token')
-      const rmmServer = window.location.hostname === 'localhost'
-        ? 'http://10.10.0.122:8000'
-        : `${window.location.protocol}//${window.location.hostname}:8000`
-
       const body = {
         plat: platform,
         goarch: 'amd64',
-        client: parseInt(client),
-        site: parseInt(site),
+        client: selectedClient,
+        site: selectedSite,
         expires: 24,
         installMethod: platform === 'windows' ? 'powershell' : 'bash',
-        api: rmmServer,
+        api: apiUrl,
         agenttype: agentType,
         power: 1,
         rdp: 1,
@@ -35,19 +93,32 @@ const InstallAgent = () => {
           : 'tacticalagent-v2.10.0-linux-amd64',
       }
 
-      const response = await fetch(`${rmmServer}/agents/installer/`, {
+      const resp = await fetch(`${apiUrl}/agents/installer/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${token}`,
-        },
+        headers,
         body: JSON.stringify(body),
       })
 
-      const data = await response.json()
-      setInstallScript({ cmd: data.cmd || data.ps || '', ps: data.ps || '' })
+      if (!resp.ok) {
+        const text = await resp.text()
+        // Try to extract error from HTML or JSON
+        const match = text.match(/Exception Value:?\s*(.+)/)
+        setError(match ? match[1].trim() : 'Failed to generate install script')
+        setLoading(false)
+        return
+      }
+
+      // The powershell method returns text/plain, bash returns JSON with .cmd
+      const contentType = resp.headers.get('content-type') || ''
+      if (contentType.includes('text/plain')) {
+        const text = await resp.text()
+        setInstallScript(text)
+      } else {
+        const data = await resp.json()
+        setInstallScript(data.cmd || data.ps || JSON.stringify(data))
+      }
     } catch (err) {
-      console.error('Failed to generate install script:', err)
+      setError('Failed to generate install script')
     } finally {
       setLoading(false)
     }
@@ -59,8 +130,6 @@ const InstallAgent = () => {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const scriptContent = installScript?.ps || installScript?.cmd || ''
-
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -68,11 +137,50 @@ const InstallAgent = () => {
         <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Generate an install script to deploy the Tactical RMM agent on your devices</p>
       </div>
 
+      {error && (
+        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-600 dark:text-red-400 text-sm flex justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-300">✕</button>
+        </div>
+      )}
+
       {/* Configuration */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 space-y-5">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Configuration</h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Client */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client</label>
+            <select
+              value={selectedClient || ''}
+              onChange={e => setSelectedClient(Number(e.target.value))}
+              disabled={fetchingClients || clients.length === 0}
+              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white disabled:opacity-50"
+            >
+              {clients.length === 0 && <option value="">No clients</option>}
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Site */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Site</label>
+            <select
+              value={selectedSite || ''}
+              onChange={e => setSelectedSite(Number(e.target.value))}
+              disabled={!selectedClient || availableSites.length === 0}
+              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white disabled:opacity-50"
+            >
+              {availableSites.length === 0 && <option value="">No sites</option>}
+              {availableSites.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Platform */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Platform</label>
@@ -98,33 +206,11 @@ const InstallAgent = () => {
               <option value="workstation">Workstation</option>
             </select>
           </div>
-
-          {/* Client */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client ID</label>
-            <input
-              type="number"
-              value={client}
-              onChange={e => setClient(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
-            />
-          </div>
-
-          {/* Site */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Site ID</label>
-            <input
-              type="number"
-              value={site}
-              onChange={e => setSite(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
-            />
-          </div>
         </div>
 
         <button
           onClick={generateScript}
-          disabled={loading}
+          disabled={loading || !selectedClient || !selectedSite}
           className="px-5 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
         >
           {loading ? 'Generating...' : 'Generate Install Script'}
@@ -132,21 +218,21 @@ const InstallAgent = () => {
       </div>
 
       {/* Generated Script */}
-      {scriptContent && (
+      {installScript && (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
               {platform === 'windows' ? 'PowerShell' : 'Bash'} Install Script
             </h2>
             <button
-              onClick={() => copyToClipboard(scriptContent)}
+              onClick={() => copyToClipboard(installScript)}
               className="px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors flex items-center gap-1.5"
             >
               {copied ? '✅ Copied!' : '📋 Copy'}
             </button>
           </div>
-          <pre className="p-5 bg-gray-950 text-green-400 text-xs font-mono overflow-x-auto max-h-96 leading-relaxed">
-            {scriptContent}
+          <pre className="p-5 bg-gray-950 text-green-400 text-xs font-mono overflow-x-auto max-h-96 leading-relaxed whitespace-pre-wrap">
+            {installScript}
           </pre>
         </div>
       )}
@@ -194,7 +280,7 @@ const InstallAgent = () => {
 
         <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
           <p className="text-xs text-yellow-700 dark:text-yellow-400">
-            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">10.10.0.122:8000</code> (the RMM server). For production deployments, use HTTPS and configure proper DNS.
+            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">{apiUrl.replace('https://', '').replace('http://', '')}</code> (the RMM server). For production, use HTTPS and configure proper DNS.
           </p>
         </div>
       </div>

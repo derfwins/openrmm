@@ -11,6 +11,7 @@ const Sidebar = () => {
       items: [
         { icon: '📊', label: 'Dashboard', path: '/dashboard' },
         { icon: '💻', label: 'Devices', path: '/devices' },
+        { icon: '🏢', label: 'Clients', path: '/clients' },
         { icon: '📥', label: 'Install Agent', path: '/install' },
       ]
     },
