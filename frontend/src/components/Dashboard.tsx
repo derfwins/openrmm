@@ -55,6 +55,13 @@ const Dashboard = () => {
         setStats(prev => ({ ...prev, totalClients: clientList.length }))
       }
 
+      // Get alerts count
+      try {
+        const alertsData = await apiService.getAlerts(false) // unresolved only
+        const alertList = Array.isArray(alertsData) ? alertsData : []
+        setStats(prev => ({ ...prev, totalAlerts: alertList.length }))
+      } catch { /* non-critical */ }
+
       // Health check
       try {
         const healthData = await apiService.getHealth()

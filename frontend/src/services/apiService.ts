@@ -57,12 +57,70 @@ export const apiService = {
     return response.json()
   },
 
+  // Alerts
+  async getAlerts(resolved?: boolean) {
+    const params = resolved !== undefined ? `?resolved=${resolved}` : ''
+    const response = await fetch(`${API_BASE_URL}/alerts/${params}`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch alerts')
+    return response.json()
+  },
+
+  async resolveAlert(id: number) {
+    const response = await fetch(`${API_BASE_URL}/alerts/${id}/`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ is_resolved: true }),
+    })
+    if (!response.ok) throw new Error('Failed to resolve alert')
+    return response.json()
+  },
+
+  async resolveAllAlerts() {
+    const response = await fetch(`${API_BASE_URL}/alerts/resolve_all/`, {
+      method: 'POST',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to resolve all alerts')
+    return response.json()
+  },
+
   // Scripts
   async getScripts() {
     const response = await fetch(`${API_BASE_URL}/scripts/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch scripts')
+    return response.json()
+  },
+
+  async createScript(script: any) {
+    const response = await fetch(`${API_BASE_URL}/scripts/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(script),
+    })
+    if (!response.ok) throw new Error('Failed to create script')
+    return response.json()
+  },
+
+  async updateScript(id: number, script: any) {
+    const response = await fetch(`${API_BASE_URL}/scripts/${id}/`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(script),
+    })
+    if (!response.ok) throw new Error('Failed to update script')
+    return response.json()
+  },
+
+  async deleteScript(id: number) {
+    const response = await fetch(`${API_BASE_URL}/scripts/${id}/`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to delete script')
     return response.json()
   },
 
