@@ -7,36 +7,32 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const getToken = () => localStorage.getItem('token')
 
 export const apiService = {
-  // Auth - Uses Tactical RMM v2 login endpoint
-  async login(username: string, password: string, twofactor: string = 'sekret') {
+  // Auth - Two-step login: check creds first, then login with or without 2FA
+  async checkCredentials(username: string, password: string) {
+    const response = await fetch(`${API_BASE_URL}/v2/checkcreds/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+    
+    if (!response.ok) throw new Error('Invalid credentials')
+    return response.json()
+  },
+
+  async login(username: string, password: string, twofactor?: string) {
+    const body: Record<string, string> = { username, password }
+    if (twofactor) body.twofactor = twofactor
     const response = await fetch(`${API_BASE_URL}/v2/login/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, twofactor }),
+      body: JSON.stringify(body),
     })
     
     if (!response.ok) throw new Error('Login failed')
     
     const data = await response.json()
-    // Tactical RMM returns { token, expiry, username }
     localStorage.setItem('token', data.token)
     return data
-  },
-
-  async logout() {
-    localStorage.removeItem('token')
-  },
-
-  // Check credentials (lighter weight than login - for validation)
-  async checkCredentials(username: string, password: string, twofactor: string = 'sekret') {
-    const response = await fetch(`${API_BASE_URL}/v2/checkcreds/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, twofactor }),
-    })
-    
-    if (!response.ok) throw new Error('Invalid credentials')
-    return response.json()
   },
 
   // Devices / Agents - Uses Tactical RMM API paths
