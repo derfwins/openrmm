@@ -131,6 +131,13 @@ export const apiService = {
     return response.json()
   },
 
+  // System health
+  async getHealth() {
+    const response = await fetch(`${API_BASE_URL}/health/`)
+    if (!response.ok) throw new Error('Failed to check health')
+    return response.json()
+  },
+
   // Core settings
   async getSettings() {
     const response = await fetch(`${API_BASE_URL}/core/settings/`, {

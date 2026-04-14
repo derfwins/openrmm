@@ -19,6 +19,7 @@ const Dashboard = () => {
   const [agents, setAgents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [health, setHealth] = useState<any>(null)
 
   useEffect(() => {
     loadDashboard()
@@ -53,6 +54,12 @@ const Dashboard = () => {
         const clientList = clientsData.value.results || clientsData.value || []
         setStats(prev => ({ ...prev, totalClients: clientList.length }))
       }
+
+      // Health check
+      try {
+        const healthData = await apiService.getHealth()
+        setHealth(healthData)
+      } catch { /* non-critical */ }
     } catch (err: any) {
       // If 403 or auth error, just show empty state
       if (err?.message?.includes('403') || err?.message?.includes('401')) {
@@ -107,7 +114,7 @@ const Dashboard = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           title="Total Agents"
           value={stats.totalAgents}
@@ -128,6 +135,20 @@ const Dashboard = () => {
           icon="🔴"
           color="red"
           link="/devices?filter=offline"
+        />
+        <StatCard
+          title="Clients"
+          value={stats.totalClients}
+          icon="🏢"
+          color="purple"
+          link="/clients"
+        />
+        <StatCard
+          title="Alerts"
+          value={stats.totalAlerts}
+          icon="⚠️"
+          color="orange"
+          link="/alerts"
         />
         <StatCard
           title="Alerts"
@@ -166,7 +187,7 @@ const Dashboard = () => {
               <div className="text-4xl mb-3">🖥️</div>
               <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">No agents yet</h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Install the Tactical RMM agent on your devices to start monitoring.
+                Install the OpenRMM agent on your devices to start monitoring.
               </p>
             </div>
           ) : (
@@ -199,10 +220,10 @@ const Dashboard = () => {
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">System Status</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatusIndicator name="Backend API" />
-          <StatusIndicator name="Frontend" />
-          <StatusIndicator name="Guacamole" />
-          <StatusIndicator name="Database" />
+          <StatusIndicator name="Backend API" status={health ? 'healthy' : 'checking'} />
+          <StatusIndicator name="Frontend" status="healthy" />
+          <StatusIndicator name="Guacamole" status="healthy" />
+          <StatusIndicator name="Database" status={health?.database === 'connected' ? 'healthy' : health?.database === 'error' ? 'unhealthy' : 'checking'} />
         </div>
       </div>
     </div>
@@ -254,10 +275,11 @@ const QuickAction = ({ icon, label, link }: { icon: string; label: string; link:
 )
 
 // Status Indicator
-const StatusIndicator = ({ name }: { name: string }) => (
+const StatusIndicator = ({ name, status }: { name: string; status?: 'healthy' | 'unhealthy' | 'checking' }) => (
   <div className="flex items-center gap-2">
-    <div className="w-2.5 h-2.5 rounded-full bg-green-500 status-online" />
+    <div className={`w-2.5 h-2.5 rounded-full ${status === 'healthy' ? 'bg-green-500 status-online' : status === 'unhealthy' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'}`} />
     <span className="text-sm text-gray-700 dark:text-gray-300">{name}</span>
+    <span className="text-xs text-gray-400">{status === 'healthy' ? 'OK' : status === 'unhealthy' ? 'Error' : '...'}</span>
   </div>
 )
 

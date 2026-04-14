@@ -1,11 +1,13 @@
 """OpenRMM Backend - Main Application"""
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from v2.config import settings
-from v2.database import async_engine, Base
+from v2.database import async_engine, Base, get_db, AsyncSessionLocal
 from v2.routers import auth, accounts, clients, agents, core
+from sqlalchemy import select
 
 
 @asynccontextmanager
@@ -15,7 +17,6 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     # Create default superuser if none exists
-    from sqlalchemy import select
     from v2.database import AsyncSessionLocal
     from v2.models.user import User, Role
     from v2.models.settings import CoreSettings
@@ -79,3 +80,31 @@ async def test_endpoint():
 @app.get("/")
 async def root():
     return {"app": "OpenRMM", "version": settings.APP_VERSION}
+
+
+@app.get("/health/")
+async def health_check(db: AsyncSession = Depends(get_db)):
+    """System health check."""
+    from v2.models.user import User
+    from v2.models.client import Client
+    from v2.models.agent import Agent
+    from v2.models.settings import CoreSettings
+    from sqlalchemy import func
+
+    # Check database connectivity
+    try:
+        user_count = await db.scalar(select(func.count()).select_from(User))
+        client_count = await db.scalar(select(func.count()).select_from(Client))
+        agent_count = await db.scalar(select(func.count()).select_from(Agent))
+        online_count = await db.scalar(select(func.count()).select_from(Agent).where(Agent.status == "online"))
+    except Exception:
+        return {"status": "unhealthy", "database": "error"}
+
+    return {
+        "status": "healthy",
+        "database": "connected",
+        "users": user_count,
+        "clients": client_count,
+        "agents": agent_count,
+        "agents_online": online_count,
+    }

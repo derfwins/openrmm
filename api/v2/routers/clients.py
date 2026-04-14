@@ -2,7 +2,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from v2.database import get_db
@@ -24,16 +23,21 @@ class SiteCreate(BaseModel):
 
 @router.get("/")
 async def list_clients(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Client).options(selectinload(Client.sites)))
+    # Fetch clients
+    result = await db.execute(select(Client))
     clients = result.scalars().all()
+    # Fetch sites separately
+    sites_result = await db.execute(select(Site))
+    sites = sites_result.scalars().all()
+    # Group sites by client_id
+    sites_by_client = {}
+    for s in sites:
+        sites_by_client.setdefault(s.client_id, []).append({"id": s.id, "name": s.name, "client": s.client_id})
     return [
         {
             "id": c.id,
             "name": c.name,
-            "sites": [
-                {"id": s.id, "name": s.name, "client": c.id, "agent_count": len(s.agents) if hasattr(s, 'agents') else 0}
-                for s in c.sites
-            ],
+            "sites": sites_by_client.get(c.id, []),
         }
         for c in clients
     ]
