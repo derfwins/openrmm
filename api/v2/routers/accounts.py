@@ -84,6 +84,7 @@ async def list_users(user: User = Depends(get_current_user), db: AsyncSession = 
             "is_active": u.is_active,
             "is_superuser": u.is_superuser,
             "last_login": u.last_login.isoformat() if u.last_login else None,
+            "last_login_ip": u.last_login_ip or None,
             "role": u.role_id,
             "block_dashboard_login": u.block_dashboard_login,
         }
@@ -124,6 +125,7 @@ async def get_user(pk: int, user: User = Depends(get_current_user), db: AsyncSes
         "first_name": u.first_name, "last_name": u.last_name,
         "is_active": u.is_active, "is_superuser": u.is_superuser,
         "last_login": u.last_login.isoformat() if u.last_login else None,
+        "last_login_ip": u.last_login_ip or None,
         "role": u.role_id, "block_dashboard_login": u.block_dashboard_login,
     }
 
