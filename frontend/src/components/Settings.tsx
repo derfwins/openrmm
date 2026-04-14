@@ -39,15 +39,13 @@ const Settings = () => {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const [domain, setDomain] = useState('')
-  const [useSSL, setUseSSL] = useState(true)
-  const [nginxStatus, setNginxStatus] = useState<string>('')
 
   const token = localStorage.getItem('token')
   const serverBase = window.location.hostname === 'localhost'
     ? 'http://10.10.0.122:8000'
     : `${window.location.protocol}//${window.location.hostname}:8000`
 
-  const headers = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Authorization': `Token ${token}`,
   }
@@ -57,15 +55,19 @@ const Settings = () => {
       const resp = await fetch(`${serverBase}/core/settings/`, { headers })
       const data = await resp.json()
       setSettings(data)
-      // Extract current domain from mesh_site
       if (data.mesh_site) {
         try {
           const url = new URL(data.mesh_site)
           setDomain(url.hostname)
-        } catch { setDomain(data.mesh_site.replace(/^https?:\/\//, '')) }
+        } catch {
+          setDomain(data.mesh_site.replace(/^https?:\/\//, ''))
+        }
       }
-    } catch { setError('Failed to load settings') }
-    finally { setLoading(false) }
+    } catch {
+      setError('Failed to load settings')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchSettings() }, [])
@@ -93,7 +95,9 @@ const Settings = () => {
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch { setError('Failed to save settings') }
+    } catch {
+      setError('Failed to save settings')
+    }
     setSaving(false)
   }
 
@@ -101,12 +105,8 @@ const Settings = () => {
     if (!domain.trim()) return
     setSaving(true)
     setError('')
-
-    const protocol = useSSL ? 'https' : 'http'
-    const meshSite = `${protocol}://${domain.trim()}`
-
+    const meshSite = `https://${domain.trim()}`
     try {
-      // Update core settings with new domain
       const updated = { ...settings!, mesh_site: meshSite }
       const resp = await fetch(`${serverBase}/core/settings/`, {
         method: 'PUT',
@@ -114,14 +114,16 @@ const Settings = () => {
         body: JSON.stringify(updated),
       })
       if (!resp.ok) {
-        setError('Failed to update settings')
+        setError('Failed to apply domain')
         setSaving(false)
         return
       }
       setSettings(updated)
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
-    } catch { setError('Failed to apply domain') }
+    } catch {
+      setError('Failed to apply domain')
+    }
     setSaving(false)
   }
 
@@ -142,6 +144,9 @@ const Settings = () => {
       </div>
     )
   }
+
+  const domainBase = domain ? domain.split('.').slice(-2).join('.') : 'yourdomain.com'
+  const domainSub = domain ? domain.split('.')[0] : 'rmm'
 
   return (
     <div className="p-6 space-y-4">
@@ -180,81 +185,57 @@ const Settings = () => {
 
         {/* Content */}
         <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-          {/* Domain Tab */}
+
+          {/* ===== DOMAIN TAB ===== */}
           {activeTab === 'domain' && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Custom Domain</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Configure the domain used for agent communication and remote access</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Set your domain — Cloudflare handles SSL, DNS, and tunneling</p>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Domain Name</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={useSSL ? 'https' : 'http'}
-                      onChange={e => setUseSSL(e.target.value === 'https')}
-                      className="px-3 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
-                    >
-                      <option value="https">https://</option>
-                      <option value="http">http://</option>
-                    </select>
-                    <input
-                      type="text"
-                      value={domain}
-                      onChange={e => setDomain(e.target.value)}
-                      placeholder="rmm.yourdomain.com"
-                      className="flex-1 px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    value={domain}
+                    onChange={e => setDomain(e.target.value)}
+                    placeholder="rmm.yourdomain.com"
+                    className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
+                  />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    This is the URL agents will use to connect to the server. Point your domain's DNS A record to <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">10.10.0.122</code>
+                    Agents will connect to <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">https://{domain || 'rmm.yourdomain.com'}</code>
                   </p>
                 </div>
 
-                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">DNS Setup</h3>
-                  <div className="text-sm text-gray-600 dark:text-gray-400 space-y-2">
-                    <p>Create the following DNS records for your domain:</p>
-                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3 font-mono text-xs space-y-1">
-                      <div><span className="text-blue-500">A</span> &nbsp;&nbsp; rmm.yourdomain.com &nbsp;&nbsp; → &nbsp;&nbsp; 10.10.0.122</div>
-                      {useSSL && (
-                        <div><span className="text-green-500">CNAME</span> &nbsp; mesh.yourdomain.com &nbsp; → &nbsp; rmm.yourdomain.com</div>
-                      )}
+                <div className="bg-orange-500/5 border border-orange-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-orange-700 dark:text-orange-400">☁️ Cloudflare Tunnel Setup</h3>
+                  <div className="text-sm text-gray-600 dark:text-gray-400 space-y-3">
+                    <p>Cloudflare Tunnels expose your server without opening any ports. SSL is automatic.</p>
+                    <div className="bg-white dark:bg-gray-900 rounded-lg p-3 font-mono text-xs space-y-1.5">
+                      <div><span className="text-blue-500">RMM API + Frontend</span> &nbsp;&nbsp; {domain || 'rmm.yourdomain.com'} &nbsp;&nbsp;&nbsp; → &nbsp; http://10.10.0.122:8000</div>
+                      <div><span className="text-purple-500">Mesh Central</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; mesh.{domainBase} &nbsp; → &nbsp; http://10.10.0.122:8080</div>
                     </div>
+                    <ol className="list-decimal list-inside text-xs space-y-2 mt-3">
+                      <li>Go to <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Cloudflare Zero Trust</a> → Networks → Tunnels</li>
+                      <li>Create a tunnel, then run the connector install command on this server (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>)</li>
+                      <li>Add a <strong>Public Hostname</strong>: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">{domain || 'rmm.yourdomain.com'}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8000</code></li>
+                      <li>Add another for Mesh: <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">mesh.{domainBase}</code> → <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">http://localhost:8080</code></li>
+                      <li>SSL is handled automatically — no certbot needed ✅</li>
+                    </ol>
                   </div>
                 </div>
 
-                {useSSL && (
-                  <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4 space-y-3">
-                    <h3 className="text-sm font-medium text-green-700 dark:text-green-400">SSL / HTTPS</h3>
-                    <div className="text-sm text-gray-600 dark:text-gray-400 space-y-2">
-                      <p>For production, you need an SSL certificate. Run on the server:</p>
-                      <pre className="bg-white dark:bg-gray-900 rounded-lg p-3 text-xs font-mono overflow-x-auto">
-{`# Install certbot
-sudo apt install certbot
-
-# Get certificate (standalone)
-sudo certbot certonly --standalone -d ${domain || 'rmm.yourdomain.com'}
-
-# Or with nginx
-sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
-                      </pre>
-                      <p>Then update nginx to use the cert paths and reload.</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-yellow-700 dark:text-yellow-400">Current Configuration</h3>
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
+                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">Current URLs</h3>
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                     <div className="flex justify-between">
-                      <span>Mesh Central URL:</span>
+                      <span>Mesh Central:</span>
                       <code className="text-gray-900 dark:text-white">{settings?.mesh_site || 'Not set'}</code>
                     </div>
                     <div className="flex justify-between">
-                      <span>API URL (agents):</span>
+                      <span>API (agents):</span>
                       <code className="text-gray-900 dark:text-white">{serverBase.replace(/^https?:\/\//, '')}</code>
                     </div>
                   </div>
@@ -271,7 +252,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* General Tab */}
+          {/* ===== GENERAL TAB ===== */}
           {activeTab === 'general' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">General</h2>
@@ -296,11 +277,11 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* Mesh Central Tab */}
+          {/* ===== MESH TAB ===== */}
           {activeTab === 'mesh' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Mesh Central</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Mesh Central provides remote desktop, terminal, and file transfer capabilities</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Remote desktop, terminal, and file transfer</p>
               <Field label="Mesh Site URL" value={settings.mesh_site} onChange={v => update('mesh_site', v)} placeholder="https://mesh.yourdomain.com" />
               <Field label="Mesh Username" value={settings.mesh_username} onChange={v => update('mesh_username', v)} />
               <Field label="Mesh Token" value={settings.mesh_token || ''} onChange={v => update('mesh_token', v)} type="password" />
@@ -309,7 +290,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* Email Tab */}
+          {/* ===== EMAIL TAB ===== */}
           {activeTab === 'email' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Email / SMTP</h2>
@@ -323,7 +304,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* Notifications Tab */}
+          {/* ===== NOTIFICATIONS TAB ===== */}
           {activeTab === 'notifications' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Notifications</h2>
@@ -332,7 +313,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* Security Tab */}
+          {/* ===== SECURITY TAB ===== */}
           {activeTab === 'security' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Security</h2>
@@ -361,7 +342,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* AI Tab */}
+          {/* ===== AI TAB ===== */}
           {activeTab === 'ai' && settings && (
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">AI Integration</h2>
@@ -371,7 +352,7 @@ sudo certbot certonly --nginx -d ${domain || 'rmm.yourdomain.com'}`}
             </div>
           )}
 
-          {/* Save Button */}
+          {/* Save Button (all tabs except Domain which has Apply) */}
           {activeTab !== 'domain' && (
             <div className="mt-6 pt-5 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
               <button onClick={fetchSettings} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">Reset</button>
