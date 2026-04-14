@@ -13,6 +13,7 @@ import SoftwareManager from './components/SoftwareManager'
 import Settings from './components/Settings'
 import AICopilot from './components/AICopilot'
 import UserManagement from './components/UserManagement'
+import InstallAgent from './components/InstallAgent'
 import Sidebar from './components/Sidebar'
 
 export const AuthContext = {
@@ -93,6 +94,7 @@ function App() {
         <Route path="/automation" element={<AppLayout><AutomationBuilder /></AppLayout>} />
         <Route path="/reports" element={<AppLayout><Reports /></AppLayout>} />
         <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
+        <Route path="/install" element={<AppLayout><InstallAgent /></AppLayout>} />
         <Route path="/ai" element={<AppLayout><AICopilot /></AppLayout>} />
         <Route path="/users" element={<AppLayout><UserManagement /></AppLayout>} />
         <Route path="/" element={<Navigate to="/dashboard" />} />
