@@ -1,8 +1,6 @@
 # OpenRMM Docker Compose Configuration
 # Custom FastAPI Backend + React Frontend + Guacamole
 
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
@@ -61,7 +59,7 @@ services:
   backend:
     build:
       context: ./api
-      dockerfile: Dockerfile.new
+      dockerfile: Dockerfile
     container_name: openrmm-backend
     environment:
       POSTGRES_HOST: postgres
