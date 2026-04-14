@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../config'
 import { useState, useEffect } from 'react'
 
 interface Role {
@@ -174,9 +175,7 @@ const UserManagement = () => {
   const [roleForm, setRoleForm] = useState<Partial<Role>>({ name: '', is_superuser: false })
 
   const token = localStorage.getItem('token')
-  const serverBase = window.location.hostname === 'localhost'
-    ? 'http://10.10.0.122:8000'
-    : `${window.location.protocol}//${window.location.hostname}:8000`
+  const serverBase = API_BASE_URL
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
