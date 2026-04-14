@@ -63,12 +63,12 @@ app.add_middleware(
     max_age=86400,
 )
 
-# Routes — match the frontend's URL patterns
-app.include_router(auth.router, prefix="/v2", tags=["Auth"])
-app.include_router(accounts.router, prefix="/accounts", tags=["Accounts"])
-app.include_router(clients.router, prefix="/clients", tags=["Clients"])
-app.include_router(agents.router, prefix="/agents", tags=["Agents"])
-app.include_router(core.router, prefix="/core", tags=["Core"])
+# Routes — routers have their own prefixes (except auth which needs /v2)
+app.include_router(auth.router, prefix="/v2", tags=["Auth"])        # /v2/checkcreds/, /v2/login/
+app.include_router(accounts.router, tags=["Accounts"]) # /accounts/users/, etc.
+app.include_router(clients.router, tags=["Clients"])   # /clients/, etc.
+app.include_router(agents.router, tags=["Agents"])     # /agents/, etc.
+app.include_router(core.router, tags=["Core"])         # /core/settings/, etc.
 
 
 @app.get("/api/v1/test/")
