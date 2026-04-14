@@ -72,7 +72,7 @@ class RoleCreate(BaseModel):
 
 @router.get("/users/")
 async def list_users(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.is_staff == False))
+    result = await db.execute(select(User))
     users = result.scalars().all()
     return [
         {
