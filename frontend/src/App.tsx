@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Component, ReactNode } from 'react'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import DeviceList from './components/DeviceList'
@@ -82,9 +82,25 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
   )
 }
 
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null }
+  static getDerivedStateFromError(e: Error) { return { error: e.message + '\n' + (e.stack || '') } }
+  render() {
+    if (this.state.error) return (
+      <div className="p-8 text-red-500 bg-gray-900 min-h-screen">
+        <h1 className="text-xl font-bold mb-4">Component Error</h1>
+        <pre className="whitespace-pre-wrap text-sm bg-black p-4 rounded overflow-auto">{this.state.error}</pre>
+        <button onClick={() => { this.setState({ error: null }); window.location.reload() }} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">Reload</button>
+      </div>
+    )
+    return this.props.children
+  }
+}
+
 function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <Routes>
         <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} />
         <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
@@ -104,6 +120,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" />} />
         <Route path="*" element={<Navigate to="/dashboard" />} />
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }
