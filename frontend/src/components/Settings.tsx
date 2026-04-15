@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { API_BASE_URL } from '../config'
 
 interface CoreSettings {
   id: number
@@ -9,11 +8,6 @@ interface CoreSettings {
   agent_auto_update: boolean
   api_url: string
   frontend_url: string
-  mesh_site: string
-  mesh_username: string
-  mesh_token_key: string
-  mesh_device_group: string
-  mesh_sync: boolean
   smtp_host: string
   smtp_port: number
   smtp_username: string
@@ -41,10 +35,8 @@ const Settings = () => {
   const [error, setError] = useState('')
   const [apiDomain, setApiDomain] = useState('')
   const [uiDomain, setUiDomain] = useState('')
-  const [meshDomain, setMeshDomain] = useState('')
 
   const token = localStorage.getItem('token')
-  const serverBase = API_BASE_URL
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -53,19 +45,10 @@ const Settings = () => {
 
   const fetchSettings = async () => {
     try {
-      const resp = await fetch(`${serverBase}/core/settings/`, { headers })
+      const resp = await fetch('/core/settings/', { headers })
       const data = await resp.json()
       setSettings(data)
-      if (data.mesh_site) {
-        try {
-          const url = new URL(data.mesh_site)
-          setMeshDomain(url.hostname)
-        } catch {
-          setMeshDomain(data.mesh_site.replace(/^https?:\/\//, ''))
-        }
-      }
-      const apiHost = serverBase.replace(/^https?:\/\//, '')
-      if (!apiDomain) setApiDomain(apiHost)
+      if (!apiDomain) setApiDomain(window.location.hostname)
     } catch {
       setError('Failed to load settings')
     } finally {
@@ -75,7 +58,7 @@ const Settings = () => {
 
   useEffect(() => { fetchSettings() }, [])
 
-  const update = (key: string, value: any) => {
+  const update = (key: string, value: unknown) => {
     if (!settings) return
     setSettings({ ...settings, [key]: value } as CoreSettings)
   }
@@ -85,7 +68,7 @@ const Settings = () => {
     setSaving(true)
     setError('')
     try {
-      const resp = await fetch(`${serverBase}/core/settings/`, {
+      const resp = await fetch('/core/settings/', {
         method: 'PUT',
         headers,
         body: JSON.stringify(settings),
@@ -109,14 +92,12 @@ const Settings = () => {
     setSaving(true)
     setError('')
     try {
-      const meshSite = meshDomain.trim() ? `https://${meshDomain.trim()}` : settings.mesh_site
       const updated = {
         ...settings,
         api_url: `https://${apiDomain.trim()}`,
         frontend_url: uiDomain.trim() ? `https://${uiDomain.trim()}` : settings.frontend_url,
-        mesh_site: meshSite,
       }
-      const resp = await fetch(`${serverBase}/core/settings/`, {
+      const resp = await fetch('/core/settings/', {
         method: 'PUT',
         headers,
         body: JSON.stringify(updated),
@@ -138,7 +119,6 @@ const Settings = () => {
   const tabs = [
     { id: 'domain', label: 'Domain', icon: '🌐' },
     { id: 'general', label: 'General', icon: '⚙️' },
-    { id: 'mesh', label: 'Mesh Central', icon: '🔗' },
     { id: 'email', label: 'Email', icon: '📧' },
     { id: 'notifications', label: 'Notifications', icon: '🔔' },
     { id: 'security', label: 'Security', icon: '🔒' },
@@ -204,25 +184,21 @@ const Settings = () => {
             <div className="space-y-6">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Custom Domains</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Set domains for each service — Cloudflare handles SSL, DNS, and tunneling</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Set domains for API and UI — Cloudflare handles SSL and tunneling</p>
               </div>
 
               <div className="space-y-5">
                 {/* API Domain */}
                 <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
                   <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">🖥️ API Backend</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">FastAPI backend, REST API, and admin. Agents connect here.</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">FastAPI backend and REST API. Remote agents connect here.</p>
                   <input
                     type="text"
                     value={apiDomain}
                     onChange={e => setApiDomain(e.target.value)}
-                    placeholder="rmm.derfwins.com"
+                    placeholder={window.location.hostname}
                     className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   />
-                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>Cloudflare tunnel →</span>
-                    <code>http://localhost:8000</code>
-                  </div>
                 </div>
 
                 {/* UI Domain */}
@@ -233,30 +209,9 @@ const Settings = () => {
                     type="text"
                     value={uiDomain}
                     onChange={e => setUiDomain(e.target.value)}
-                    placeholder="rmmapp.derfwins.com"
+                    placeholder={window.location.hostname}
                     className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   />
-                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>Cloudflare tunnel →</span>
-                    <code>http://localhost:5173</code>
-                  </div>
-                </div>
-
-                {/* Mesh Domain */}
-                <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-purple-700 dark:text-purple-400">🔗 Mesh Central</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Remote desktop, terminal, and file transfer</p>
-                  <input
-                    type="text"
-                    value={meshDomain}
-                    onChange={e => setMeshDomain(e.target.value)}
-                    placeholder="mesh.derfwins.com"
-                    className="w-full px-4 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>Cloudflare tunnel →</span>
-                    <code>http://localhost:8080</code>
-                  </div>
                 </div>
 
                 {/* Cloudflare Docs */}
@@ -267,7 +222,7 @@ const Settings = () => {
                     <ol className="list-decimal list-inside text-xs space-y-2">
                       <li>Go to <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Cloudflare Zero Trust</a> → Networks → Tunnels</li>
                       <li>Create a tunnel and install the connector (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>) on this server</li>
-                      <li>Add a <strong>Public Hostname</strong> for each service, pointing to the localhost URL shown above</li>
+                      <li>Add a <strong>Public Hostname</strong> for each service, pointing to the localhost URL</li>
                       <li>SSL is handled automatically — no certbot needed ✅</li>
                     </ol>
                   </div>
@@ -279,15 +234,11 @@ const Settings = () => {
                   <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
                     <div className="flex justify-between">
                       <span>API:</span>
-                      <code className="text-gray-900 dark:text-white">{settings.api_url || apiDomain || 'Not set'}</code>
+                      <code className="text-gray-900 dark:text-white">{settings.api_url || 'Not set'}</code>
                     </div>
                     <div className="flex justify-between">
                       <span>Frontend:</span>
-                      <code className="text-gray-900 dark:text-white">{settings.frontend_url || uiDomain || 'Not set'}</code>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Mesh:</span>
-                      <code className="text-gray-900 dark:text-white">{settings.mesh_site || 'Not set'}</code>
+                      <code className="text-gray-900 dark:text-white">{settings.frontend_url || 'Not set'}</code>
                     </div>
                   </div>
                 </div>
@@ -327,19 +278,6 @@ const Settings = () => {
             </div>
           )}
 
-          {/* ===== MESH TAB ===== */}
-          {activeTab === 'mesh' && settings && (
-            <div className="space-y-5">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Mesh Central</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Remote desktop, terminal, and file transfer</p>
-              <Field label="Mesh Site URL" value={settings.mesh_site} onChange={v => update('mesh_site', v)} placeholder="https://mesh.yourdomain.com" />
-              <Field label="Mesh Username" value={settings.mesh_username} onChange={v => update('mesh_username', v)} />
-              <Field label="Mesh Token" value={settings.mesh_token_key} onChange={v => update('mesh_token_key', v)} type="password" />
-              <Field label="Device Group" value={settings.mesh_device_group} onChange={v => update('mesh_device_group', v)} />
-              <Toggle label="Sync Mesh Agents" desc="Automatically sync mesh agent groups" checked={settings.mesh_sync} onChange={v => update('mesh_sync', v)} />
-            </div>
-          )}
-
           {/* ===== EMAIL TAB ===== */}
           {activeTab === 'email' && settings && (
             <div className="space-y-5">
@@ -367,7 +305,6 @@ const Settings = () => {
             <div className="space-y-5">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Security</h2>
               <Toggle label="Server Scripts" desc="Allow running scripts on the server" checked={settings.server_scripts} onChange={v => update('server_scripts', v)} />
-              <Toggle label="Web Terminal" desc="Enable web-based terminal access" checked={settings.web_terminal} onChange={v => update('web_terminal', v)} />
               <Toggle label="Enable SSO" desc="Enable Single Sign-On authentication" checked={settings.enable_sso} onChange={v => update('enable_sso', v)} />
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Agent Debug Level</label>

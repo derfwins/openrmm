@@ -27,8 +27,6 @@ const Sidebar = () => {
     {
       label: 'Tools',
       items: [
-        { icon: '🖥️', label: 'Remote Desktop', path: '/remote' },
-        { icon: '💻', label: 'Terminal', path: '/terminal' },
         { icon: '🤖', label: 'AI Copilot', path: '/ai' },
       ]
     },

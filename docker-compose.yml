@@ -99,28 +99,6 @@ services:
       - backend
     restart: unless-stopped
 
-  # Guacamole Remote Desktop Gateway
-  guacd:
-    image: guacamole/guacd:latest
-    container_name: openrmm-guacd
-    restart: unless-stopped
-
-  guacamole:
-    image: guacamole/guacamole:latest
-    container_name: openrmm-guacamole
-    environment:
-      GUACD_HOSTNAME: guacd
-      MYSQL_HOSTNAME: postgres
-      MYSQL_DATABASE: guacamole_db
-      MYSQL_USER: openrmm
-      MYSQL_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
-    ports:
-      - "127.0.0.1:8080:8080"
-    depends_on:
-      - guacd
-      - postgres
-    restart: unless-stopped
-
   # Celery Worker
   celery-worker:
     build:
@@ -181,7 +159,6 @@ services:
     depends_on:
       - backend
       - frontend
-      - guacamole
     restart: unless-stopped
 
 volumes:

@@ -1,8 +1,6 @@
 // Real-time WebSocket service for OpenRMM
 // Auto-reconnects with exponential backoff, heartbeat, message queuing
 
-import { API_BASE_URL } from '../config'
-
 type MessageHandler = (data: unknown) => void
 type ConnectionHandler = (connected: boolean) => void
 
@@ -34,7 +32,7 @@ class WebSocketService {
 
     this.intentionalClose = false
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = API_BASE_URL.replace(/^https?:\/\//, '').replace(/:\d+$/, '')
+    const host = window.location.host
     const wsUrl = `${protocol}//${host}/ws/?token=${this.token}`
 
     try {
