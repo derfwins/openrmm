@@ -17,6 +17,9 @@ import AICopilot from './components/AICopilot'
 import UserManagement from './components/UserManagement'
 import InstallAgent from './components/InstallAgent'
 import Clients from './components/Clients'
+import RemoteDesktop from './components/RemoteDesktop'
+import AuditLog from './components/AuditLog'
+import Terminal from './components/Terminal'
 import Sidebar from './components/Sidebar'
 
 export const AuthContext = {
@@ -139,6 +142,9 @@ function App() {
         <Route path="/reports" element={<AppLayout><Reports /></AppLayout>} />
         <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
         <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
+        <Route path="/remote" element={<AppLayout><RemoteDesktop /></AppLayout>} />
+        <Route path="/terminal" element={<AppLayout><Terminal /></AppLayout>} />
+        <Route path="/audit" element={<AppLayout><AuditLog /></AppLayout>} />
         <Route path="/install" element={<AppLayout><InstallAgent /></AppLayout>} />
         <Route path="/ai" element={<AppLayout><AICopilot /></AppLayout>} />
         <Route path="/users" element={<AppLayout><UserManagement /></AppLayout>} />
