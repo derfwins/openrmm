@@ -82,9 +82,7 @@ def _build_windows_installer(api_url: str, client_id: int, site_id: int, agent_t
         "",
         "# Install psutil",
         'Write-Host "Installing dependencies..." -ForegroundColor Cyan',
-        '$ErrorActionPreference = "Continue"',
-        "& $pythonExe -m pip install psutil --quiet",
-        '$ErrorActionPreference = "Stop"',
+        "$pipOut = & $pythonExe -m pip install psutil --quiet 2>&1 | Out-Null",
         "",
         "# Download agent from server",
         '$AgentUrl = "$Server/agents/download/openrmm-agent.py"',
@@ -237,11 +235,16 @@ async def generate_installer(
 async def download_agent():
     """Download the agent Python script."""
     import os
-    agent_path = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "openrmm-agent.py")
-    agent_path = os.path.normpath(agent_path)
-    if os.path.exists(agent_path):
-        from fastapi.responses import FileResponse
-        return FileResponse(agent_path, media_type="text/x-python", filename="openrmm-agent.py")
+    # Try multiple possible locations
+    possible_paths = [
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent", "openrmm-agent.py")),
+        "/app/agent/openrmm-agent.py",
+        "/opt/openrmm/agent/openrmm-agent.py",
+    ]
+    for agent_path in possible_paths:
+        if os.path.exists(agent_path):
+            from fastapi.responses import FileResponse
+            return FileResponse(agent_path, media_type="text/x-python", filename="openrmm-agent.py")
     raise HTTPException(404, detail="Agent script not found on server")
 
 
