@@ -118,18 +118,21 @@ async def terminal_ws(websocket: WebSocket, agent_id: str, token: str = Query(..
     # Verify auth
     user = await verify_token(token)
     if not user:
+        await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
     # Look up agent UUID from database ID
     agent_uuid = await lookup_agent_id(agent_id)
     if not agent_uuid:
+        await websocket.accept()
         await websocket.close(code=4004, reason="Agent not found")
         return
 
     # Check agent is connected
     agent_ws = agent_connections.get(agent_uuid)
     if not agent_ws:
+        await websocket.accept()
         await websocket.close(code=4003, reason="Agent offline")
         return
 
