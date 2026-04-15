@@ -89,11 +89,6 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: openrmm-frontend
-    environment:
-      VITE_API_URL: ""
-      VITE_WS_URL: ws://10.10.0.122:8000/ws
-      VITE_GUACAMOLE_API_URL: http://10.10.0.122:8080
-      VITE_GUACAMOLE_PROXY_URL: wss://10.10.0.122:8443
     volumes:
       - ./frontend:/app
       - /app/node_modules

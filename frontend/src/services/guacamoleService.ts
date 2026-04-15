@@ -1,234 +1,134 @@
-// Apache Guacamole API Service
-// Handles remote desktop connections via Guacamole Gateway
+// Guacamole Remote Desktop Service
+// All URLs are relative — nginx proxies /guacamole/ to the Guacamole container
 
-const GUACAMOLE_API_URL = import.meta.env.VITE_GUACAMOLE_API_URL || 'http://localhost:8080'
-const GUACAMOLE_PROXY_URL = import.meta.env.VITE_GUACAMOLE_PROXY_URL || 'wss://localhost:8443'
-
-export interface GuacamoleConnection {
-  id: string
-  name: string
-  protocol: 'rdp' | 'vnc' | 'ssh'
-  hostname: string
-  port: number
-  username?: string
-  password?: string
-  domain?: string
-  security?: 'any' | 'rdp' | 'tls' | 'nla'
-  'ignore-cert'?: boolean
-  'enable-drive'?: boolean
-  'drive-path'?: string
-  'enable-audio'?: boolean
-  'enable-printing'?: boolean
-}
+const GUACAMOLE_BASE = '/guacamole'
 
 export interface GuacamoleSession {
   id: string
   connectionId: string
-  connectionName: string
-  startTime: string
-  status: 'active' | 'disconnected' | 'error'
+  token: string
   websocketUrl: string
+  status: string
 }
 
-export interface GuacamoleUser {
-  username: string
-  password?: string
-  attributes?: {
-    'guac-full-name'?: string
-    'guac-email-address'?: string
-    'guac-organization'?: string
-    'guac-organizational-role'?: string
-  }
-}
-
-class GuacamoleService {
-  private token: string = ''
-
-  // Authenticate with Guacamole API
-  async authenticate(username: string, password: string): Promise<string> {
-    const response = await fetch(`${GUACAMOLE_API_URL}/api/tokens`, {
+export const guacamoleService = {
+  async getToken(username: string = 'guacadmin', password: string = 'guacadmin') {
+    const response = await fetch(`${GUACAMOLE_BASE}/api/tokens`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        username,
-        password,
-      }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username, password }),
     })
 
-    if (!response.ok) {
-      throw new Error('Authentication failed')
-    }
+    if (!response.ok) throw new Error('Guacamole auth failed')
+    return response.json()
+  },
 
-    const data = await response.json()
-    this.token = data.authToken
-    return this.token
-  }
-
-  // Get authentication token for WebSocket
-  getAuthToken(): string | null {
-    return this.token || null
-  }
-
-  // Create a new connection
-  async createConnection(connection: Omit<GuacamoleConnection, 'id'>): Promise<GuacamoleConnection> {
-    if (!this.token) throw new Error('Not authenticated')
-
-    const response = await fetch(`${GUACAMOLE_API_URL}/api/session/data/mysql/connections`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Guacamole-Token': this.token,
-      },
-      body: JSON.stringify({
-        name: connection.name,
-        parentIdentifier: 'ROOT',
-        protocol: connection.protocol,
-        attributes: {
-          'max-connections': '10',
-          'max-connections-per-user': '5',
-        },
-        parameters: {
-          hostname: connection.hostname,
-          port: connection.port.toString(),
-          username: connection.username || '',
-          password: connection.password || '',
-          domain: connection.domain || '',
-          security: connection.security || 'any',
-          'ignore-cert': connection['ignore-cert'] ? 'true' : 'false',
-          'enable-drive': connection['enable-drive'] ? 'true' : 'false',
-          'enable-audio': connection['enable-audio'] ? 'true' : 'false',
-          'enable-printing': connection['enable-printing'] ? 'true' : 'false',
-        },
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error('Failed to create connection')
-    }
-
-    return await response.json()
-  }
-
-  // Get all connections
-  async getConnections(): Promise<GuacamoleConnection[]> {
-    if (!this.token) throw new Error('Not authenticated')
-
+  async getConnections(token: string) {
     const response = await fetch(
-      `${GUACAMOLE_API_URL}/api/session/data/mysql/connections`,
+      `${GUACAMOLE_BASE}/api/session/data/mysql/connections`,
       {
-        headers: {
-          'Guacamole-Token': this.token,
-        },
+        headers: { token },
       }
     )
+    if (!response.ok) throw new Error('Failed to get connections')
+    return response.json()
+  },
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch connections')
-    }
-
-    return await response.json()
-  }
-
-  // Get active sessions
-  async getActiveSessions(): Promise<GuacamoleSession[]> {
-    if (!this.token) throw new Error('Not authenticated')
-
+  async getConnection(token: string, connectionId: string) {
     const response = await fetch(
-      `${GUACAMOLE_API_URL}/api/session/data/mysql/activeConnections`,
+      `${GUACAMOLE_BASE}/api/session/data/mysql/connections/${connectionId}`,
       {
-        headers: {
-          'Guacamole-Token': this.token,
-        },
+        headers: { token },
       }
     )
+    if (!response.ok) throw new Error('Failed to get connection')
+    return response.json()
+  },
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch sessions')
-    }
+  async createConnection(params: {
+    name: string
+    protocol: string
+    hostname: string
+    port: number
+    [key: string]: unknown
+  }) {
+    const tokenData = await this.getToken()
+    const token = tokenData.authToken
+    const response = await fetch(
+      `${GUACAMOLE_BASE}/api/session/data/mysql/connections`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          token,
+        },
+        body: JSON.stringify({
+          name: params.name,
+          protocol: params.protocol,
+          parameters: {
+            hostname: params.hostname,
+            port: String(params.port),
+            ...Object.fromEntries(
+              Object.entries(params).filter(([k]) => !['name', 'protocol', 'hostname', 'port'].includes(k))
+            ),
+          },
+        }),
+      }
+    )
+    if (!response.ok) throw new Error('Failed to create connection')
+    return response.json()
+  },
 
-    return await response.json()
-  }
-
-  // Start a connection and get WebSocket URL
   async startConnection(connectionId: string): Promise<GuacamoleSession> {
-    if (!this.token) throw new Error('Not authenticated')
-
-    // Get connection details
-    const response = await fetch(
-      `${GUACAMOLE_API_URL}/api/session/data/mysql/connections/${connectionId}`,
-      {
-        headers: {
-          'Guacamole-Token': this.token,
-        },
-      }
-    )
-
-    if (!response.ok) {
-      throw new Error('Failed to get connection')
-    }
-
-    const connection = await response.json()
-
-    // Generate WebSocket URL for this connection
-    const wsToken = btoa(`${connectionId}\0c\0${this.token}`)
-    const websocketUrl = `${GUACAMOLE_PROXY_URL}/guacamole/websocket-tunnel?token=${wsToken}&GUAC_DATA_SOURCE=mysql&GUAC_ID=${connectionId}&GUAC_TYPE=c&GUAC_TIME=${Date.now()}`
+    const tokenData = await this.getToken()
+    const token = tokenData.authToken
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const websocketUrl = `${proto}//${window.location.host}/guacamole/websocket-tunnel?token=${token}&GUAC_DATA_SOURCE=mysql&GUAC_ID=${connectionId}&GUAC_TYPE=c&GUAC_TIME=${Date.now()}`
 
     return {
-      id: `session-${Date.now()}`,
+      id: `${Date.now()}`,
       connectionId,
-      connectionName: connection.name,
-      startTime: new Date().toISOString(),
-      status: 'active',
+      token,
       websocketUrl,
+      status: 'connected',
     }
-  }
+  },
 
-  // Kill a session
-  async killSession(sessionId: string): Promise<void> {
-    if (!this.token) throw new Error('Not authenticated')
-
+  async getActiveConnections(token: string) {
     const response = await fetch(
-      `${GUACAMOLE_API_URL}/api/session/data/mysql/activeConnections/${sessionId}`,
+      `${GUACAMOLE_BASE}/api/session/data/mysql/activeConnections`,
+      {
+        headers: { token },
+      }
+    )
+    if (!response.ok) throw new Error('Failed to get active connections')
+    return response.json()
+  },
+
+  async disconnectConnection(token: string, sessionId: string) {
+    const response = await fetch(
+      `${GUACAMOLE_BASE}/api/session/data/mysql/activeConnections/${sessionId}`,
       {
         method: 'DELETE',
-        headers: {
-          'Guacamole-Token': this.token,
-        },
+        headers: { token },
       }
     )
+    if (!response.ok) throw new Error('Failed to disconnect')
+    return response.json()
+  },
 
-    if (!response.ok) {
-      throw new Error('Failed to kill session')
-    }
-  }
+  getConnectionUrl(connectionId: string, token: string): string {
+    return `${GUACAMOLE_BASE}/#/client/${connectionId}?token=${token}`
+  },
 
-  // Get connection history
-  async getConnectionHistory(connectionId: string): Promise<any[]> {
-    if (!this.token) throw new Error('Not authenticated')
-
+  async getConnectionHistory(token: string, connectionId: string) {
     const response = await fetch(
-      `${GUACAMOLE_API_URL}/api/session/data/mysql/connectionHistory?connection=${connectionId}`,
+      `${GUACAMOLE_BASE}/api/session/data/mysql/connectionHistory?connection=${connectionId}`,
       {
-        headers: {
-          'Guacamole-Token': this.token,
-        },
+        headers: { token },
       }
     )
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch history')
-    }
-
-    return await response.json()
-  }
-
-  // Logout
-  logout(): void {
-    this.token = ''
-  }
+    if (!response.ok) throw new Error('Failed to get connection history')
+    return response.json()
+  },
 }
-
-export const guacamoleService = new GuacamoleService()
-export default guacamoleService

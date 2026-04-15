@@ -1,16 +1,5 @@
 // Shared configuration for API URLs
-// Detects environment and constructs appropriate URLs
+// All API calls use relative paths — nginx handles routing
+// regardless of domain, port, or access method (LAN, VPN, Cloudflare)
 
-function getApiBaseUrl(): string {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
-  const h = window.location.hostname
-  if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8000'
-  // If on app/rmmapp subdomain, API is on the SAME host (nginx proxies it)
-  if (h.startsWith('rmmapp.') || h.startsWith('app.')) {
-    return `${window.location.protocol}//${window.location.host}`
-  }
-  // Otherwise assume API is on same host (nginx proxies it)
-  return `${window.location.protocol}//${window.location.host}`
-}
-
-export const API_BASE_URL = getApiBaseUrl()
+export const API_BASE_URL = ''
