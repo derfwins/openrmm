@@ -163,6 +163,31 @@ def get_system_info() -> dict:
         # CPU percent
         info["cpu_percent"] = psutil.cpu_percent(interval=1)
 
+        # Services
+        try:
+            services = []
+            for svc in psutil.win_service_iter() if platform.system() == "Windows" else []:
+                try:
+                    services.append({"name": svc.name(), "display_name": svc.display_name(), "status": svc.status(), "start_type": svc.start_type()})
+                except Exception:
+                    continue
+            # Limit to 200 services to keep payload reasonable
+            info["services_json"] = json.dumps(services[:200])
+        except Exception:
+            # Non-Windows or psutil without win_service_iter
+            try:
+                # Linux: parse systemctl
+                import subprocess
+                result = subprocess.run(["systemctl", "list-units", "--type=service", "--no-pager", "--no-legend"], capture_output=True, text=True, timeout=10)
+                services = []
+                for line in result.stdout.strip().split("\n")[:200]:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        services.append({"name": parts[0], "display_name": " ".join(parts[4:]), "status": parts[2], "start_type": parts[3] if len(parts) > 3 else ""})
+                info["services_json"] = json.dumps(services)
+            except Exception:
+                pass
+
     except ImportError:
         log.warning("psutil not installed - limited system info")
 

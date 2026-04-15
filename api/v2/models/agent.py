@@ -50,6 +50,7 @@ class Agent(Base):
     logged_in_users = Column(Text, default="", server_default="")  # JSON list
     running_processes = Column(Integer, default=0, server_default="0")
     cpu_percent = Column(Float, default=0, server_default="0")
+    services_json = Column(Text, default="", server_default="")  # JSON list of services
 
     site = relationship("Site", back_populates="agents")
     checks = relationship("Check", back_populates="agent", cascade="all, delete-orphan")

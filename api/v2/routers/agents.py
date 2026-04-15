@@ -206,6 +206,7 @@ async def list_agents(
             "disks_json": a.disks_json, "memory_json": a.memory_json,
             "uptime_seconds": a.uptime_seconds, "logged_in_users": a.logged_in_users,
             "running_processes": a.running_processes, "cpu_percent": a.cpu_percent,
+            "services_json": a.services_json,
         }
         for a in agents
     ]
@@ -244,6 +245,7 @@ async def get_agent(
         "disks_json": agent.disks_json, "memory_json": agent.memory_json,
         "uptime_seconds": agent.uptime_seconds, "logged_in_users": agent.logged_in_users,
         "running_processes": agent.running_processes, "cpu_percent": agent.cpu_percent,
+        "services_json": agent.services_json,
     }
 
 
@@ -308,6 +310,7 @@ class HeartbeatRequest(BaseModel):
     logged_in_users: str = ""
     running_processes: int = 0
     cpu_percent: float = 0
+    services_json: str = ""
 
 
 @router.post("/heartbeat/")
@@ -336,7 +339,7 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
                    "cpu_model", "cpu_cores", "total_ram", "os_name", "os_version",
                    "public_ip", "local_ip", "logged_in_user", "disks_json",
                    "memory_json", "uptime_seconds", "logged_in_users",
-                   "running_processes", "cpu_percent"]:
+                   "running_processes", "cpu_percent", "services_json"]:
         val = getattr(req, field, None)
         if val is not None:
             setattr(agent, field, val)
