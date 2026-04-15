@@ -40,7 +40,7 @@ const InstallAgent = () => {
   useEffect(() => {
     const fetchClients = async () => {
       try {
-        const resp = await fetch(`${apiUrl}/clients/`, { headers })
+        const resp = await fetch('/clients/', { headers })
         const data = await resp.json()
         const clientList = Array.isArray(data) ? data : (data.results || [])
         setClients(clientList)
@@ -94,7 +94,7 @@ const InstallAgent = () => {
           : 'tacticalagent-v2.10.0-linux-amd64',
       }
 
-      const resp = await fetch(`${apiUrl}/agents/installer/`, {
+      const resp = await fetch('/agents/installer/', {
         method: 'POST',
         headers,
         body: JSON.stringify(body),

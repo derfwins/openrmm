@@ -1,6 +1,7 @@
 """Agents endpoints"""
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -86,7 +87,7 @@ Write-Host "Agent binary download not yet available." -ForegroundColor Yellow
 Write-Host "The agent service is still under development."
 Write-Host "Once available, this script will download and install the agent automatically."
 """
-        return script, 200, {"Content-Type": "text/plain; charset=utf-8"}
+        return PlainTextResponse(script)
     else:
         # Bash install script
         script = f"""#!/bin/bash
@@ -104,7 +105,7 @@ echo ""
 echo "Agent binary download not yet available."
 echo "The agent service is still under development."
 """
-        return script, 200, {"Content-Type": "text/plain; charset=utf-8"}
+        return PlainTextResponse(script)
 
 
 # === Agent Heartbeat (for future agent binary) ===
