@@ -9,8 +9,8 @@ function getApiBaseUrl(): string {
   if (h.startsWith('rmmapp.') || h.startsWith('app.')) {
     return `${window.location.protocol}//${window.location.host}`
   }
-  // Otherwise assume API is same host, port 8000
-  return `${window.location.protocol}//${h}:8000`
+  // Otherwise assume API is on same host (nginx proxies it)
+  return `${window.location.protocol}//${window.location.host}`
 }
 
 export const API_BASE_URL = getApiBaseUrl()
