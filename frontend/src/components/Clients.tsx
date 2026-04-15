@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { API_BASE_URL } from '../config'
 
 interface Site {
   id: number
@@ -29,9 +30,7 @@ const Clients = () => {
   const [error, setError] = useState('')
 
   const token = localStorage.getItem('token')
-  const apiUrl = window.location.hostname === 'localhost'
-    ? 'http://10.10.0.122:8000'
-    : `${window.location.protocol}//${window.location.hostname}:8000`
+  const apiUrl = API_BASE_URL
 
   const headers = {
     'Content-Type': 'application/json',
