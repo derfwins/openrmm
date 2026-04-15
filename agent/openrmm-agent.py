@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.3.1"
+AGENT_VERSION = "0.4.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -255,10 +255,14 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
 
 def ws_agent_loop(server: str, agent_id: str):
     """Persistent WebSocket connection to server for terminal relay."""
-    import threading
-    import subprocess
-    ws_backoff = 1
+    try:
+        import websockets
+        log.info("websockets library loaded successfully")
+    except ImportError:
+        log.warning("websockets not installed - remote terminal unavailable. Install with: pip install websockets")
+        return
 
+    ws_backoff = 1
     while running:
         try:
             import asyncio
@@ -274,106 +278,138 @@ def ws_agent_loop(server: str, agent_id: str):
 async def ws_agent_connect(server: str, agent_id: str):
     """Connect to server WebSocket and handle terminal sessions."""
     import asyncio
-    try:
-        import websockets
-    except ImportError:
-        log.warning("websockets not installed, terminal not available")
-        return
+    import websockets
+    import threading
+    import subprocess
+    import queue
 
     # Build WS URL from server HTTP URL
     ws_url = server.replace("https://", "wss://").replace("http://", "ws://")
     ws_url = f"{ws_url.rstrip('/')}/ws/agent/{agent_id}/"
 
     log.info("Connecting to WebSocket: %s", ws_url)
-    async with websockets.connect(ws_url, additional_headers={"User-Agent": "OpenRMM-Agent"}, ping_interval=30, ping_timeout=10) as ws:
+    async with websockets.connect(
+        ws_url,
+        additional_headers={"User-Agent": "OpenRMM-Agent"},
+        ping_interval=30,
+        ping_timeout=10,
+        close_timeout=5,
+    ) as ws:
         log.info("WebSocket connected to server")
 
-        async for message in ws:
-            try:
-                data = json.loads(message)
-                msg_type = data.get("type")
+        # Track active terminal sessions: session_id -> { proc, input_queue, output_queue }
+        sessions: dict = {}
 
-                if msg_type == "terminal_start":
-                    session_id = data["session_id"]
-                    log.info("Terminal session started: %s", session_id)
-                    # Start shell in a thread
-                    import threading
-                    t = threading.Thread(target=run_terminal, args=(server, agent_id, session_id), daemon=True)
-                    t.start()
-
-                elif msg_type == "input":
-                    # Input for a running terminal - handled by the terminal thread
-                    pass
-
-                elif msg_type == "terminal_kill":
-                    log.info("Terminal kill requested: %s", data.get("session_id"))
-
-                elif msg_type == "resize":
-                    pass  # TODO: handle resize
-
-            except Exception as e:
-                log.error("WebSocket message error: %s", e)
-
-
-def run_terminal(server: str, agent_id: str, session_id: str):
-    """Run an interactive terminal session using subprocess."""
-    import subprocess
-    import threading
-
-    log.info("Starting terminal shell for session %s", session_id)
-
-    # Determine shell
-    if platform.system() == "Windows":
-        cmd = ["cmd.exe"]
-    else:
-        cmd = ["/bin/bash", "-i"]
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            bufsize=0,
-        )
-    except Exception as e:
-        log.error("Failed to start shell: %s", e)
-        return
-
-    # Read output and send to server via HTTP POST (simpler than WS from thread)
-    def read_output():
-        try:
-            while proc.poll() is None:
-                chunk = proc.stdout.read(4096)
-                if chunk:
+        async def send_output_loop():
+            """Send terminal output from subprocess to WebSocket."""
+            while True:
+                for sid, sess in list(sessions.items()):
                     try:
-                        # Post output back via heartbeat channel with session_id
-                        url = f"{server.rstrip('/')}/agents/terminal-output/"
-                        payload = {"agent_id": agent_id, "session_id": session_id, "type": "output", "data": chunk.decode(errors='replace')}
-                        req = Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.3.0"})
-                        urlopen(req, timeout=5)
+                        output = sess["output_queue"].get_nowait()
+                        await ws.send(json.dumps(output))
+                        if output.get("type") == "exit":
+                            del sessions[sid]
                     except Exception:
                         pass
+                await asyncio.sleep(0.05)  # 50ms poll interval
 
-            # Process exited
-            exit_code = proc.returncode
-            try:
-                url = f"{server.rstrip('/')}/agents/terminal-output/"
-                payload = {"agent_id": agent_id, "session_id": session_id, "type": "exit", "code": exit_code}
-                req = Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.3.0"})
-                urlopen(req, timeout=5)
-            except Exception:
-                pass
-            log.info("Terminal session %s exited with code %s", session_id, exit_code)
-        except Exception as e:
-            log.error("Terminal read error: %s", e)
+        # Start output sender
+        send_task = asyncio.create_task(send_output_loop())
 
-    output_thread = threading.Thread(target=read_output, daemon=True)
-    output_thread.start()
+        try:
+            async for message in ws:
+                try:
+                    data = json.loads(message)
+                    msg_type = data.get("type")
+                    log.info("WS received: %s", msg_type)
 
-    # TODO: pipe input from WebSocket to proc.stdin
-    # For now, this is output-only until we wire input through the WS relay
-    proc.wait()
+                    if msg_type == "terminal_start":
+                        session_id = data["session_id"]
+                        log.info("Terminal session started: %s", session_id)
+                        input_q: queue.Queue = queue.Queue()
+                        output_q: queue.Queue = queue.Queue()
+
+                        # Determine shell
+                        if platform.system() == "Windows":
+                            cmd = ["cmd.exe"]
+                        else:
+                            cmd = ["/bin/bash", "-i"]
+
+                        proc = subprocess.Popen(
+                            cmd,
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            bufsize=0,
+                        )
+
+                        sessions[session_id] = {
+                            "proc": proc,
+                            "input_queue": input_q,
+                            "output_queue": output_q,
+                        }
+
+                        # Read output in a thread
+                        def read_output(p=proc, sid=session_id, oq=output_q):
+                            try:
+                                while p.poll() is None:
+                                    chunk = p.stdout.read(4096)
+                                    if chunk:
+                                        oq.put({"type": "output", "session_id": sid, "data": chunk.decode(errors="replace")})
+                                # Process exited
+                                oq.put({"type": "exit", "session_id": sid, "code": p.returncode})
+                            except Exception as e:
+                                oq.put({"type": "exit", "session_id": sid, "code": -1, "message": str(e)})
+
+                        t = threading.Thread(target=read_output, daemon=True)
+                        t.start()
+
+                        # Write input in a thread
+                        def write_input(p=proc, iq=input_q):
+                            try:
+                                while p.poll() is None:
+                                    try:
+                                        inp = iq.get(timeout=0.5)
+                                        if inp.get("type") == "input":
+                                            p.stdin.write(inp["data"].encode())
+                                            p.stdin.flush()
+                                    except queue.Empty:
+                                        continue
+                            except Exception:
+                                pass
+
+                        t2 = threading.Thread(target=write_input, daemon=True)
+                        t2.start()
+
+                    elif msg_type == "input":
+                        session_id = data.get("session_id")
+                        sess = sessions.get(session_id)
+                        if sess:
+                            sess["input_queue"].put(data)
+
+                    elif msg_type == "terminal_kill":
+                        session_id = data.get("session_id")
+                        sess = sessions.get(session_id)
+                        if sess:
+                            try:
+                                sess["proc"].terminate()
+                            except Exception:
+                                pass
+                            sessions.pop(session_id, None)
+
+                    elif msg_type == "resize":
+                        pass  # TODO
+
+                except Exception as e:
+                    log.error("WebSocket message error: %s", e)
+        finally:
+            send_task.cancel()
+            # Kill all terminal sessions
+            for sid, sess in sessions.items():
+                try:
+                    sess["proc"].terminate()
+                except Exception:
+                    pass
 
 
 def main():
