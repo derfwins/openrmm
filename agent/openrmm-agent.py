@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.3.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -285,7 +285,7 @@ async def ws_agent_connect(server: str, agent_id: str):
     ws_url = f"{ws_url.rstrip('/')}/ws/agent/{agent_id}/"
 
     log.info("Connecting to WebSocket: %s", ws_url)
-    async with websockets.connect(ws_url, user_agent_header="OpenRMM-Agent") as ws:
+    async with websockets.connect(ws_url, additional_headers={"User-Agent": "OpenRMM-Agent"}, ping_interval=30, ping_timeout=10) as ws:
         log.info("WebSocket connected to server")
 
         async for message in ws:
