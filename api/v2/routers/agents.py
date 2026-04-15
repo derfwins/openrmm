@@ -101,11 +101,20 @@ foreach ($cmd in @("python", "python3", "py")) {{
     }} catch {{}}
 }}
 if (-not $pythonExe) {{
-    Write-Host "Installing Python 3..." -ForegroundColor Yellow
-    winget install Python.Python.3 --accept-package-agreements --accept-source-agreements
+    Write-Host "Installing Python 3.12..." -ForegroundColor Yellow
+    $pyUrl = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
+    $pyInstaller = "$env:TEMP\python-installer.exe"
+    Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller -UseBasicParsing
+    Start-Process -Wait -FilePath $pyInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1"
+    Remove-Item $pyInstaller -Force
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
     $pythonExe = "python"
 }}
+
+# Verify Python works
+$pyVer = & $pythonExe --version 2>&1
+if ($pyVer -notmatch "Python 3\.") {{ Write-Host "ERROR: Python 3 installation failed!" -ForegroundColor Red; exit 1 }}
+Write-Host "Python: $pyVer" -ForegroundColor Green
 
 # Install psutil
 Write-Host "Installing dependencies..." -ForegroundColor Cyan
