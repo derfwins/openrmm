@@ -43,6 +43,14 @@ class Agent(Base):
     local_ip = Column(String(50), default="", server_default="")
     logged_in_user = Column(String(255), default="", server_default="")
 
+    # System monitoring (from enhanced agent heartbeat)
+    disks_json = Column(Text, default="", server_default="")  # JSON string of disk info
+    memory_json = Column(Text, default="", server_default="")  # JSON string of memory info
+    uptime_seconds = Column(Integer, default=0, server_default="0")
+    logged_in_users = Column(Text, default="", server_default="")  # JSON list
+    running_processes = Column(Integer, default=0, server_default="0")
+    cpu_percent = Column(Float, default=0, server_default="0")
+
     site = relationship("Site", back_populates="agents")
     checks = relationship("Check", back_populates="agent", cascade="all, delete-orphan")
 

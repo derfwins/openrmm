@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.1.0"
+AGENT_VERSION = "0.2.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -69,7 +69,7 @@ def get_local_ip() -> str:
 def get_public_ip() -> str:
     for url in ["https://api.ipify.org", "https://ifconfig.me"]:
         try:
-            req = Request(url, headers={"User-Agent": "OpenRMM-Agent/0.1.0"})
+            req = Request(url, headers={"User-Agent": "OpenRMM-Agent/0.2.0"})
             return urlopen(req, timeout=5).read().decode().strip()
         except Exception:
             continue
@@ -91,12 +91,19 @@ def get_system_info() -> dict:
         "cpu_cores": 0,
         "total_ram": 0,
         "logged_in_user": "",
+        "disks_json": "[]",
+        "memory_json": "{}",
+        "uptime_seconds": 0,
+        "logged_in_users": "[]",
+        "running_processes": 0,
+        "cpu_percent": 0.0,
     }
 
     try:
         import psutil
         info["cpu_cores"] = psutil.cpu_count(logical=True) or 0
-        info["total_ram"] = psutil.virtual_memory().total
+        mem = psutil.virtual_memory()
+        info["total_ram"] = mem.total
         info["logged_in_user"] = os.getlogin() if hasattr(os, "getlogin") else ""
 
         # CPU model
@@ -111,6 +118,51 @@ def get_system_info() -> dict:
                 pass
         else:
             info["cpu_model"] = platform.processor()
+
+        # Enhanced monitoring fields
+        # Disks
+        disks = []
+        for part in psutil.disk_partitions():
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+                disks.append({
+                    "drive": part.mountpoint,
+                    "total_gb": round(usage.total / (1024**3), 2),
+                    "used_gb": round(usage.used / (1024**3), 2),
+                    "free_gb": round(usage.free / (1024**3), 2),
+                    "percent": usage.percent,
+                })
+            except Exception:
+                continue
+        info["disks_json"] = json.dumps(disks)
+
+        # Memory
+        info["memory_json"] = json.dumps({
+            "total_gb": round(mem.total / (1024**3), 2),
+            "used_gb": round(mem.used / (1024**3), 2),
+            "available_gb": round(mem.available / (1024**3), 2),
+            "percent": mem.percent,
+        })
+
+        # Uptime
+        info["uptime_seconds"] = int(time.time() - psutil.boot_time())
+
+        # Logged in users (unique)
+        try:
+            users = list(set(u.name for u in psutil.users()))
+            info["logged_in_users"] = json.dumps(users)
+        except Exception:
+            pass
+
+        # Running processes
+        try:
+            info["running_processes"] = len(psutil.pids())
+        except Exception:
+            pass
+
+        # CPU percent
+        info["cpu_percent"] = psutil.cpu_percent(interval=1)
+
     except ImportError:
         log.warning("psutil not installed - limited system info")
 
@@ -122,7 +174,7 @@ def heartbeat(server: str, agent_id: str, info: dict) -> bool:
     url = f"{server.rstrip('/')}/agents/heartbeat/"
     try:
         data = json.dumps(payload).encode()
-        req = Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.1.0"})
+        req = Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.2.0"})
         resp = urlopen(req, timeout=10)
         result = json.loads(resp.read())
         log.info("Heartbeat OK: %s", result.get("status"))

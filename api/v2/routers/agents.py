@@ -203,6 +203,9 @@ async def list_agents(
             "total_ram": a.total_ram, "os_name": a.os_name,
             "os_version": a.os_version, "public_ip": a.public_ip,
             "local_ip": a.local_ip, "logged_in_user": a.logged_in_user,
+            "disks_json": a.disks_json, "memory_json": a.memory_json,
+            "uptime_seconds": a.uptime_seconds, "logged_in_users": a.logged_in_users,
+            "running_processes": a.running_processes, "cpu_percent": a.cpu_percent,
         }
         for a in agents
     ]
@@ -238,6 +241,9 @@ async def get_agent(
         "total_ram": agent.total_ram, "os_name": agent.os_name,
         "os_version": agent.os_version, "public_ip": agent.public_ip,
         "local_ip": agent.local_ip, "logged_in_user": agent.logged_in_user,
+        "disks_json": agent.disks_json, "memory_json": agent.memory_json,
+        "uptime_seconds": agent.uptime_seconds, "logged_in_users": agent.logged_in_users,
+        "running_processes": agent.running_processes, "cpu_percent": agent.cpu_percent,
     }
 
 
@@ -296,6 +302,12 @@ class HeartbeatRequest(BaseModel):
     public_ip: str = ""
     local_ip: str = ""
     logged_in_user: str = ""
+    disks_json: str = ""
+    memory_json: str = ""
+    uptime_seconds: int = 0
+    logged_in_users: str = ""
+    running_processes: int = 0
+    cpu_percent: float = 0
 
 
 @router.post("/heartbeat/")
@@ -322,7 +334,9 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
     agent.last_heartbeat = now
     for field in ["hostname", "version", "operating_system", "plat", "goarch",
                    "cpu_model", "cpu_cores", "total_ram", "os_name", "os_version",
-                   "public_ip", "local_ip", "logged_in_user"]:
+                   "public_ip", "local_ip", "logged_in_user", "disks_json",
+                   "memory_json", "uptime_seconds", "logged_in_users",
+                   "running_processes", "cpu_percent"]:
         val = getattr(req, field, None)
         if val is not None:
             setattr(agent, field, val)
