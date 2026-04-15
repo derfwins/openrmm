@@ -17,7 +17,7 @@ class User(Base):
     is_active = Column(Boolean, default=True, server_default="true")
     is_staff = Column(Boolean, default=False, server_default="false")
     is_superuser = Column(Boolean, default=False, server_default="false")
-    last_login = Column(DateTime, nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     last_login_ip = Column(String(50), default="", server_default="")
     date_joined = Column(DateTime, server_default=func.now())
     totp_key = Column(String(255), default="", server_default="")

@@ -47,6 +47,9 @@ async def check_credentials(req: CheckCredsRequest, db: AsyncSession = Depends(g
 
     # No MFA — return token directly
     if not user.has_mfa():
+        user.last_login = datetime.now(timezone.utc)
+        user.last_login_ip = req.client.host if hasattr(req, 'client') and req.client else ''
+        await db.commit()
         expiry = datetime.now(timezone.utc).isoformat()
         token = create_access_token({"sub": str(user.id), "username": user.username})
         return {"token": token, "expiry": expiry, "totp": False}
