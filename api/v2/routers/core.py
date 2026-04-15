@@ -22,11 +22,6 @@ class SettingsUpdate(BaseModel):
     agent_auto_update: Optional[bool] = None
     api_url: Optional[str] = None
     frontend_url: Optional[str] = None
-    mesh_site: Optional[str] = None
-    mesh_username: Optional[str] = None
-    mesh_token_key: Optional[str] = None
-    mesh_device_group: Optional[str] = None
-    mesh_sync: Optional[bool] = None
     smtp_host: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_username: Optional[str] = None
@@ -63,11 +58,6 @@ async def get_settings(user: User = Depends(get_current_user), db: AsyncSession 
         "agent_auto_update": settings.agent_auto_update,
         "api_url": settings.api_url,
         "frontend_url": settings.frontend_url,
-        "mesh_site": settings.mesh_site,
-        "mesh_username": settings.mesh_username,
-        "mesh_token_key": settings.mesh_token_key,
-        "mesh_device_group": settings.mesh_device_group,
-        "mesh_sync": settings.mesh_sync,
         "smtp_host": settings.smtp_host,
         "smtp_port": settings.smtp_port,
         "smtp_username": settings.smtp_username,

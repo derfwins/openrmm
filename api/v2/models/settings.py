@@ -15,12 +15,7 @@ class CoreSettings(Base):
     # Domain settings
     api_url = Column(String(255), default="", server_default="")
     frontend_url = Column(String(255), default="", server_default="")
-    mesh_site = Column(String(255), default="", server_default="")
-    mesh_username = Column(String(255), default="", server_default="")
-    mesh_token_key = Column(String(255), default="", server_default="")
-    mesh_device_group = Column(String(255), default="", server_default="")
-    mesh_sync = Column(Boolean, default=False, server_default="false")
-
+    
     # Email settings
     smtp_host = Column(String(255), default="", server_default="")
     smtp_port = Column(Integer, default=587, server_default="587")

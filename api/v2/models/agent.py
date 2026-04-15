@@ -28,8 +28,7 @@ class Agent(Base):
     # Monitoring
     monitoring_type = Column(String(50), default="server", server_default="server")  # server, workstation
     description = Column(Text, default="", server_default="")
-    mesh_node_id = Column(String(255), default="", server_default="")
-
+    
     # Settings
     is_maintenance = Column(Boolean, default=False, server_default="false")
     block_policy_inheritance = Column(Boolean, default=False, server_default="false")

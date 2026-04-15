@@ -37,13 +37,7 @@ class Settings(BaseSettings):
         "https://rmmapp.derfwins.com",
         "http://rmm.derfwins.com",
         "https://rmm.derfwins.com",
-        "https://mesh.derfwins.com",
     ]
-    
-    # Mesh Central
-    MESH_SITE: str = "http://10.10.0.122"
-    MESH_USERNAME: str = "admin"
-    MESH_TOKEN_KEY: str = "devkey1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
     
     # Agent
     LATEST_AGENT_VER: str = "0.1.0"

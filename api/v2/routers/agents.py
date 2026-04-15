@@ -10,7 +10,6 @@ from v2.models.user import User
 from v2.models.agent import Agent, Check
 from v2.models.client import Site
 from v2.auth import get_current_user
-from v2.config import settings
 
 router = APIRouter(prefix="/agents")
 
@@ -44,7 +43,6 @@ async def list_agents(
             "plat": a.plat, "goarch": a.goarch,
             "status": a.status, "last_seen": a.last_seen.isoformat() if a.last_seen else None,
             "monitoring_type": a.monitoring_type, "description": a.description,
-            "mesh_node_id": a.mesh_node_id,
             "is_maintenance": a.is_maintenance,
             "cpu_model": a.cpu_model, "cpu_cores": a.cpu_cores,
             "total_ram": a.total_ram, "os_name": a.os_name,
@@ -68,7 +66,7 @@ async def generate_installer(
     if not site:
         raise HTTPException(404, detail="Site not found for this client")
 
-    api_url = req.api or f"https://{settings.mesh_site.replace('http://', '').replace('https://', '')}"
+    api_url = req.api or ""
 
     if req.plat == "windows":
         # PowerShell install script
