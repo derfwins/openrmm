@@ -118,7 +118,7 @@ Write-Host "Python: $pyVer" -ForegroundColor Green
 
 # Install psutil
 Write-Host "Installing dependencies..." -ForegroundColor Cyan
-& $pythonExe -m pip install psutil --quiet
+$null = & $pythonExe -m pip install psutil --quiet 2>&1
 
 # Download agent script from server
 $AgentUrl = "$Server/agents/download/openrmm-agent.py"
