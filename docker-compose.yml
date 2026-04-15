@@ -91,7 +91,6 @@ services:
     container_name: openrmm-frontend
     volumes:
       - ./frontend:/app
-      - /app/node_modules
     ports:
       - "127.0.0.1:5173:5173"
     command: npm run dev -- --host
