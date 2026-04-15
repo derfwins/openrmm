@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { API_BASE_URL } from '../config'
 
 interface Site {
   id: number
@@ -29,7 +28,9 @@ const InstallAgent = () => {
   const [error, setError] = useState('')
 
   const token = localStorage.getItem('token')
-  const apiUrl = API_BASE_URL
+  // For install scripts, we need the server's public URL (not relative)
+  // Use current host for the browser, or fall back to settings
+  const apiUrl = window.location.origin
 
   const headers = {
     'Content-Type': 'application/json',
@@ -280,7 +281,7 @@ const InstallAgent = () => {
 
         <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
           <p className="text-xs text-yellow-700 dark:text-yellow-400">
-            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">{apiUrl.replace('https://', '').replace('http://', '')}</code> (the RMM server). For production, use HTTPS and configure proper DNS.
+            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">{window.location.host}</code> (the RMM server). For production, use HTTPS and configure proper DNS.
           </p>
         </div>
       </div>
