@@ -69,7 +69,7 @@ def get_local_ip() -> str:
 def get_public_ip() -> str:
     for url in ["https://api.ipify.org", "https://ifconfig.me"]:
         try:
-            req = Request(url, headers={"User-Agent": "openrmm-agent"})
+            req = Request(url, headers={"User-Agent": "OpenRMM-Agent/0.1.0"})
             return urlopen(req, timeout=5).read().decode().strip()
         except Exception:
             continue
@@ -122,7 +122,7 @@ def heartbeat(server: str, agent_id: str, info: dict) -> bool:
     url = f"{server.rstrip('/')}/agents/heartbeat/"
     try:
         data = json.dumps(payload).encode()
-        req = Request(url, data=data, headers={"Content-Type": "application/json"})
+        req = Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.1.0"})
         resp = urlopen(req, timeout=10)
         result = json.loads(resp.read())
         log.info("Heartbeat OK: %s", result.get("status"))
