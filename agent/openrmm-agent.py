@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.2.1"
+AGENT_VERSION = "0.3.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -253,6 +253,129 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
                 pass
 
 
+def ws_agent_loop(server: str, agent_id: str):
+    """Persistent WebSocket connection to server for terminal relay."""
+    import threading
+    import subprocess
+    ws_backoff = 1
+
+    while running:
+        try:
+            import asyncio
+            asyncio.run(ws_agent_connect(server, agent_id))
+            ws_backoff = 1
+        except Exception as e:
+            log.error("WebSocket error: %s, retrying in %ds", e, ws_backoff)
+            time.sleep(ws_backoff)
+            ws_backoff = min(ws_backoff * 2, 60)
+            continue
+
+
+async def ws_agent_connect(server: str, agent_id: str):
+    """Connect to server WebSocket and handle terminal sessions."""
+    import asyncio
+    try:
+        import websockets
+    except ImportError:
+        log.warning("websockets not installed, terminal not available")
+        return
+
+    # Build WS URL from server HTTP URL
+    ws_url = server.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url = f"{ws_url.rstrip('/')}/ws/agent/{agent_id}/"
+
+    log.info("Connecting to WebSocket: %s", ws_url)
+    async with websockets.connect(ws_url, user_agent_header="OpenRMM-Agent") as ws:
+        log.info("WebSocket connected to server")
+
+        async for message in ws:
+            try:
+                data = json.loads(message)
+                msg_type = data.get("type")
+
+                if msg_type == "terminal_start":
+                    session_id = data["session_id"]
+                    log.info("Terminal session started: %s", session_id)
+                    # Start shell in a thread
+                    import threading
+                    t = threading.Thread(target=run_terminal, args=(server, agent_id, session_id), daemon=True)
+                    t.start()
+
+                elif msg_type == "input":
+                    # Input for a running terminal - handled by the terminal thread
+                    pass
+
+                elif msg_type == "terminal_kill":
+                    log.info("Terminal kill requested: %s", data.get("session_id"))
+
+                elif msg_type == "resize":
+                    pass  # TODO: handle resize
+
+            except Exception as e:
+                log.error("WebSocket message error: %s", e)
+
+
+def run_terminal(server: str, agent_id: str, session_id: str):
+    """Run an interactive terminal session using subprocess."""
+    import subprocess
+    import threading
+
+    log.info("Starting terminal shell for session %s", session_id)
+
+    # Determine shell
+    if platform.system() == "Windows":
+        cmd = ["cmd.exe"]
+    else:
+        cmd = ["/bin/bash", "-i"]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        )
+    except Exception as e:
+        log.error("Failed to start shell: %s", e)
+        return
+
+    # Read output and send to server via HTTP POST (simpler than WS from thread)
+    def read_output():
+        try:
+            while proc.poll() is None:
+                chunk = proc.stdout.read(4096)
+                if chunk:
+                    try:
+                        # Post output back via heartbeat channel with session_id
+                        url = f"{server.rstrip('/')}/agents/terminal-output/"
+                        payload = {"agent_id": agent_id, "session_id": session_id, "type": "output", "data": chunk.decode(errors='replace')}
+                        req = Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.3.0"})
+                        urlopen(req, timeout=5)
+                    except Exception:
+                        pass
+
+            # Process exited
+            exit_code = proc.returncode
+            try:
+                url = f"{server.rstrip('/')}/agents/terminal-output/"
+                payload = {"agent_id": agent_id, "session_id": session_id, "type": "exit", "code": exit_code}
+                req = Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.3.0"})
+                urlopen(req, timeout=5)
+            except Exception:
+                pass
+            log.info("Terminal session %s exited with code %s", session_id, exit_code)
+        except Exception as e:
+            log.error("Terminal read error: %s", e)
+
+    output_thread = threading.Thread(target=read_output, daemon=True)
+    output_thread.start()
+
+    # TODO: pipe input from WebSocket to proc.stdin
+    # For now, this is output-only until we wire input through the WS relay
+    proc.wait()
+
+
 def main():
     parser = argparse.ArgumentParser(description="OpenRMM Agent")
     parser.add_argument("--server", required=True, help="RMM server URL (e.g. https://rmm.derfwins.com)")
@@ -265,6 +388,11 @@ def main():
     log.info("OpenRMM Agent v%s starting", AGENT_VERSION)
     log.info("Agent ID: %s", agent_id)
     log.info("Server: %s", args.server)
+
+    # Start WebSocket connection in background thread
+    import threading
+    ws_thread = threading.Thread(target=ws_agent_loop, args=(args.server, agent_id), daemon=True)
+    ws_thread.start()
 
     global backoff
 
