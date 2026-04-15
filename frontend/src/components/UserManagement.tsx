@@ -199,7 +199,19 @@ const UserManagement = () => {
       const rolesData = rolesResp.ok ? await rolesResp.json() : []
       setUsers(Array.isArray(usersData) ? usersData : [])
       setRoles(Array.isArray(rolesData) ? rolesData : [])
-      if (!usersResp.ok || !rolesResp.ok) setError('Failed to load some data — check API connection')
+      if (!usersResp.ok) {
+        if (usersResp.status === 401) {
+          setError('Session expired — please log out and log back in')
+        } else {
+          setError(`Failed to load users (HTTP ${usersResp.status})`)
+        }
+      } else if (!rolesResp.ok) {
+        if (rolesResp.status === 401) {
+          setError('Session expired — please log out and log back in')
+        } else {
+          setError(`Failed to load roles (HTTP ${rolesResp.status})`)
+        }
+      }
     } catch (e) { setError('Failed to load data: ' + (e instanceof Error ? e.message : String(e))) }
     setLoading(false)
   }

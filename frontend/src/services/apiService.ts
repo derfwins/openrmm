@@ -3,6 +3,17 @@ import { API_BASE_URL } from '../config'
 // Get auth token from localStorage
 const getToken = () => localStorage.getItem('token')
 
+// Auto-logout on 401
+const handle401 = (resp: Response) => {
+  if (resp.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
 // Auth header — JWT Bearer token (OpenRMM custom backend)
 const authHeaders = (): Record<string, string> => {
   const token = getToken()
