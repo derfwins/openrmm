@@ -140,6 +140,8 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       REDIS_HOST: redis
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+    volumes:
+      - ./api/v2:/app/v2
     depends_on:
       redis:
         condition: service_healthy
@@ -162,6 +164,8 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
       REDIS_HOST: redis
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+    volumes:
+      - ./api/v2:/app/v2
     depends_on:
       redis:
         condition: service_healthy
