@@ -208,6 +208,39 @@ async def list_agents(
     ]
 
 
+@router.get("/{agent_id}/")
+async def get_agent(
+    agent_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single agent by agent_id (UUID) or database id."""
+    # Try UUID first (agent_id field), then numeric id
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        try:
+            numeric_id = int(agent_id)
+            result = await db.execute(select(Agent).where(Agent.id == numeric_id))
+            agent = result.scalar_one_or_none()
+        except ValueError:
+            pass
+    if not agent:
+        raise HTTPException(404, detail="Agent not found")
+    return {
+        "id": agent.id, "hostname": agent.hostname, "agent_id": agent.agent_id,
+        "site_id": agent.site_id, "version": agent.version,
+        "plat": agent.plat, "goarch": agent.goarch,
+        "status": agent.status, "last_seen": agent.last_seen.isoformat() if agent.last_seen else None,
+        "monitoring_type": agent.monitoring_type, "description": agent.description,
+        "is_maintenance": agent.is_maintenance,
+        "cpu_model": agent.cpu_model, "cpu_cores": agent.cpu_cores,
+        "total_ram": agent.total_ram, "os_name": agent.os_name,
+        "os_version": agent.os_version, "public_ip": agent.public_ip,
+        "local_ip": agent.local_ip, "logged_in_user": agent.logged_in_user,
+    }
+
+
 @router.post("/installer/")
 async def generate_installer(
     req: InstallerRequest,
