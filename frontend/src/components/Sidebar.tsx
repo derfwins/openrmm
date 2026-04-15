@@ -25,10 +25,18 @@ const Sidebar = () => {
       ]
     },
     {
+      label: 'Tools',
+      items: [
+        { icon: '🖥️', label: 'Remote Desktop', path: '/remote' },
+        { icon: '💻', label: 'Terminal', path: '/terminal' },
+        { icon: '🤖', label: 'AI Copilot', path: '/ai' },
+      ]
+    },
+    {
       label: 'System',
       items: [
         { icon: '📈', label: 'Reports', path: '/reports' },
-        { icon: '🤖', label: 'AI Copilot', path: '/ai' },
+        { icon: '📋', label: 'Audit Log', path: '/audit' },
         { icon: '👥', label: 'Users', path: '/users' },
         { icon: '⚙️', label: 'Settings', path: '/settings' },
       ]
