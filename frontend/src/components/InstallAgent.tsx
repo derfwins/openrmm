@@ -41,10 +41,11 @@ const InstallAgent = () => {
       try {
         const resp = await fetch(`${apiUrl}/clients/`, { headers })
         const data = await resp.json()
-        setClients(data)
-        if (data.length > 0) {
-          setSelectedClient(data[0].id)
-          const sites = data[0].sites || data[0].filtered_sites || []
+        const clientList = Array.isArray(data) ? data : (data.results || [])
+        setClients(clientList)
+        if (clientList.length > 0) {
+          setSelectedClient(clientList[0].id)
+          const sites = clientList[0].sites || []
           setAvailableSites(sites)
           if (sites.length > 0) setSelectedSite(sites[0].id)
         }

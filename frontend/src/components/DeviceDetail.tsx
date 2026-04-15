@@ -88,7 +88,7 @@ const DeviceDetail = () => {
           </div>
           <div className="flex gap-2">
             <a
-              href="http://10.10.0.122:8080"
+              href="/remote"
               target="_blank"
               rel="noopener noreferrer"
               className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
