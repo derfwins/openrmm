@@ -40,10 +40,17 @@ const Clients = () => {
   const fetchClients = async () => {
     try {
       const resp = await fetch(`${apiUrl}/clients/`, { headers })
+      if (!resp.ok) {
+        const errText = await resp.text()
+        console.error('Clients API error:', resp.status, errText)
+        setError(`Failed to load clients (${resp.status})`)
+        return
+      }
       const data = await resp.json()
       const clientList = Array.isArray(data) ? data : (data.results || data.clients || [])
       setClients(clientList)
     } catch (err) {
+      console.error('Clients fetch error:', err)
       setError('Failed to load clients')
     } finally {
       setLoading(false)
