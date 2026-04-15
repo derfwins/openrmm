@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useLocation, Link } from 'react-router-dom'
-import { AuthContext } from '../App'
 
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)

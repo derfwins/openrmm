@@ -1,18 +1,10 @@
 import { API_BASE_URL } from '../config'
+import type { AgentInfo, AgentCommand, AgentEnrollment } from '../types/agent'
 
 // Get auth token from localStorage
 const getToken = () => localStorage.getItem('token')
 
 // Auto-logout on 401
-const handle401 = (resp: Response) => {
-  if (resp.status === 401) {
-    localStorage.removeItem('token')
-    localStorage.removeItem('username')
-    window.location.href = '/login'
-    return true
-  }
-  return false
-}
 
 // Auth header — JWT Bearer token (OpenRMM custom backend)
 const authHeaders = (): Record<string, string> => {
@@ -145,15 +137,6 @@ export const apiService = {
     return response.json()
   },
 
-  // Alerts
-  async getAlerts() {
-    const response = await fetch(`${API_BASE_URL}/alerts/`, {
-      headers: authHeaders(),
-    })
-    if (!response.ok) throw new Error('Failed to fetch alerts')
-    return response.json()
-  },
-
   // Remote commands
   async sendCommand(agentId: string, command: string, shell: string = 'powershell') {
     const response = await fetch(`${API_BASE_URL}/agents/${agentId}/cmd/`, {
@@ -192,7 +175,7 @@ export const apiService = {
   },
 
   // Checks
-  async getChecks(agentId: string) {
+  async getChecks(_agentId: string) {
     const response = await fetch(`${API_BASE_URL}/checks/`, {
       headers: authHeaders(),
     })
@@ -231,6 +214,51 @@ export const apiService = {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch software')
+    return response.json()
+  },
+
+  // Agent Management
+  async getAgents(): Promise<AgentInfo[]> {
+    const response = await fetch(`${API_BASE_URL}/agents/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch agents')
+    return response.json()
+  },
+
+  async getAgentDetail(id: string): Promise<AgentInfo> {
+    const response = await fetch(`${API_BASE_URL}/agents/${id}/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch agent detail')
+    return response.json()
+  },
+
+  async sendAgentCommand(agentId: string, command: string, shell: string = 'powershell', timeout: number = 300): Promise<AgentCommand> {
+    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/commands/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ command, shell, timeout }),
+    })
+    if (!response.ok) throw new Error('Failed to send command')
+    return response.json()
+  },
+
+  async getAgentHistory(agentId: string): Promise<AgentCommand[]> {
+    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/history/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch command history')
+    return response.json()
+  },
+
+  async enrollAgent(enrollment: AgentEnrollment): Promise<{ agent_id: string; secret: string }> {
+    const response = await fetch(`${API_BASE_URL}/agents/enroll/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(enrollment),
+    })
+    if (!response.ok) throw new Error('Failed to enroll agent')
     return response.json()
   },
 }

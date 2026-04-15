@@ -1,4 +1,3 @@
-import { API_BASE_URL } from '../config'
 import { useState, useEffect } from 'react'
 
 interface Site {
@@ -63,7 +62,7 @@ const InstallAgent = () => {
     if (!selectedClient) return
     const client = clients.find(c => c.id === selectedClient)
     if (client) {
-      const sites = client.sites || client.filtered_sites || []
+      const sites = client.sites || []
       setAvailableSites(sites)
       setSelectedSite(sites.length > 0 ? sites[0].id : null)
     }

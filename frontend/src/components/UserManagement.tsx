@@ -173,7 +173,7 @@ const UserManagement = () => {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', email: '', is_active: true, role: 0 as number | null, block_dashboard_login: false })
   const [newPassword, setNewPassword] = useState('')
-  const [saved, setSaved] = useState(false)
+  const [_saved, setSaved] = useState(false)
 
   // Add role form
   const [showAddRole, setShowAddRole] = useState(false)
@@ -249,29 +249,7 @@ const UserManagement = () => {
     } catch { setError('Failed to delete user') }
   }
 
-  const toggleUserActive = async (user: User) => {
-    try {
-      await fetch(`${serverBase}/accounts/${user.id}/users/`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({ ...user, is_active: !user.is_active }),
-      })
-      await fetchData()
-    } catch { setError('Failed to update user') }
-  }
 
-  const resetPassword = async (userId: number) => {
-    const pw = prompt('Enter new password:')
-    if (!pw) return
-    try {
-      await fetch(`${serverBase}/accounts/users/reset/`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ id: userId, password: pw }),
-      })
-      alert('Password reset successfully')
-    } catch { setError('Failed to reset password') }
-  }
 
   const openEditUser = (user: User) => {
     setEditingUser(user)

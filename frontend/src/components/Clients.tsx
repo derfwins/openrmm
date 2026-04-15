@@ -1,6 +1,4 @@
-import { API_BASE_URL } from '../config'
 import { useState, useEffect } from 'react'
-import apiService from '../services/apiService'
 
 interface Site {
   id: number
