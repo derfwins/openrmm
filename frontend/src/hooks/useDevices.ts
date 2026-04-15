@@ -10,35 +10,28 @@ export const useDevices = () => {
   const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
-    // Load initial devices
     loadDevices()
 
-    // Setup WebSocket for real-time updates
     const token = localStorage.getItem('token')
     if (token) {
       wsService.connect(token)
-      
-      wsService.on('connected', () => {
-        setIsConnected(true)
-        console.log('WebSocket connected')
+
+      wsService.onConnectionChange((connected) => {
+        setIsConnected(connected)
       })
 
-      wsService.on('disconnected', () => {
-        setIsConnected(false)
-        console.log('WebSocket disconnected')
-      })
-
-      wsService.on('device_update', (data: Device) => {
-        updateDevice(data)
-      })
-
-      wsService.on('device_offline', (data: { device_id: string }) => {
-        markDeviceOffline(data.device_id)
+      wsService.subscribe('agents', (data: unknown) => {
+        const update = data as Device
+        setDevices(prev => prev.map(d => d.id === update.id ? update : d))
       })
     }
 
+    // Refresh every 30 seconds
+    const interval = setInterval(loadDevices, 30000)
+
     return () => {
       wsService.disconnect()
+      clearInterval(interval)
     }
   }, [])
 
@@ -46,64 +39,31 @@ export const useDevices = () => {
     try {
       setLoading(true)
       const data = await apiService.getDevices()
-      // Transform Tactical RMM format to our format
-      const transformedDevices = data.results?.map((agent: any) => ({
-        id: agent.agent_id,
-        name: agent.hostname,
-        status: agent.status === 'online' ? 'online' : 'offline',
-        type: agent.monitoring_type === 'server' ? 'server' : 'workstation',
-        platform: agent.plat === 'windows' ? 'windows' : agent.plat === 'darwin' ? 'macos' : 'linux',
-        last_seen: agent.last_seen,
-        cpu_usage: agent.checks?.cpu_percent || 0,
-        memory_usage: agent.checks?.memory_percent || 0,
-        disk_usage: agent.checks?.disk_usage || 0,
-        ip: agent.wan_ip || agent.local_ip,
-        site: agent.site_name || 'Default',
-        client: agent.client_name || 'Internal',
-      })) || []
+      const transformedDevices = data.results?.map((agent: Record<string, unknown>) => ({
+        id: String(agent.id || agent.agent_id || ''),
+        name: String(agent.hostname || agent.name || 'Unknown'),
+        status: String(agent.status || 'offline') as Device['status'],
+        type: String(agent.monitoring_type || agent.type || 'workstation') as Device['type'],
+        platform: String(agent.plat || agent.platform || 'windows') as Device['platform'],
+        last_seen: String(agent.last_seen || new Date().toISOString()),
+        cpu_usage: Number(agent.cpu_usage || 0),
+        memory_usage: Number(agent.memory_usage || 0),
+        disk_usage: Number(agent.disk_usage || 0),
+        ip: String(agent.local_ip || agent.public_ip || agent.ip || ''),
+        site: String(agent.site || ''),
+        client: String(agent.client || ''),
+      })) || (Array.isArray(data) ? data : [])
+
       setDevices(transformedDevices)
+      setError(null)
     } catch (err) {
-      setError('Failed to load devices')
-      console.error('Load devices error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load devices')
     } finally {
       setLoading(false)
     }
   }
 
-  const updateDevice = (updatedDevice: Device) => {
-    setDevices(prev => 
-      prev.map(device => 
-        device.id === updatedDevice.id ? updatedDevice : device
-      )
-    )
-  }
-
-  const markDeviceOffline = (deviceId: string) => {
-    setDevices(prev =>
-      prev.map(device =>
-        device.id === deviceId 
-          ? { ...device, status: 'offline' as const }
-          : device
-      )
-    )
-  }
-
-  const refreshDevices = () => {
-    loadDevices()
-  }
-
-  const onlineCount = devices.filter(d => d.status === 'online').length
-  const offlineCount = devices.filter(d => d.status === 'offline').length
-
-  return {
-    devices,
-    loading,
-    error,
-    isConnected,
-    onlineCount,
-    offlineCount,
-    refreshDevices,
-  }
+  return { devices, loading, error, isConnected, refresh: loadDevices }
 }
 
 export default useDevices

@@ -21,6 +21,9 @@ import RemoteDesktop from './components/RemoteDesktop'
 import AuditLog from './components/AuditLog'
 import Terminal from './components/Terminal'
 import Sidebar from './components/Sidebar'
+import QuickActions from './components/QuickActions'
+import NotificationCenter from './components/NotificationCenter'
+import { WebSocketProvider } from './contexts/WebSocketContext'
 
 export const AuthContext = {
   isAuthenticated: () => localStorage.getItem('token') !== null,
@@ -78,6 +81,14 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
         {/* Top bar */}
         <header className="h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-5 shrink-0">
           <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-600 hidden md:inline">⌘K</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <NotificationCenter />
+            <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
+              {currentUsername[0]?.toUpperCase() || 'A'}
+            </div>
+            <span className="text-sm text-gray-300 font-medium">{currentUsername}</span>
             <button
               onClick={() => setDarkMode(!darkMode)}
               className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
@@ -85,14 +96,6 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             >
               {darkMode ? '☀️' : '🌙'}
             </button>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
-                {currentUsername[0]?.toUpperCase() || 'A'}
-              </div>
-              <span className="text-sm text-gray-300 font-medium">{currentUsername}</span>
-            </div>
             <button
               onClick={AuthContext.logout}
               className="text-xs text-gray-500 hover:text-red-400 transition-colors"
@@ -128,7 +131,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 function App() {
   return (
     <BrowserRouter>
+      <WebSocketProvider>
       <ErrorBoundary>
+      <QuickActions />
       <Routes>
         <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} />
         <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
@@ -152,6 +157,7 @@ function App() {
         <Route path="*" element={<Navigate to="/dashboard" />} />
       </Routes>
       </ErrorBoundary>
+      </WebSocketProvider>
     </BrowserRouter>
   )
 }
