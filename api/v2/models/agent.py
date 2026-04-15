@@ -21,9 +21,9 @@ class Agent(Base):
 
     # Status
     status = Column(String(50), default="offline", server_default="offline")  # online, offline, overdue
-    last_seen = Column(DateTime, nullable=True)
-    first_seen = Column(DateTime, server_default=func.now())
-    last_heartbeat = Column(DateTime, nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=True)
+    first_seen = Column(DateTime(timezone=True), server_default=func.now())
+    last_heartbeat = Column(DateTime(timezone=True), nullable=True)
 
     # Monitoring
     monitoring_type = Column(String(50), default="server", server_default="server")  # server, workstation
