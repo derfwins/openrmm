@@ -32,7 +32,10 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://10.10.0.122:5173",
         "http://10.10.0.122:8000",
+        "http://10.10.0.122",
+        "http://rmmapp.derfwins.com",
         "https://rmmapp.derfwins.com",
+        "http://rmm.derfwins.com",
         "https://rmm.derfwins.com",
         "https://mesh.derfwins.com",
     ]
