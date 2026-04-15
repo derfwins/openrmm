@@ -342,4 +342,22 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
             setattr(agent, field, val)
 
     await db.commit()
-    return {"status": "ok"}
+
+    # Auto-update: tell agent if newer version is available
+    response = {"status": "ok"}
+    try:
+        import os
+        agent_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent", "openrmm-agent.py"))
+        if os.path.exists(agent_path):
+            # Read version from the agent file
+            with open(agent_path, "r") as f:
+                for line in f:
+                    if line.startswith("AGENT_VERSION"):
+                        latest = line.split("=")[1].strip().strip('"').strip("'")
+                        if latest != req.version:
+                            response["update_available"] = latest
+                        break
+    except Exception:
+        pass
+
+    return response

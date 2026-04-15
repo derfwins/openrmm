@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.2.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -169,7 +169,8 @@ def get_system_info() -> dict:
     return info
 
 
-def heartbeat(server: str, agent_id: str, info: dict) -> bool:
+def heartbeat(server: str, agent_id: str, info: dict) -> dict | None:
+    """Send heartbeat, return response dict or None on failure."""
     payload = {"agent_id": agent_id, **info}
     url = f"{server.rstrip('/')}/agents/heartbeat/"
     try:
@@ -178,13 +179,53 @@ def heartbeat(server: str, agent_id: str, info: dict) -> bool:
         resp = urlopen(req, timeout=10)
         result = json.loads(resp.read())
         log.info("Heartbeat OK: %s", result.get("status"))
-        return True
+        return result
     except URLError as e:
         log.error("Heartbeat failed: %s", e)
-        return False
+        return None
     except Exception as e:
         log.error("Heartbeat error: %s", e)
-        return False
+        return None
+
+
+def auto_update(server: str, current_version: str, latest_version: str) -> None:
+    """Download and apply agent update if available."""
+    if latest_version == current_version:
+        return
+    log.info("Update available: %s -> %s, downloading...", current_version, latest_version)
+    try:
+        url = f"{server.rstrip('/')}/agents/download/openrmm-agent.py"
+        req = Request(url, headers={"User-Agent": "OpenRMM-Agent/0.2.0"})
+        new_code = urlopen(req, timeout=30).read()
+        # Verify it's valid Python by checking for our marker
+        if b"AGENT_VERSION" not in new_code:
+            log.error("Downloaded file doesn't look like a valid agent")
+            return
+        # Write to temp file first
+        script_path = os.path.abspath(__file__)
+        tmp_path = script_path + ".new"
+        with open(tmp_path, "wb") as f:
+            f.write(new_code)
+        # Replace current script
+        backup_path = script_path + ".bak"
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        os.rename(script_path, backup_path)
+        os.rename(tmp_path, script_path)
+        log.info("Update applied: %s -> %s. Restarting...", current_version, latest_version)
+        # Restart self
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        log.error("Auto-update failed: %s", e)
+        # Restore backup if exists
+        script_path = os.path.abspath(__file__)
+        backup_path = script_path + ".bak"
+        if os.path.exists(backup_path):
+            try:
+                os.rename(backup_path, script_path)
+                log.info("Restored from backup")
+            except Exception:
+                pass
 
 
 def main():
@@ -204,8 +245,13 @@ def main():
 
     while running:
         info = get_system_info()
-        if heartbeat(args.server, agent_id, info):
+        result = heartbeat(args.server, agent_id, info)
+        if result:
             backoff = 1
+            # Check for auto-update
+            update_ver = result.get("update_available")
+            if update_ver:
+                auto_update(args.server, AGENT_VERSION, update_ver)
         else:
             log.warning("Next retry in %ds", backoff)
             time.sleep(backoff)
