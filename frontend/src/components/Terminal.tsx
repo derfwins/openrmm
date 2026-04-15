@@ -131,6 +131,13 @@ const Terminal = ({ agentId, token }: Props) => {
     }
   }, [])
 
+  // Auto-connect when mounted
+  useEffect(() => {
+    if (agentId && token) {
+      connect()
+    }
+  }, [agentId, token])
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
