@@ -13,6 +13,8 @@ const DeviceDetail = () => {
 
   useEffect(() => {
     if (id) loadAgent()
+    const interval = setInterval(() => { if (id) loadAgent() }, 30000)
+    return () => clearInterval(interval)
   }, [id])
 
   const loadAgent = async () => {
@@ -41,7 +43,25 @@ const DeviceDetail = () => {
     }
   }
 
-  if (loading) {
+  const formatUptime = (seconds: number) => {
+    const days = Math.floor(seconds / 86400)
+    const hours = Math.floor((seconds % 86400) / 3600)
+    const mins = Math.floor((seconds % 3600) / 60)
+    if (days > 0) return `${days}d ${hours}h`
+    if (hours > 0) return `${hours}h ${mins}m`
+    return `${mins}m`
+  }
+
+  const formatBytes = (bytes: number) => {
+    const gb = bytes / (1024 ** 3)
+    return `${gb.toFixed(1)} GB`
+  }
+
+  const parseJsonSafe = (str: string, fallback: any = null) => {
+    try { return JSON.parse(str) } catch { return fallback }
+  }
+
+  if (loading && !agent) {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-500 border-t-transparent"></div>
@@ -61,6 +81,12 @@ const DeviceDetail = () => {
     )
   }
 
+  const disks = parseJsonSafe(agent.disks_json, [])
+  const memory = parseJsonSafe(agent.memory_json, {})
+  const users = parseJsonSafe(agent.logged_in_users, [])
+  const cpuPct = agent.cpu_percent ?? 0
+  const memPct = memory.percent ?? 0
+
   return (
     <div className="p-6 space-y-4">
       {/* Breadcrumb */}
@@ -78,26 +104,117 @@ const DeviceDetail = () => {
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">{agent.hostname || 'Unknown'}</h1>
               <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
-                <span>{agent.plat === 'windows' ? '🪟' : agent.plat === 'linux' ? '🐧' : '🍎'} {agent.plat || 'Unknown'}</span>
+                <span>{agent.plat === 'windows' ? '🪟' : agent.plat === 'linux' ? '🐧' : '🍎'} {agent.os_name || agent.plat || 'Unknown'}</span>
                 <span>·</span>
-                <span className="font-mono">{agent.local_ip || agent.wan_ip || '—'}</span>
+                <span className="font-mono">{agent.local_ip || '—'}</span>
                 <span>·</span>
-                <span>{agent.client_name || '—'} / {agent.site_name || '—'}</span>
+                <span>{agent.public_ip || '—'}</span>
+                <span>·</span>
+                <span>v{agent.version || '—'}</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
-            <a
-              href="/remote"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            <button
+              onClick={() => setActiveTab('scripts')}
+              className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            >
+              💻 Terminal
+            </button>
+            <button
+              disabled
+              className="px-4 py-2 text-sm bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 rounded-lg cursor-not-allowed"
+              title="Coming soon"
             >
               🖥️ Remote Desktop
-            </a>
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Health Bars */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* CPU */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">CPU</span>
+            <span className="text-sm font-bold text-gray-900 dark:text-white">{cpuPct.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+            <div
+              className={`h-3 rounded-full transition-all ${cpuPct > 90 ? 'bg-red-500' : cpuPct > 70 ? 'bg-yellow-500' : 'bg-blue-500'}`}
+              style={{ width: `${Math.min(cpuPct, 100)}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{agent.cpu_model || '—'}</p>
+        </div>
+
+        {/* Memory */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Memory</span>
+            <span className="text-sm font-bold text-gray-900 dark:text-white">{memPct.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+            <div
+              className={`h-3 rounded-full transition-all ${memPct > 90 ? 'bg-red-500' : memPct > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
+              style={{ width: `${Math.min(memPct, 100)}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {memory.used_gb?.toFixed(1) || '—'} / {memory.total_gb?.toFixed(1) || '—'} GB
+          </p>
+        </div>
+
+        {/* Disk - show first disk */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+          {disks.length > 0 ? (() => {
+            const disk = disks[0]
+            return (
+              <>
+                <div className="flex justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Disk ({disk.drive})</span>
+                  <span className="text-sm font-bold text-gray-900 dark:text-white">{disk.percent.toFixed(1)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                  <div
+                    className={`h-3 rounded-full transition-all ${disk.percent > 90 ? 'bg-red-500' : disk.percent > 70 ? 'bg-yellow-500' : 'bg-purple-500'}`}
+                    style={{ width: `${Math.min(disk.percent, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {disk.used_gb?.toFixed(1) || '—'} / {disk.total_gb?.toFixed(1) || '—'} GB
+                </p>
+              </>
+            )
+          })() : (
+            <p className="text-sm text-gray-500 dark:text-gray-400">No disk data</p>
+          )}
+        </div>
+      </div>
+
+      {/* Additional disks if any */}
+      {disks.length > 1 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {disks.slice(1).map((disk: any, i: number) => (
+            <div key={i} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+              <div className="flex justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Disk ({disk.drive})</span>
+                <span className="text-sm font-bold text-gray-900 dark:text-white">{disk.percent.toFixed(1)}%</span>
+              </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                <div
+                  className={`h-3 rounded-full transition-all ${disk.percent > 90 ? 'bg-red-500' : disk.percent > 70 ? 'bg-yellow-500' : 'bg-purple-500'}`}
+                  style={{ width: `${Math.min(disk.percent, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {disk.used_gb?.toFixed(1)} / {disk.total_gb?.toFixed(1)} GB
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -125,25 +242,58 @@ const DeviceDetail = () => {
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">System Information</h3>
                 <div className="space-y-2">
                   <InfoRow label="Hostname" value={agent.hostname} />
-                  <InfoRow label="Operating System" value={agent.operating_system || agent.os_detail || '—'} />
+                  <InfoRow label="Operating System" value={`${agent.os_name || ''} ${agent.os_version || ''}`} />
+                  <InfoRow label="CPU" value={`${agent.cpu_model || '—'} (${agent.cpu_cores || 0} cores)`} />
+                  <InfoRow label="RAM" value={agent.total_ram ? formatBytes(agent.total_ram) : '—'} />
                   <InfoRow label="IP Address (LAN)" value={agent.local_ip || '—'} />
-                  <InfoRow label="IP Address (WAN)" value={agent.wan_ip || '—'} />
-                  <InfoRow label="Agent Version" value={agent.version || '—'} />
+                  <InfoRow label="IP Address (WAN)" value={agent.public_ip || '—'} />
+                  <InfoRow label="Agent Version" value={`v${agent.version || '—'}`} />
                   <InfoRow label="Last Seen" value={agent.last_seen ? new Date(agent.last_seen).toLocaleString() : '—'} />
-                  <InfoRow label="Time Zone" value={agent.time_zone || '—'} />
+                  <InfoRow label="Uptime" value={agent.uptime_seconds ? formatUptime(agent.uptime_seconds) : '—'} />
                   <InfoRow label="Monitoring Type" value={agent.monitoring_type || '—'} />
                 </div>
               </div>
 
               {/* Quick Stats */}
               <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Health</h3>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Activity</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Checks" value={agent.checks?.length || 0} icon="✅" />
-                  <MiniStat label="Pending Updates" value={agent.pending_updates_count || 0} icon="📦" />
-                  <MiniStat label="Services" value={agent.services?.length || 0} icon="⚙️" />
-                  <MiniStat label="Uptime" value={agent.uptime || '—'} icon="⏱️" />
+                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon="⚙️" />
+                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon="🔥" />
+                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon="🧠" />
+                  <MiniStat label="Logged-in Users" value={users.length || '—'} icon="👤" />
                 </div>
+                {users.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Logged-in Users</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {users.map((u: string) => (
+                        <span key={u} className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full">{u}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {disks.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">All Disks</h4>
+                    <div className="space-y-2">
+                      {disks.map((d: any, i: number) => (
+                        <div key={i} className="flex items-center gap-3 text-sm">
+                          <span className="font-mono text-gray-600 dark:text-gray-400 w-12">{d.drive}</span>
+                          <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${d.percent > 90 ? 'bg-red-500' : d.percent > 70 ? 'bg-yellow-500' : 'bg-purple-500'}`}
+                              style={{ width: `${Math.min(d.percent, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400 w-24 text-right">
+                            {d.free_gb?.toFixed(1)} GB free
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -151,7 +301,7 @@ const DeviceDetail = () => {
           {activeTab === 'checks' && (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <div className="text-4xl mb-3">✅</div>
-              <p className="text-sm">Checks will appear here when the agent reports back</p>
+              <p className="text-sm">Checks will appear here when configured</p>
             </div>
           )}
 
