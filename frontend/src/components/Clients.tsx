@@ -41,7 +41,8 @@ const Clients = () => {
     try {
       const resp = await fetch(`${apiUrl}/clients/`, { headers })
       const data = await resp.json()
-      setClients(data)
+      const clientList = Array.isArray(data) ? data : (data.results || data.clients || [])
+      setClients(clientList)
     } catch (err) {
       setError('Failed to load clients')
     } finally {
