@@ -82,13 +82,13 @@ const InstallAgent = () => {
         goarch: 'amd64',
         client: selectedClient,
         site: selectedSite,
-        expires: 24,
+        expires: '24',
         installMethod: platform === 'windows' ? 'powershell' : 'bash',
         api: apiUrl,
         agenttype: agentType,
-        power: 1,
-        rdp: 1,
-        ping: 1,
+        power: false,
+        rdp: false,
+        ping: true,
         fileName: platform === 'windows'
           ? 'tacticalagent-v2.10.0-windows-amd64.exe'
           : 'tacticalagent-v2.10.0-linux-amd64',
