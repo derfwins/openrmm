@@ -6,7 +6,7 @@ const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
   const [agent, setAgent] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events' | 'services'>('overview')
   const [commandInput, setCommandInput] = useState('')
   const [commandOutput, setCommandOutput] = useState<string | null>(null)
   const [commandRunning, setCommandRunning] = useState(false)
@@ -84,6 +84,7 @@ const DeviceDetail = () => {
   const disks = parseJsonSafe(agent.disks_json, [])
   const memory = parseJsonSafe(agent.memory_json, {})
   const users = parseJsonSafe(agent.logged_in_users, [])
+  const services = parseJsonSafe(agent.services_json, [])
   const cpuPct = agent.cpu_percent ?? 0
   const memPct = memory.percent ?? 0
 
@@ -219,7 +220,7 @@ const DeviceDetail = () => {
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          {(['overview', 'checks', 'scripts', 'events'] as const).map(tab => (
+          {(['overview', 'services', 'checks', 'scripts', 'events'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -258,6 +259,7 @@ const DeviceDetail = () => {
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Activity</h3>
                 <div className="grid grid-cols-2 gap-3">
+                  <MiniStat label="Services" value={services.length || '—'} icon="🔧" />
                   <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon="⚙️" />
                   <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon="🔥" />
                   <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon="🧠" />
@@ -330,6 +332,48 @@ const DeviceDetail = () => {
                   {commandOutput}
                 </pre>
               )}
+            </div>
+          )}
+
+          {activeTab === 'services' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Services ({services.length})</h3>
+                <input
+                  type="text"
+                  placeholder="Filter services..."
+                  className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white w-64"
+                  id="service-filter"
+                />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Name</th>
+                      <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Display Name</th>
+                      <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Status</th>
+                      <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Start Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {services.map((svc: any, i: number) => (
+                      <tr key={i} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                        <td className="py-1.5 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{svc.name}</td>
+                        <td className="py-1.5 px-3 text-gray-700 dark:text-gray-300">{svc.display_name}</td>
+                        <td className="py-1.5 px-3">
+                          <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
+                            svc.status === 'running' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' :
+                            svc.status === 'stopped' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' :
+                            'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
+                          }`}>{svc.status}</span>
+                        </td>
+                        <td className="py-1.5 px-3 text-gray-500 dark:text-gray-400 text-xs">{svc.start_type}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
