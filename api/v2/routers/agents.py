@@ -365,7 +365,7 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
 
     return response
 
-@router.post("/agents/{agent_id}/restart/")
+@router.post("/{agent_id}/restart/")
 async def restart_agent(agent_id: str):
     """Send restart command to agent via WebSocket."""
     from v2.routers.ws_state import agent_connections, lookup_agent_id
