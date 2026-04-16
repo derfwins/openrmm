@@ -8,6 +8,7 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 
 from v2.config import settings
+from v2.routers.desktop import desktop_sessions, relay_desktop_frame, relay_desktop_json
 from v2.database import AsyncSessionLocal
 from v2.models.agent import Agent
 from v2.models.user import User
@@ -119,6 +120,31 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
 
                 elif msg_type == "resize":
                     pass
+
+                # --- Desktop relay messages ---
+                elif msg_type == "desktop_frame":
+                    # Agent sent a screen frame (base64 in JSON)
+                    session_id = data.get("session_id")
+                    import base64
+                    frame_data = data.get("frame")
+                    if frame_data and session_id:
+                        try:
+                            raw = base64.b64decode(frame_data)
+                            await relay_desktop_frame(agent_id, session_id, raw)
+                        except Exception as e:
+                            logger.warning(f"Desktop frame relay error: {e}")
+
+                elif msg_type == "desktop_info":
+                    # Agent sent screen info (resolution, monitors)
+                    session_id = data.get("session_id")
+                    if session_id:
+                        await relay_desktop_json(agent_id, session_id, data)
+
+                elif msg_type == "desktop_stopped":
+                    session_id = data.get("session_id")
+                    if session_id:
+                        await relay_desktop_json(agent_id, session_id, data)
+                        desktop_sessions.pop(session_id, None)
 
         except WebSocketDisconnect:
             logger.warning(f"AGENT WS: {agent_id} disconnected")

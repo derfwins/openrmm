@@ -14,9 +14,12 @@ import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
+import base64
+import io
+import struct
 
 # Config
-AGENT_VERSION = "0.6.0"
+AGENT_VERSION = "0.7.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -264,6 +267,340 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
                 pass
 
 
+# --- Screen Capture & Input Simulation ---
+
+def _init_screen_capture_windows():
+    """Initialize Windows screen capture via DWM/BitBlt using ctypes."""
+    import ctypes
+    import ctypes.wintypes
+    
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    kernel32 = ctypes.windll.kernel32
+    
+    # Constants
+    SRCCOPY = 0x00CC0020
+    DIB_RGB_COLORS = 0
+    BI_RGB = 0
+    
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", ctypes.wintypes.DWORD),
+            ("biWidth", ctypes.wintypes.LONG),
+            ("biHeight", ctypes.wintypes.LONG),
+            ("biPlanes", ctypes.wintypes.WORD),
+            ("biBitCount", ctypes.wintypes.WORD),
+            ("biCompression", ctypes.wintypes.DWORD),
+            ("biSizeImage", ctypes.wintypes.DWORD),
+            ("biXPelsPerMeter", ctypes.wintypes.LONG),
+            ("biYPelsPerMeter", ctypes.wintypes.LONG),
+            ("biClrUsed", ctypes.wintypes.DWORD),
+            ("biClrImportant", ctypes.wintypes.DWORD),
+        ]
+    
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [
+            ("bmiHeader", BITMAPINFOHEADER),
+            ("bmiColors", ctypes.c_uint32 * 3),
+        ]
+    
+    def capture_screen(quality=55):
+        """Capture screen and return JPEG bytes."""
+        try:
+            from PIL import Image
+            img = Image.grab()
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            return buf.getvalue(), img.width, img.height
+        except ImportError:
+            # Fallback: pure ctypes capture
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+            if width == 0 or height == 0:
+                return None, 0, 0
+            
+            hdesktop = user32.GetDesktopWindow()
+            hdc = user32.GetDC(hdesktop)
+            hdc_mem = gdi32.CreateCompatibleDC(hdc)
+            hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+            gdi32.SelectObject(hdc_mem, hbitmap)
+            gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
+            
+            # Get bitmap bits
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = width
+            bmi.bmiHeader.biHeight = -height  # top-down
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = BI_RGB
+            
+            buf_size = width * height * 4
+            pixel_data = ctypes.create_string_buffer(buf_size)
+            gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
+            
+            # Convert BGRA to RGB for PIL
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
+                out = io.BytesIO()
+                img.save(out, format='JPEG', quality=quality)
+                result = out.getvalue()
+            except ImportError:
+                # No PIL available - can't encode JPEG without it
+                result = None
+            
+            gdi32.DeleteObject(hbitmap)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(hdesktop, hdc)
+            
+            return result, width, height
+    
+    return capture_screen
+
+
+def _init_screen_capture_linux():
+    """Initialize Linux screen capture via X11."""
+    def capture_screen(quality=55):
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['xdotool', 'selectdesktop'],
+                capture_output=True, text=True, timeout=2
+            )
+            # Use scrot or xdotool + import for capture
+            result = subprocess.run(
+                ['import', '-window', 'root', '-resize', '50%', '-quality', str(quality), 'jpg:-'],
+                capture_output=True, timeout=3
+            )
+            if result.returncode == 0 and result.stdout:
+                # Get screen dimensions
+                dim_result = subprocess.run(
+                    ['xdpyinfo'], capture_output=True, text=True, timeout=2
+                )
+                w, h = 1920, 1080
+                for line in dim_result.stdout.split('\n'):
+                    if 'dimensions:' in line:
+                        parts = line.split('dimensions:')[1].strip().split('x')
+                        if len(parts) >= 2:
+                            w, h = int(parts[0]), int(parts[1].split()[0])
+                return result.stdout, w, h
+        except Exception as e:
+            log.debug("Linux screen capture failed: %s", e)
+        
+        # Try Pillow as fallback
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            return buf.getvalue(), img.width, img.height
+        except Exception as e:
+            log.debug("PIL screen capture failed: %s", e)
+        
+        return None, 0, 0
+    
+    return capture_screen
+
+
+def _init_input_windows():
+    """Initialize Windows input simulation via SendInput."""
+    import ctypes
+    import ctypes.wintypes
+    
+    user32 = ctypes.windll.user32
+    
+    # SendInput constants
+    INPUT_MOUSE = 0
+    INPUT_KEYBOARD = 1
+    MOUSEEVENTF_MOVE = 0x0001
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    MOUSEEVENTF_RIGHTDOWN = 0x0008
+    MOUSEEVENTF_RIGHTUP = 0x0010
+    MOUSEEVENTF_MIDDLEDOWN = 0x0020
+    MOUSEEVENTF_MIDDLEUP = 0x0040
+    MOUSEEVENTF_WHEEL = 0x0800
+    MOUSEEVENTF_ABSOLUTE = 0x8000
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_UNICODE = 0x0004
+    
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", ctypes.wintypes.LONG),
+            ("dy", ctypes.wintypes.LONG),
+            ("mouseData", ctypes.wintypes.DWORD),
+            ("dwFlags", ctypes.wintypes.DWORD),
+            ("time", ctypes.wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+    
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [
+            ("wVk", ctypes.wintypes.WORD),
+            ("wScan", ctypes.wintypes.WORD),
+            ("dwFlags", ctypes.wintypes.DWORD),
+            ("time", ctypes.wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+    
+    class INPUT_UNION(ctypes.Union):
+        _fields_ = [
+            ("mi", MOUSEINPUT),
+            ("ki", KEYBDINPUT),
+        ]
+    
+    class INPUT(ctypes.Structure):
+        _fields_ = [
+            ("type", ctypes.wintypes.DWORD),
+            ("ii", INPUT_UNION),
+        ]
+    
+    # Virtual key code map for common keys
+    VK_MAP = {
+        'Shift': 0x10, 'Control': 0x11, 'Alt': 0x12, 'Meta': 0x5B,
+        'Enter': 0x0D, 'Tab': 0x09, 'Escape': 0x1B, 'Backspace': 0x08,
+        'Delete': 0x2E, 'Insert': 0x2D, 'Home': 0x24, 'End': 0x23,
+        'PageUp': 0x21, 'PageDown': 0x22,
+        'ArrowUp': 0x26, 'ArrowDown': 0x28, 'ArrowLeft': 0x25, 'ArrowRight': 0x27,
+        'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73,
+        'F5': 0x74, 'F6': 0x75, 'F7': 0x76, 'F8': 0x77,
+        'F9': 0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
+        'CapsLock': 0x14, 'NumLock': 0x90, 'ScrollLock': 0x91,
+        ' ': 0x20, 'Space': 0x20,
+    }
+    
+    extra = ctypes.pointer(ctypes.c_ulong(0))
+    
+    def send_mouse(action, x, y, button=0, delta=0):
+        """Send mouse input to Windows."""
+        width = user32.GetSystemMetrics(0)
+        height = user32.GetSystemMetrics(1)
+        if width == 0 or height == 0:
+            return
+        
+        # Convert to absolute coordinates (0-65535 range)
+        abs_x = int(x * 65535 / width)
+        abs_y = int(y * 65535 / height)
+        
+        if action == 'move':
+            inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
+                dx=abs_x, dy=abs_y, mouseData=0,
+                dwFlags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                time=0, dwExtraInfo=extra,
+            )))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        
+        elif action == 'down':
+            flag = {0: MOUSEEVENTF_LEFTDOWN, 1: MOUSEEVENTF_MIDDLEDOWN, 2: MOUSEEVENTF_RIGHTDOWN}.get(button, MOUSEEVENTF_LEFTDOWN)
+            # Move first, then click
+            move_inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
+                dx=abs_x, dy=abs_y, mouseData=0,
+                dwFlags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                time=0, dwExtraInfo=extra,
+            )))
+            click_inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
+                dx=abs_x, dy=abs_y, mouseData=0,
+                dwFlags=flag | MOUSEEVENTF_ABSOLUTE,
+                time=0, dwExtraInfo=extra,
+            )))
+            inputs = (INPUT * 2)(move_inp, click_inp)
+            user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
+        
+        elif action == 'up':
+            flag = {0: MOUSEEVENTF_LEFTUP, 1: MOUSEEVENTF_MIDDLEUP, 2: MOUSEEVENTF_RIGHTUP}.get(button, MOUSEEVENTF_LEFTUP)
+            inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
+                dx=abs_x, dy=abs_y, mouseData=0,
+                dwFlags=flag | MOUSEEVENTF_ABSOLUTE,
+                time=0, dwExtraInfo=extra,
+            )))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        
+        elif action == 'wheel':
+            inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
+                dx=abs_x, dy=abs_y, mouseData=int(delta),
+                dwFlags=MOUSEEVENTF_WHEEL | MOUSEEVENTF_ABSOLUTE,
+                time=0, dwExtraInfo=extra,
+            )))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+    
+    def send_keyboard(action, key, code='', shift=False, ctrl=False, alt=False, meta=False):
+        """Send keyboard input to Windows."""
+        # Determine VK code
+        vk = VK_MAP.get(key, 0)
+        if vk == 0 and len(key) == 1:
+            # Single character - use Unicode input
+            inp = INPUT(type=INPUT_KEYBOARD, ii=INPUT_UNION(ki=KEYBDINPUT(
+                wVk=0, wScan=ord(key),
+                dwFlags=KEYEVENTF_UNICODE if action == 'down' else (KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+                time=0, dwExtraInfo=extra,
+            )))
+            user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+            return
+        
+        if vk == 0:
+            return  # Unknown key
+        
+        flags = KEYEVENTF_KEYUP if action == 'up' else 0
+        inp = INPUT(type=INPUT_KEYBOARD, ii=INPUT_UNION(ki=KEYBDINPUT(
+            wVk=vk, wScan=0, dwFlags=flags,
+            time=0, dwExtraInfo=extra,
+        )))
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+    
+    return send_mouse, send_keyboard
+
+
+def _init_input_linux():
+    """Initialize Linux input simulation via xdotool."""
+    def send_mouse(action, x, y, button=0, delta=0):
+        try:
+            import subprocess
+            if action == 'move':
+                subprocess.run(['xdotool', 'mousemove', str(x), str(y)], timeout=2)
+            elif action == 'down':
+                btn_map = {0: 1, 1: 2, 2: 3}
+                subprocess.run(['xdotool', 'mousemove', str(x), str(y), 'click', str(btn_map.get(button, 1))], timeout=2)
+            elif action == 'up':
+                pass  # xdotool click handles up+down together
+            elif action == 'wheel':
+                btn = 5 if delta > 0 else 4
+                subprocess.run(['xdotool', 'click', str(btn)], timeout=2)
+        except Exception as e:
+            log.debug("xdotool mouse failed: %s", e)
+    
+    def send_keyboard(action, key, code='', shift=False, ctrl=False, alt=False, meta=False):
+        try:
+            import subprocess
+            if action == 'down':
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', key], timeout=2)
+        except Exception as e:
+            log.debug("xdotool keyboard failed: %s", e)
+    
+    return send_mouse, send_keyboard
+
+
+# Initialize capture/input based on platform
+capture_screen = None
+send_mouse = None
+send_keyboard = None
+
+if platform.system() == "Windows":
+    try:
+        capture_screen = _init_screen_capture_windows()
+        send_mouse, send_keyboard = _init_input_windows()
+        log.info("Windows screen capture and input simulation initialized")
+    except Exception as e:
+        log.warning("Failed to init Windows screen capture: %s", e)
+elif platform.system() == "Linux":
+    try:
+        capture_screen = _init_screen_capture_linux()
+        send_mouse, send_keyboard = _init_input_linux()
+        log.info("Linux screen capture and input simulation initialized")
+    except Exception as e:
+        log.warning("Failed to init Linux screen capture: %s", e)
+
+
 def ws_agent_loop(server: str, agent_id: str):
     """Persistent WebSocket connection to server for terminal relay."""
     try:
@@ -357,10 +694,9 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 from winpty import PtyProcess
                                 pty_proc = PtyProcess.spawn(
                                     'cmd.exe',
-                                    cols=cols,
-                                    rows=rows,
+                                    dimensions=(rows, cols),
                                 )
-                                log.info("Started ConPTY session: %s", session_id)
+                                log.info("Started ConPTY session: %s (%dx%d)", session_id, cols, rows)
                             except ImportError:
                                 log.warning("winpty not installed, falling back to subprocess")
                                 proc = subprocess.Popen(
@@ -424,16 +760,18 @@ async def ws_agent_connect(server: str, agent_id: str):
                                     # PTY read
                                     while True:
                                         try:
-                                            if hasattr(pty, 'isalive') and not pty.isalive():
-                                                break
                                             chunk = pty.read(4096)
                                             if chunk:
                                                 if isinstance(chunk, bytes):
                                                     chunk = chunk.decode(errors='replace')
                                                 oq.put({"type": "output", "session_id": sid, "data": chunk})
+                                        except EOFError:
+                                            break
                                         except OSError:
                                             break
                                         except Exception as e:
+                                            if 'EOF' in str(e) or 'closed' in str(e):
+                                                break
                                             oq.put({"type": "output", "session_id": sid, "data": f"\r\n[read error: {e}]\r\n"})
                                             break
                                 elif p:
@@ -443,7 +781,11 @@ async def ws_agent_connect(server: str, agent_id: str):
                                         if chunk:
                                             oq.put({"type": "output", "session_id": sid, "data": chunk.decode(errors="replace")})
 
-                                exit_code = p.returncode if p else -1
+                                exit_code = -1
+                                if pty and hasattr(pty, 'exitstatus'):
+                                    exit_code = pty.exitstatus or 0
+                                elif p:
+                                    exit_code = p.returncode or 0
                                 oq.put({"type": "exit", "session_id": sid, "code": exit_code})
                             except Exception as e:
                                 oq.put({"type": "exit", "session_id": sid, "code": -1, "message": str(e)})
@@ -462,14 +804,15 @@ async def ws_agent_connect(server: str, agent_id: str):
                                     try:
                                         inp = iq.get(timeout=0.5)
                                         if inp.get("type") == "input":
-                                            data_bytes = inp["data"].encode()
                                             if pty:
-                                                pty.write(data_bytes)
+                                                pty.write(inp["data"])
                                             elif p and p.stdin:
-                                                p.stdin.write(data_bytes)
+                                                p.stdin.write(inp["data"].encode())
                                                 p.stdin.flush()
                                     except queue.Empty:
                                         continue
+                                    except EOFError:
+                                        break
                             except Exception as e:
                                 log.error("write_input error: %s", e)
 
@@ -502,6 +845,98 @@ async def ws_agent_connect(server: str, agent_id: str):
                         await ws.send(json.dumps({"type": "pong"}))
                         log.debug("Sent pong")
 
+                    # --- Desktop session handling ---
+                    elif msg_type == "desktop_start":
+                        session_id = data.get("session_id")
+                        log.info("Desktop capture session started: %s", session_id)
+                        if capture_screen:
+                            # Send screen info
+                            _frame, w, h = capture_screen(quality=10)  # quick probe
+                            if w > 0:
+                                await ws.send(json.dumps({
+                                    "type": "desktop_info",
+                                    "session_id": session_id,
+                                    "width": w,
+                                    "height": h,
+                                    "monitors": 1,
+                                }))
+                            # Start capture loop in background
+                            desktop_config = {"quality": 55, "fps": 10, "running": True}
+
+                            async def desktop_capture_loop():
+                                while desktop_config["running"]:
+                                    frame_interval = 1.0 / max(desktop_config["fps"], 1)
+                                    try:
+                                        frame, w, h = capture_screen(quality=desktop_config["quality"])
+                                        if frame:
+                                            b64 = base64.b64encode(frame).decode('ascii')
+                                            await ws.send(json.dumps({
+                                                "type": "desktop_frame",
+                                                "session_id": session_id,
+                                                "frame": b64,
+                                            }))
+                                    except Exception as e:
+                                        log.warning("Desktop capture error: %s", e)
+                                    await asyncio.sleep(frame_interval)
+
+                            capture_task = asyncio.create_task(desktop_capture_loop())
+                            # Store config and task ref
+                            sessions["_desktop_" + session_id] = {"task": capture_task, "config": desktop_config}
+                        else:
+                            await ws.send(json.dumps({
+                                "type": "desktop_stopped",
+                                "session_id": session_id,
+                                "reason": "Screen capture not available on this platform",
+                            }))
+
+                    elif msg_type == "desktop_stop":
+                        session_id = data.get("session_id")
+                        log.info("Desktop capture session stopped: %s", session_id)
+                        dsess = sessions.pop("_desktop_" + session_id, None)
+                        if dsess:
+                            if dsess.get("config"):
+                                dsess["config"]["running"] = False
+                            if dsess.get("task"):
+                                dsess["task"].cancel()
+                        await ws.send(json.dumps({
+                            "type": "desktop_stopped",
+                            "session_id": session_id,
+                        }))
+
+                    elif msg_type == "desktop_settings":
+                        session_id = data.get("session_id")
+                        # Find the desktop session config and update it
+                        dsess = sessions.get("_desktop_" + session_id)
+                        if dsess and dsess.get("config"):
+                            if data.get("quality"):
+                                dsess["config"]["quality"] = data["quality"]
+                            if data.get("fps"):
+                                dsess["config"]["fps"] = data["fps"]
+                        log.info("Desktop settings update: quality=%s fps=%s",
+                                 data.get("quality"), data.get("fps"))
+
+                    elif msg_type == "mouse":
+                        if send_mouse:
+                            send_mouse(
+                                action=data.get("action", "move"),
+                                x=data.get("x", 0),
+                                y=data.get("y", 0),
+                                button=data.get("button", 0),
+                                delta=data.get("delta", 0),
+                            )
+
+                    elif msg_type == "keyboard":
+                        if send_keyboard:
+                            send_keyboard(
+                                action=data.get("action", "down"),
+                                key=data.get("key", ""),
+                                code=data.get("code", ""),
+                                shift=data.get("shift", False),
+                                ctrl=data.get("ctrl", False),
+                                alt=data.get("alt", False),
+                                meta=data.get("meta", False),
+                            )
+
                     elif msg_type == "resize":
                         session_id = data.get("session_id")
                         sess = sessions.get(session_id)
@@ -509,7 +944,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                         rows = data.get("rows", 24)
                         if sess and sess.get("pty"):
                             try:
-                                sess["pty"].setwinsize(cols, rows)
+                                sess["pty"].setwinsize(rows, cols)
                                 log.info("Resized PTY %s to %dx%d", session_id, cols, rows)
                             except Exception as e:
                                 log.debug("PTY resize failed: %s", e)
