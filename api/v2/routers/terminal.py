@@ -12,7 +12,7 @@ from v2.database import AsyncSessionLocal
 from v2.models.agent import Agent
 from v2.models.user import User
 
-logger = logging.getLogger("terminal")
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # In-memory session storage
@@ -57,77 +57,86 @@ async def lookup_agent_id(agent_db_id: str) -> str | None:
 @router.websocket("/ws/agent/{agent_id}/")
 async def agent_ws(websocket: WebSocket, agent_id: str):
     """Agent connects here persistently. Server sends commands like terminal_start."""
-    await websocket.accept()
-    agent_connections[agent_id] = websocket
-    logger.info(f"Agent {agent_id} connected via WebSocket, total: {len(agent_connections)}")
-
-    # Start a keepalive task to prevent Cloudflare timeout (100s)
-    async def keepalive():
-        try:
-            while True:
-                await asyncio.sleep(30)
-                try:
-                    await websocket.send_json({"type": "ping"})
-                    logger.debug(f"Sent keepalive ping to agent {agent_id}")
-                except Exception as e:
-                    logger.warning(f"Keepalive ping failed for {agent_id}: {e}")
-                    break
-        except asyncio.CancelledError:
-            pass
-
-    keepalive_task = asyncio.create_task(keepalive())
-
     try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-            logger.info(f"Agent {agent_id} sent: {msg_type}")
+        await websocket.accept()
+        agent_connections[agent_id] = websocket
+        logger.warning(f"AGENT WS: {agent_id} connected, total: {len(agent_connections)}")
+        print(f"AGENT WS: {agent_id} connected, total: {len(agent_connections)}", flush=True)
 
-            if msg_type == "output":
-                # Relay output to browser
-                session_id = data.get("session_id")
-                session = terminal_sessions.get(session_id)
-                if session and session.get("browser_ws"):
+        # Start a keepalive task to prevent Cloudflare timeout (100s)
+        async def keepalive():
+            try:
+                while True:
+                    await asyncio.sleep(30)
                     try:
-                        await session["browser_ws"].send_json(data)
-                    except Exception:
-                        pass
-
-            elif msg_type == "exit":
-                session_id = data.get("session_id")
-                session = terminal_sessions.get(session_id)
-                if session and session.get("browser_ws"):
-                    try:
-                        await session["browser_ws"].send_json(data)
-                    except Exception:
-                        pass
-                # Cleanup session
-                terminal_sessions.pop(session_id, None)
-                pending_sessions.pop(session_id, None)
-                logger.info(f"Terminal session {session_id} exited")
-
-            elif msg_type == "resize":
-                # Agent acknowledges resize, no action needed
+                        await websocket.send_json({"type": "ping"})
+                        logger.warning(f"Keepalive ping sent to {agent_id}")
+                    except Exception as e:
+                        logger.warning(f"Keepalive ping failed for {agent_id}: {e}")
+                        break
+            except asyncio.CancelledError:
                 pass
 
-    except WebSocketDisconnect:
-        logger.info(f"Agent {agent_id} disconnected")
-    except Exception as e:
-        logger.error(f"Agent {agent_id} error: {e}")
-    finally:
-        keepalive_task.cancel()
-        if agent_connections.get(agent_id) == websocket:
-            del agent_connections[agent_id]
-        # Clean up any sessions for this agent
-        to_remove = [sid for sid, s in terminal_sessions.items() if s.get("agent_id") == agent_id]
-        for sid in to_remove:
-            session = terminal_sessions.pop(sid, None)
-            pending_sessions.pop(sid, None)
-            if session and session.get("browser_ws"):
-                try:
-                    await session["browser_ws"].send_json({"type": "exit", "code": -1, "message": "Agent disconnected"})
-                except Exception:
+        keepalive_task = asyncio.create_task(keepalive())
+
+        try:
+            while True:
+                data = await websocket.receive_json()
+                msg_type = data.get("type")
+                logger.warning(f"Agent {agent_id} sent: {msg_type}")
+
+                if msg_type == "output":
+                    # Relay output to browser
+                    session_id = data.get("session_id")
+                    session = terminal_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(data)
+                        except Exception:
+                            pass
+
+                elif msg_type == "exit":
+                    session_id = data.get("session_id")
+                    session = terminal_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(data)
+                        except Exception:
+                            pass
+                    # Cleanup session
+                    terminal_sessions.pop(session_id, None)
+                    pending_sessions.pop(session_id, None)
+                    logger.warning(f"Terminal session {session_id} exited")
+
+                elif msg_type == "pong":
+                    logger.info(f"Pong from agent {agent_id}")
+
+                elif msg_type == "resize":
                     pass
+
+        except WebSocketDisconnect:
+            logger.warning(f"AGENT WS: {agent_id} disconnected")
+        except Exception as e:
+            logger.error(f"AGENT WS: {agent_id} error: {e}")
+            print(f"AGENT WS ERROR: {agent_id} {e}", flush=True)
+        finally:
+            keepalive_task.cancel()
+            if agent_connections.get(agent_id) == websocket:
+                del agent_connections[agent_id]
+            logger.warning(f"AGENT WS: {agent_id} removed, remaining: {len(agent_connections)}")
+            # Clean up any sessions for this agent
+            to_remove = [sid for sid, s in terminal_sessions.items() if s.get("agent_id") == agent_id]
+            for sid in to_remove:
+                session = terminal_sessions.pop(sid, None)
+                pending_sessions.pop(sid, None)
+                if session and session.get("browser_ws"):
+                    try:
+                        await session["browser_ws"].send_json({"type": "exit", "code": -1, "message": "Agent disconnected"})
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"AGENT WS FATAL: {agent_id} {type(e).__name__}: {e}", flush=True)
+        logger.error(f"AGENT WS FATAL: {agent_id} {type(e).__name__}: {e}")
 
 
 @router.websocket("/ws/terminal/{agent_id}/")
