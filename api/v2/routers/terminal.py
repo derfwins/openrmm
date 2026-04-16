@@ -193,6 +193,7 @@ async def terminal_ws(websocket: WebSocket, agent_id: str, token: str = Query(..
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
+            logger.warning(f"TERMINAL WS: browser sent {msg_type}: {repr(data.get('data',''))[:50]}")
 
             if msg_type == "input":
                 agent_ws = agent_connections.get(agent_uuid)
@@ -203,6 +204,7 @@ async def terminal_ws(websocket: WebSocket, agent_id: str, token: str = Query(..
                             "session_id": session_id,
                             "data": data.get("data", ""),
                         })
+                        logger.warning(f"TERMINAL WS: relayed input to agent, len={len(data.get('data',''))}")
                     except Exception:
                         break
                 else:

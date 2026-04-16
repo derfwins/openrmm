@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.5.1"
+AGENT_VERSION = "0.5.2"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -386,16 +386,18 @@ async def ws_agent_connect(server: str, agent_id: str):
                         # Write input in a thread
                         def write_input(p=proc, iq=input_q):
                             try:
+                                log.info("write_input thread started")
                                 while p.poll() is None:
                                     try:
                                         inp = iq.get(timeout=0.5)
                                         if inp.get("type") == "input":
+                                            log.info("Writing to stdin: %r", inp["data"][:50])
                                             p.stdin.write(inp["data"].encode())
                                             p.stdin.flush()
                                     except queue.Empty:
                                         continue
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.error("write_input error: %s", e)
 
                         t2 = threading.Thread(target=write_input, daemon=True)
                         t2.start()
@@ -404,7 +406,10 @@ async def ws_agent_connect(server: str, agent_id: str):
                         session_id = data.get("session_id")
                         sess = sessions.get(session_id)
                         if sess:
+                            log.info("Terminal input received, len=%d", len(data.get("data","")))
                             sess["input_queue"].put(data)
+                        else:
+                            log.warning("Terminal input for unknown session %s", session_id)
 
                     elif msg_type == "terminal_kill":
                         session_id = data.get("session_id")
