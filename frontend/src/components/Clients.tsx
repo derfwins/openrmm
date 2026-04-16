@@ -60,8 +60,18 @@ export function Clients() {
           </button>
         ))}
         {clients.length === 0 && (
-          <div className="col-span-full text-center py-12 text-gray-400">
-            No clients yet. Click "Add Client" to get started.
+          <div className="col-span-full flex items-center justify-center py-16 animate-[fadeIn_0.5s_ease-out]">
+            <div className="w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-3 text-center">
+              <div className="text-5xl">🏢</div>
+              <h2 className="text-lg font-semibold text-white">No clients yet</h2>
+              <p className="text-sm text-gray-400">Get started by adding your first client.</p>
+              <button
+                onClick={() => setShowModal(true)}
+                className="inline-block px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+              >
+                Add Client
+              </button>
+            </div>
           </div>
         )}
       </div>

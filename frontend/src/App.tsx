@@ -26,6 +26,8 @@ import InstallAgent from './components/InstallAgent'
 import { Clients } from './components/Clients'
 import AuditLog from './components/AuditLog'
 import Sidebar from './components/Sidebar'
+import Breadcrumbs from './components/Breadcrumbs'
+import KeyboardShortcuts from './components/KeyboardShortcuts'
 import QuickActions from './components/QuickActions'
 import NotificationCenter from './components/NotificationCenter'
 import { WebSocketProvider } from './contexts/WebSocketContext'
@@ -110,6 +112,7 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             </button>
           </div>
         </header>
+        <Breadcrumbs />
         {/* Page content */}
         <main className="flex-1 overflow-auto">
           {children}
@@ -141,6 +144,7 @@ function App() {
       <WebSocketProvider>
       <ErrorBoundary>
       <QuickActions />
+      <KeyboardShortcuts />
       <Routes>
         <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/clients" /> : <Login />} />
         <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />

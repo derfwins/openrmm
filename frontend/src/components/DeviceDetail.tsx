@@ -150,11 +150,11 @@ const DeviceDetail = () => {
             )}
             <button
               onClick={async () => {
-                const uninstall = confirm(`Delete "${agent.hostname || id}" from OpenRMM?\n\nClick OK to also send an uninstall command to remove the agent from the machine.`)
-                if (!uninstall) return
-                const removeFromMachine = confirm(`Also remove the agent software from the machine?\nThis will stop the agent service and delete its files.`)
+                const name = agent.hostname || id
+                if (!confirm(`Delete "${name}" from OpenRMM?`)) return
+                const uninstall = confirm('Also uninstall the agent from the machine? (This will stop the service and remove all files.)')
                 try {
-                  const res = await fetch(`/agents/${id}/?uninstall=${removeFromMachine}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+                  const res = await fetch(`/agents/${id}/?uninstall=${uninstall}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
                   if (res.ok) {
                     window.location.href = '/devices'
                   } else {
@@ -166,8 +166,9 @@ const DeviceDetail = () => {
               }}
               className="px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700"
             >
-              🗑️ Delete Device
+              🗑️ Delete
             </button>
+          </div>
         </div>
       </div>
 

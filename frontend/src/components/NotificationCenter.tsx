@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 
 interface Notification {
@@ -10,21 +10,45 @@ interface Notification {
   read: boolean
 }
 
-const mockNotifications: Notification[] = [
-  { id: '1', type: 'alert', title: 'Critical: Disk Space Low', description: 'DESKTOP-460RMO6 has less than 10% disk space', timestamp: new Date(Date.now() - 300000).toISOString(), read: false },
-  { id: '2', type: 'task', title: 'Script Completed', description: 'Disk cleanup finished on 3 devices', timestamp: new Date(Date.now() - 1800000).toISOString(), read: false },
-  { id: '3', type: 'system', title: 'Agent Online', description: 'fhowland-plex reconnected', timestamp: new Date(Date.now() - 3600000).toISOString(), read: true },
-  { id: '4', type: 'alert', title: 'Patch Available', description: '8 critical patches pending approval', timestamp: new Date(Date.now() - 7200000).toISOString(), read: true },
-]
-
 interface Props {
   children?: ReactNode
 }
 
 const NotificationCenter = ({ children }: Props) => {
   const [open, setOpen] = useState(false)
-  const [notifications, setNotifications] = useState(mockNotifications)
+  const [notifications, setNotifications] = useState<Notification[]>([])
   const [filter, setFilter] = useState<'all' | 'alert' | 'task' | 'system'>('all')
+  const [loading, setLoading] = useState(true)
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token')
+      if (!token) return
+      // Fetch real alerts from the API
+      const res = await fetch('/alerts/?resolved=false', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const alerts = await res.json()
+        const mapped: Notification[] = alerts.map((a: any) => ({
+          id: String(a.id),
+          type: 'alert' as const,
+          title: a.message || a.alert_type || 'Alert',
+          description: a.agent?.hostname ? `Device: ${a.agent.hostname}` : '',
+          timestamp: a.created_at || new Date().toISOString(),
+          read: a.is_resolved || false,
+        }))
+        setNotifications(mapped)
+      }
+    } catch { /* ignore */ }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    loadNotifications()
+    const iv = setInterval(loadNotifications, 30000)
+    return () => clearInterval(iv)
+  }, [loadNotifications])
 
   const unreadCount = notifications.filter(n => !n.read).length
 
@@ -32,21 +56,19 @@ const NotificationCenter = ({ children }: Props) => {
     ? notifications
     : notifications.filter(n => n.type === filter)
 
-  const markAllRead = () => {
+  const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    try {
+      const token = localStorage.getItem('token')
+      await fetch('/alerts/resolve_all/', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      })
+    } catch { /* ignore */ }
   }
 
   const markRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))
-  }
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'alert': return '🔔'
-      case 'task': return '✅'
-      case 'system': return '⚙️'
-      default: return '📌'
-    }
   }
 
   const formatTime = (ts: string) => {
@@ -61,7 +83,6 @@ const NotificationCenter = ({ children }: Props) => {
 
   return (
     <>
-      {/* Bell Button */}
       <button
         onClick={() => setOpen(!open)}
         className="relative p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
@@ -75,10 +96,8 @@ const NotificationCenter = ({ children }: Props) => {
         )}
       </button>
 
-      {/* Notification Panel */}
       {open && (
         <div className="absolute right-0 top-full mt-2 w-96 bg-gray-800 rounded-xl shadow-2xl border border-gray-700 z-50 overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
             <h3 className="font-semibold text-white text-sm">Notifications</h3>
             <div className="flex items-center gap-2">
@@ -91,7 +110,6 @@ const NotificationCenter = ({ children }: Props) => {
             </div>
           </div>
 
-          {/* Filter Tabs */}
           <div className="flex border-b border-gray-700">
             {(['all', 'alert', 'task', 'system'] as const).map(f => (
               <button
@@ -102,18 +120,17 @@ const NotificationCenter = ({ children }: Props) => {
                 }`}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)}
-                {f === 'alert' && unreadCount > 0 && (
-                  <span className="ml-1 px-1 py-0.5 bg-red-500/20 text-red-400 rounded-full text-[10px]">{unreadCount}</span>
-                )}
               </button>
             ))}
           </div>
 
-          {/* Notification List */}
           <div className="max-h-80 overflow-y-auto">
-            {filteredNotifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-500 text-sm">
-                No notifications
+            {loading ? (
+              <div className="px-4 py-8 text-center text-gray-500 text-sm animate-pulse">Loading...</div>
+            ) : filteredNotifications.length === 0 ? (
+              <div className="px-4 py-8 text-center">
+                <div className="text-2xl mb-2">✨</div>
+                <p className="text-gray-500 text-sm">All clear! No notifications.</p>
               </div>
             ) : (
               filteredNotifications.map(n => (
@@ -125,7 +142,7 @@ const NotificationCenter = ({ children }: Props) => {
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    <span className="text-lg mt-0.5">{getNotificationIcon(n.type)}</span>
+                    <span className="text-lg mt-0.5">{n.type === 'alert' ? '🔔' : n.type === 'task' ? '✅' : '⚙️'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className={`text-sm font-medium ${!n.read ? 'text-white' : 'text-gray-300'}`}>
@@ -133,7 +150,7 @@ const NotificationCenter = ({ children }: Props) => {
                         </span>
                         {!n.read && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full" />}
                       </div>
-                      <p className="text-xs text-gray-500 mt-0.5">{n.description}</p>
+                      {n.description && <p className="text-xs text-gray-500 mt-0.5">{n.description}</p>}
                       <p className="text-xs text-gray-600 mt-1">{formatTime(n.timestamp)}</p>
                     </div>
                   </div>

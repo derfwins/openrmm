@@ -31,6 +31,21 @@ export default function MonitoringDashboard() {
 
   const okPercent = dash.total_sensors > 0 ? Math.round((dash.sensors_ok / dash.total_sensors) * 100) : 0
 
+  if (dash.total_sensors === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center max-w-md animate-[fadeIn_0.5s_ease-out]">
+          <div className="mx-auto w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-4">
+            <div className="text-5xl">📡</div>
+            <h2 className="text-lg font-semibold text-white">No sensors configured yet</h2>
+            <p className="text-sm text-gray-400">Add your first device to start monitoring uptime, performance, and health.</p>
+            <AddSensorModal onCreated={load} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}

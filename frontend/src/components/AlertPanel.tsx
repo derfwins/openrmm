@@ -58,11 +58,19 @@ const AlertPanel = () => {
           <div className="p-8 text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent mx-auto"></div>
           </div>
+        ) : filtered.length === 0 && alerts.length === 0 ? (
+          <div className="flex items-center justify-center py-16 animate-[fadeIn_0.5s_ease-out]">
+            <div className="w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-3 text-center dark:bg-gray-900/50">
+              <div className="text-5xl text-emerald-400">✅</div>
+              <h2 className="text-lg font-semibold text-white">All clear!</h2>
+              <p className="text-sm text-gray-400">No active alerts. Everything looks good.</p>
+            </div>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="p-8 text-center">
             <div className="text-4xl mb-3">🔔</div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {alerts.length === 0 ? 'No alerts — everything looks good!' : 'No alerts match this filter'}
+              No alerts match this filter
             </p>
           </div>
         ) : (

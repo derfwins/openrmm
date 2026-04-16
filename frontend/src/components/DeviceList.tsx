@@ -99,6 +99,26 @@ const DeviceList = () => {
     )
   }
 
+  if (!loading && agents.length === 0 && !error) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center max-w-md animate-[fadeIn_0.5s_ease-out]">
+          <div className="mx-auto w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-4 dark:bg-gray-900/50">
+            <div className="text-5xl">🖥️</div>
+            <h2 className="text-lg font-semibold text-white">No devices enrolled yet</h2>
+            <p className="text-sm text-gray-400">Install the OpenRMM agent on your devices to start managing them.</p>
+            <Link
+              to="/install"
+              className="inline-block px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+            >
+              Install Agent
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-6 space-y-4">
       {/* Header */}

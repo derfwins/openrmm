@@ -299,7 +299,15 @@ export default function Reports() {
             </thead>
             <tbody>
               {reports.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 dark:text-gray-500">No reports yet. Generate your first report above.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-12 text-center">
+                  <div className="flex items-center justify-center animate-[fadeIn_0.5s_ease-out]">
+                    <div className="w-56 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-6 space-y-3 dark:bg-gray-900/50">
+                      <div className="text-4xl">📊</div>
+                      <h2 className="text-sm font-semibold text-white">No reports generated yet</h2>
+                      <p className="text-xs text-gray-400">Generate your first report to get started.</p>
+                    </div>
+                  </div>
+                </td></tr>
               ) : reports.map(r => (
                 <tr key={r.id} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
                   <td className="px-4 py-3 text-gray-900 dark:text-white font-medium">{r.type.replace('_', ' ')}</td>

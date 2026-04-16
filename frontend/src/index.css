@@ -71,3 +71,9 @@ body {
 .dot-online {
   animation: pulse-dot 2s ease-in-out infinite;
 }
+
+/* Fade in animation for empty states */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}

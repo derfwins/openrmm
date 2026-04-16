@@ -66,8 +66,8 @@ const DEMO_TASKS: AutomationTask[] = [
 
 const AutomationBuilder = () => {
   const [activeTab, setActiveTab] = useState<Tab>('tasks')
-  const [tasks, setTasks] = useState<AutomationTask[]>(DEMO_TASKS)
-  const [history] = useState<AutomationHistory[]>(DEMO_HISTORY)
+  const [tasks, setTasks] = useState<AutomationTask[]>([])
+  const [history] = useState<AutomationHistory[]>([])
   const [showBuilder, setShowBuilder] = useState(false)
   const [editingTask, setEditingTask] = useState<AutomationTask | null>(null)
 

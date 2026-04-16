@@ -70,7 +70,15 @@ export default function SensorTree({ onSensorSelect }: { onSensorSelect: (s: Mon
 
       {/* Sensor list */}
       <div className="flex-1 overflow-y-auto p-2">
-        {Object.entries(grouped).sort().map(([type, items]) => (
+        {sensors.length === 0 ? (
+          <div className="flex items-center justify-center h-full animate-[fadeIn_0.5s_ease-out]">
+            <div className="text-center max-w-xs rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-6 space-y-3">
+              <div className="text-4xl">📡</div>
+              <h2 className="text-sm font-semibold text-white">No sensors yet</h2>
+              <p className="text-xs text-gray-400">Add a device to start monitoring.</p>
+            </div>
+          </div>
+        ) : Object.entries(grouped).sort().map(([type, items]) => (
           <div key={type} className="mb-3">
             <div className="px-2 py-1 text-xs font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
               <span>{SENSOR_TYPE_ICONS[type as SensorType]}</span>
@@ -122,7 +130,7 @@ export default function SensorTree({ onSensorSelect }: { onSensorSelect: (s: Mon
             ))}
           </div>
         ))}
-        {filtered.length === 0 && (
+        {sensors.length > 0 && filtered.length === 0 && (
           <div className="text-center py-8 text-gray-500 text-sm">No sensors found</div>
         )}
       </div>

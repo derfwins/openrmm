@@ -53,7 +53,7 @@ const DEMO_POLICIES: PatchPolicy[] = [
 
 const PatchManager = () => {
   const [activeTab, setActiveTab] = useState<Tab>('available')
-  const [patches, setPatches] = useState(DEMO_PATCHES)
+  const [patches, setPatches] = useState<typeof DEMO_PATCHES>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [severityFilter, setSeverityFilter] = useState<PatchSeverity | 'all'>('all')
   const [sourceFilter, setSourceFilter] = useState<PatchSource | 'all'>('all')
@@ -234,13 +234,25 @@ const PatchManager = () => {
                     </tr>
                   )
                 })}
-                {filtered.length === 0 && (
+                {filtered.length === 0 && patches.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center">
+                      <div className="flex items-center justify-center animate-[fadeIn_0.5s_ease-out]">
+                        <div className="w-56 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-6 space-y-3">
+                          <div className="text-4xl">✨</div>
+                          <h2 className="text-sm font-semibold text-white">All caught up!</h2>
+                          <p className="text-xs text-gray-400">No patches pending. Devices are up to date!</p>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                       No patches match current filters
                     </td>
                   </tr>
-                )}
+                ) : null}
               </tbody>
             </table>
           </div>
