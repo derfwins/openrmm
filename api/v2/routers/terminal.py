@@ -61,6 +61,17 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
     agent_connections[agent_id] = websocket
     logger.info(f"Agent {agent_id} connected via WebSocket")
 
+    # Start a keepalive task to prevent Cloudflare timeout (100s)
+    async def keepalive():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await websocket.send_json({"type": "ping"})
+            except Exception:
+                break
+
+    keepalive_task = asyncio.create_task(keepalive())
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -98,6 +109,7 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
     except Exception as e:
         logger.error(f"Agent {agent_id} error: {e}")
     finally:
+        keepalive_task.cancel()
         if agent_connections.get(agent_id) == websocket:
             del agent_connections[agent_id]
         # Clean up any sessions for this agent

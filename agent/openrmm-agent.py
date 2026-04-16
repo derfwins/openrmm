@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.4.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -396,6 +396,10 @@ async def ws_agent_connect(server: str, agent_id: str):
                             except Exception:
                                 pass
                             sessions.pop(session_id, None)
+
+                    elif msg_type == "ping":
+                        await ws.send(json.dumps({"type": "pong"}))
+                        log.debug("Sent pong")
 
                     elif msg_type == "resize":
                         pass  # TODO
