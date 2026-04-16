@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.2"
+AGENT_VERSION = "0.8.3"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -376,6 +376,23 @@ def _init_screen_capture_windows():
         import numpy as np
         nonlocal _h264_state
 
+        # When running as SYSTEM, switch to interactive desktop
+        old_winsta = None
+        old_desktop = None
+        if platform.system() == "Windows":
+            try:
+                old_winsta = user32.GetProcessWindowStation()
+                winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
+                if winsta:
+                    user32.SetProcessWindowStation(winsta)
+                    desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
+                    if desktop:
+                        old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+                        user32.SetThreadDesktop(desktop)
+                        log.info("H.264: switched to interactive desktop")
+            except Exception as e:
+                log.warning("H.264: desktop switch failed: %s", e)
+
         sct = mss.mss()
         monitor = sct.monitors[0] if sct.monitors else None
         if not monitor:
@@ -483,6 +500,15 @@ def _init_screen_capture_windows():
                 state['sct'].close()
             except Exception:
                 pass
+            # Restore original desktop
+            if platform.system() == "Windows":
+                try:
+                    if state.get('old_desktop'):
+                        user32.SetThreadDesktop(state['old_desktop'])
+                    if state.get('old_winsta'):
+                        user32.SetProcessWindowStation(state['old_winsta'])
+                except Exception:
+                    pass
         _h264_state = {}
 
     # --- Legacy JPEG capture (fallback) ---
@@ -673,6 +699,8 @@ def _init_screen_capture_linux():
             'height': h,
             'frame_count': 0,
             'gop_size': 30,
+            'old_winsta': old_winsta,
+            'old_desktop': old_desktop,
         }
         return w, h
 
