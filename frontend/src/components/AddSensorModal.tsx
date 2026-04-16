@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createSensor, discoverDevice } from '../services/monitoringService'
 import type { DiscoverResult } from '../services/monitoringService'
-import { SENSOR_TYPE_LABELS, STATUS_COLORS } from '../types/monitoring'
+import { SENSOR_TYPE_LABELS } from '../types/monitoring'
 
 interface Props {
   onCreated: () => void
@@ -58,7 +58,7 @@ export default function AddSensorModal({ onCreated }: Props) {
       for (const s of sensorsToCreate) {
         await createSensor({
           display_name: s.display_name,
-          sensor_type: s.sensor_type,
+          sensor_type: s.sensor_type as import('../types/monitoring').SensorType,
           target_host: s.target_host,
           snmp_community: snmpCommunity,
           snmp_version: '2c',
