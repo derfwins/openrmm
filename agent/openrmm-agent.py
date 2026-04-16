@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.0"
+AGENT_VERSION = "0.9.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -529,208 +529,27 @@ def _init_screen_capture_windows():
                     pass
         _h264_state = {}
 
-    # --- Legacy JPEG capture (fallback) ---
-    _capture_result = None
-
+    # --- JPEG capture ---
     def capture_screen(quality=55):
-        """Capture screen as JPEG. Runs helper in user's interactive session."""
-        if not _capture_via_user_session(quality):
-            return None, 0, 0
-        return _read_shared_capture()
-
-    def _capture_via_user_session(quality=55):
-        """Launch capture helper in the user's session using CreateProcessAsUserW."""
-        nonlocal _capture_result
+        """Capture screen and return JPEG bytes. Uses mss (works in user session)."""
         try:
-            advapi32 = ctypes.windll.advapi32
-            session_id = kernel32.WTSGetActiveConsoleSessionId()
-            if session_id == 0xFFFFFFFF:
-                log.error("No active console session")
-                return False
-
-            # Enable required privileges for CreateProcessAsUserW
-            _enable_privilege("SeIncreaseQuotaPrivilege")
-            _enable_privilege("SeAssignPrimaryTokenPrivilege")
-
-            token = ctypes.c_void_p()
-            if not advapi32.WTSQueryUserToken(session_id, ctypes.byref(token)):
-                log.error("WTSQueryUserToken failed: %d", ctypes.get_last_error())
-                return False
-
-            try:
-                # Write helper script to temp
-                import tempfile
-                helper_path = os.path.join(tempfile.gettempdir(), 'openrmm_capture.py')
-                with open(helper_path, 'w') as f:
-                    f.write(
-                        'import ctypes,struct,io,sys\n'
-                        'u=ctypes.windll.user32;g=ctypes.windll.gdi32\n'
-                        'w=u.GetSystemMetrics(0);h=u.GetSystemMetrics(1)\n'
-                        'dc=u.GetDC(0);m=g.CreateCompatibleDC(dc)\n'
-                        'b=g.CreateCompatibleBitmap(dc,w,h)\n'
-                        'g.SelectObject(m,b)\n'
-                        'g.BitBlt(m,0,0,w,h,dc,0,0,0xCC0020)\n'
-                        'from PIL import Image\n'
-                        'class BI(ctypes.Structure):\n'
-                        '  _fields_=[("s",ctypes.c_ulong),("w",ctypes.c_long),("h",ctypes.c_long),'
-                        '("p",ctypes.c_ushort),("b",ctypes.c_ushort),("c",ctypes.c_ulong),'
-                        '("sz",ctypes.c_ulong),("x",ctypes.c_long),("y",ctypes.c_long),'
-                        '("u",ctypes.c_ulong),("i",ctypes.c_ulong)]\n'
-                        'bi=BI();bi.s=ctypes.sizeof(BI);bi.w=w;bi.h=-h;bi.p=1;bi.b=32;bi.c=0\n'
-                        'buf=ctypes.create_string_buffer(w*h*4)\n'
-                        'g.GetDIBits(m,b,0,h,buf,ctypes.byref(bi),0)\n'
-                        'img=Image.frombytes("RGB",(w,h),buf.raw,"raw","BGRX")\n'
-                        'o=io.BytesIO();img.save(o,format="JPEG",quality=' + str(quality) + ')\n'
-                        'd=o.getvalue()\n'
-                        'sys.stdout.buffer.write(struct.pack("II",w,h))\n'
-                        'sys.stdout.buffer.write(d)\n'
-                        'sys.stdout.buffer.flush()\n'
-                        'g.DeleteObject(b);g.DeleteDC(m);u.ReleaseDC(0,dc)\n'
-                    )
-
-                cmd = 'python "' + helper_path + '"'
-                cmd_buf = ctypes.create_unicode_buffer(cmd)
-
-                # Create stdout pipe
-                read_pipe = ctypes.c_void_p()
-                write_pipe = ctypes.c_void_p()
-                sa = ctypes.create_string_buffer(12)
-                struct.pack_into('I', sa, 0, 12)
-                struct.pack_into('I', sa, 4, 1)  # bInheritHandle
-                kernel32.CreatePipe(ctypes.byref(read_pipe), ctypes.byref(write_pipe), sa, 0)
-
-                # STARTUPINFO
-                si = ctypes.create_string_buffer(2000)
-                ctypes.memset(si, 0, 2000)
-                struct.pack_into('I', si, 0, 68)  # cb
-                struct.pack_into('I', si, 44, 0x100)  # STARTF_USESTDHANDLES
-                struct.pack_into('H', si, 48, 0)  # SW_HIDE
-                struct.pack_into('I', si, 8, ctypes.addressof(write_pipe))  # hStdInput (reuse)
-                struct.pack_into('I', si, 12, ctypes.addressof(write_pipe))  # hStdOutput
-                struct.pack_into('I', si, 16, ctypes.addressof(write_pipe))  # hStdError
-
-                pi = ctypes.create_string_buffer(16)
-
-                success = advapi32.CreateProcessAsUserW(
-                    token, None, cmd_buf, None, None,
-                    True, 0, None, None, si, pi
-                )
-
-                if not success:
-                    log.error("CreateProcessAsUserW failed: %d", ctypes.get_last_error())
-                    kernel32.CloseHandle(read_pipe)
-                    kernel32.CloseHandle(write_pipe)
-                    return False
-
-                kernel32.CloseHandle(write_pipe)
-
-                # Read output
-                output = b''
-                buf = ctypes.create_string_buffer(65536)
-                bytes_read = ctypes.c_ulong()
-                while True:
-                    if not kernel32.ReadFile(read_pipe, buf, 65536, ctypes.byref(bytes_read), None):
-                        break
-                    if bytes_read.value == 0:
-                        break
-                    output += buf.raw[:bytes_read.value]
-
-                kernel32.CloseHandle(read_pipe)
-
-                hproc = struct.unpack_from('I', pi, 0)[0]
-                kernel32.WaitForSingleObject(hproc, 5000)
-                kernel32.CloseHandle(hproc)
-                hthread = struct.unpack_from('I', pi, 4)[0]
-                kernel32.CloseHandle(hthread)
-
-                if len(output) < 8:
-                    log.error("Capture helper: only %d bytes", len(output))
-                    return False
-
-                cap_w, cap_h = struct.unpack('II', output[:8])
-                jpeg_data = output[8:]
-                if cap_w == 0 or cap_h == 0 or not jpeg_data:
-                    log.error("Capture helper: %dx%d jpeg=%d", cap_w, cap_h, len(jpeg_data))
-                    return False
-
-                _capture_result = (jpeg_data, cap_w, cap_h)
-                return True
-
-            finally:
-                kernel32.CloseHandle(token)
-        except Exception as e:
-            log.error("_capture_via_user_session failed: %s", e, exc_info=True)
-            return False
-
-    def _read_shared_capture():
-        nonlocal _capture_result
-        result = _capture_result
-        _capture_result = None
-        return result if result else (None, 0, 0)
-        old_desktop = None
-        try:
-            if platform.system() == "Windows":
-                old_winsta = user32.GetProcessWindowStation()
-                winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
-                if winsta:
-                    user32.SetProcessWindowStation(winsta)
-                    desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
-                    if desktop:
-                        old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
-                        user32.SetThreadDesktop(desktop)
-
-            width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
-            height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
-            if width == 0 or height == 0:
+            sct = mss.mss()
+            monitor = sct.monitors[0] if sct.monitors else None
+            if not monitor:
                 return None, 0, 0
-
-            # GetDC(NULL) = entire screen DC after desktop switch
-            hdc = user32.GetDC(0)
-            if not hdc:
-                return None, 0, 0
-            hdc_mem = gdi32.CreateCompatibleDC(hdc)
-            hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
-            gdi32.SelectObject(hdc_mem, hbitmap)
-
-            # BitBlt from screen to memory DC
-            result_blt = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
-
-            result = None
-            if result_blt:
-                bmi = BITMAPINFO()
-                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.bmiHeader.biWidth = width
-                bmi.bmiHeader.biHeight = -height
-                bmi.bmiHeader.biPlanes = 1
-                bmi.bmiHeader.biBitCount = 32
-                bmi.bmiHeader.biCompression = BI_RGB
-
-                buf_size = width * height * 4
-                pixel_data = ctypes.create_string_buffer(buf_size)
-                gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
-
-                try:
-                    from PIL import Image as PILImage
-                    img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
-                    out = io.BytesIO()
-                    img.save(out, format='JPEG', quality=quality)
-                    result = out.getvalue()
-                except ImportError:
-                    pass
-
-            gdi32.DeleteObject(hbitmap)
-            gdi32.DeleteDC(hdc_mem)
-            user32.ReleaseDC(0, hdc)
-            return result, width, height
+            img = sct.grab(monitor)
+            import numpy as _np
+            arr = _np.frombuffer(img.raw, dtype=_np.uint8).reshape((img.height, img.width, 4))
+            from PIL import Image as PILImage
+            # mss returns BGRA - convert to RGB for PIL
+            rgb_arr = arr[:, :, [2, 1, 0]]  # BGR -> RGB
+            pil_img = PILImage.fromarray(rgb_arr, 'RGB')
+            out = io.BytesIO()
+            pil_img.save(out, format='JPEG', quality=quality)
+            return out.getvalue(), img.width, img.height
         except Exception as e:
-            log.error("BitBlt capture failed: %s", e)
+            log.error("mss capture failed: %s", e)
             return None, 0, 0
-        finally:
-            if old_desktop:
-                user32.SetThreadDesktop(old_desktop)
-            if old_winsta:
-                user32.SetProcessWindowStation(old_winsta)
-
     return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
 
 
