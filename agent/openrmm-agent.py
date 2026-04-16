@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.5"
+AGENT_VERSION = "0.8.6"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -515,7 +515,47 @@ def _init_screen_capture_windows():
 
     # --- Legacy JPEG capture (fallback) ---
     def capture_screen(quality=55):
-        """Capture screen and return JPEG bytes (legacy fallback)."""
+        """Capture screen and return JPEG bytes. Uses mss if available (works as SYSTEM)."""
+        # Prefer mss — it works from Session 0 with desktop switch
+        if has_mss:
+            try:
+                # Switch to interactive desktop when running as SYSTEM
+                old_winsta = None
+                old_desktop = None
+                if platform.system() == "Windows":
+                    try:
+                        old_winsta = user32.GetProcessWindowStation()
+                        winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
+                        if winsta:
+                            user32.SetProcessWindowStation(winsta)
+                            desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
+                            if desktop:
+                                old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+                                user32.SetThreadDesktop(desktop)
+                    except Exception:
+                        pass
+                try:
+                    sct = mss.mss()
+                    monitor = sct.monitors[0] if sct.monitors else None
+                    if not monitor:
+                        return None, 0, 0
+                    img = sct.grab(monitor)
+                    import numpy as _np
+                    arr = _np.frombuffer(img.raw, dtype=_np.uint8).reshape((img.height, img.width, 4))
+                    from PIL import Image as PILImage
+                    pil_img = PILImage.fromarray(arr[:, :, :3], 'RGB')
+                    out = io.BytesIO()
+                    pil_img.save(out, format='JPEG', quality=quality)
+                    return out.getvalue(), img.width, img.height
+                finally:
+                    if old_desktop:
+                        user32.SetThreadDesktop(old_desktop)
+                    if old_winsta:
+                        user32.SetProcessWindowStation(old_winsta)
+            except Exception as e:
+                log.error("mss capture failed: %s", e)
+
+        # Fallback to BitBlt methods
         if capture_method == "pil_imagegrab":
             try:
                 from PIL import ImageGrab
