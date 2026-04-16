@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.4.1"
+AGENT_VERSION = "0.4.2"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -267,12 +267,17 @@ def ws_agent_loop(server: str, agent_id: str):
         try:
             import asyncio
             asyncio.run(ws_agent_connect(server, agent_id))
+            # Clean disconnect — wait a bit before reconnecting
             ws_backoff = 1
+            time.sleep(2)
+        except KeyboardInterrupt:
+            break
         except Exception as e:
             log.error("WebSocket error: %s, retrying in %ds", e, ws_backoff)
             time.sleep(ws_backoff)
             ws_backoff = min(ws_backoff * 2, 60)
             continue
+    log.info("WebSocket loop exiting")
 
 
 async def ws_agent_connect(server: str, agent_id: str):
