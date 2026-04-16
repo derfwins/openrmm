@@ -14,6 +14,12 @@ import Reports from './components/Reports'
 import SoftwareManager from './components/SoftwareManager'
 import Settings from './components/Settings'
 import RemoteDesktop from './components/RemoteDesktop'
+import MonitoringDashboard from './components/MonitoringDashboard'
+import SensorTree from './components/SensorTree'
+import SensorDetail from './components/SensorDetail'
+import ProbeManager from './components/ProbeManager'
+import NetworkBackupViewer from './components/NetworkBackupViewer'
+import type { MonitoringSensor } from './types/monitoring'
 import AICopilot from './components/AICopilot'
 import UserManagement from './components/UserManagement'
 import InstallAgent from './components/InstallAgent'
@@ -151,6 +157,10 @@ function App() {
         <Route path="/install" element={<AppLayout><InstallAgent /></AppLayout>} />
         <Route path="/ai" element={<AppLayout><AICopilot /></AppLayout>} />
         <Route path="/users" element={<AppLayout><UserManagement /></AppLayout>} />
+        <Route path="/monitoring" element={<AppLayout><MonitoringDashboard /></AppLayout>} />
+        <Route path="/monitoring/sensors" element={<AppLayout><MonitoringSensorsPage /></AppLayout>} />
+        <Route path="/monitoring/probes" element={<AppLayout><ProbeManager /></AppLayout>} />
+        <Route path="/monitoring/backups" element={<AppLayout><MonitoringBackupsPage /></AppLayout>} />
         <Route path="/" element={<Navigate to="/dashboard" />} />
         <Route path="*" element={<Navigate to="/dashboard" />} />
       </Routes>
@@ -174,3 +184,32 @@ function DesktopPage() {
 }
 
 export default App
+
+// Monitoring sub-pages
+function MonitoringSensorsPage() {
+  const [selected, setSelected] = useState<MonitoringSensor | null>(null)
+  return (
+    <div className="flex h-[calc(100vh-4rem)]">
+      <div className="w-80 flex-shrink-0">
+        <SensorTree onSensorSelect={setSelected} />
+      </div>
+      <div className="flex-1">
+        <SensorDetail sensor={selected} />
+      </div>
+    </div>
+  )
+}
+
+function MonitoringBackupsPage() {
+  const [selected, setSelected] = useState<MonitoringSensor | null>(null)
+  return (
+    <div className="flex h-[calc(100vh-4rem)]">
+      <div className="w-80 flex-shrink-0">
+        <SensorTree onSensorSelect={setSelected} />
+      </div>
+      <div className="flex-1">
+        <NetworkBackupViewer sensor={selected} />
+      </div>
+    </div>
+  )
+}

@@ -18,6 +18,7 @@ const Sidebar = () => {
       label: 'Management',
       items: [
         { icon: '🔔', label: 'Alerts', path: '/alerts' },
+        { icon: '📡', label: 'Monitoring', path: '/monitoring' },
         { icon: '📜', label: 'Scripts', path: '/scripts' },
         { icon: '⚡', label: 'Automation', path: '/automation' },
         { icon: '📦', label: 'Software', path: '/software' },
