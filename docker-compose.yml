@@ -1,5 +1,5 @@
 # OpenRMM Docker Compose Configuration
-# Custom FastAPI Backend + React Frontend + Guacamole
+# Custom FastAPI Backend + React Frontend
 
 services:
   # PostgreSQL Database

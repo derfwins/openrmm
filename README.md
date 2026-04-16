@@ -11,7 +11,6 @@ A modern, open-source Remote Monitoring and Management platform built from scrat
 | **Database** | PostgreSQL 15 | 5432 |
 | **Cache** | Redis 7 | 6379 |
 | **Message Queue** | NATS 2 | 4222 |
-| **Remote Desktop** | Apache Guacamole | 8080 |
 | **Reverse Proxy** | Nginx | 80/443 |
 
 ## Quick Start
