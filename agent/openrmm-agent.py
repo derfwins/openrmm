@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.7"
+AGENT_VERSION = "0.8.8"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -515,45 +515,72 @@ def _init_screen_capture_windows():
 
     # --- Legacy JPEG capture (fallback) ---
     def capture_screen(quality=55):
-        """Capture screen and return JPEG bytes. Uses mss if available (works as SYSTEM)."""
-        # Prefer mss — it works from Session 0 with desktop switch
-        if has_mss:
-            try:
-                # Switch to interactive desktop when running as SYSTEM
-                old_winsta = None
-                old_desktop = None
-                if platform.system() == "Windows":
-                    try:
-                        old_winsta = user32.GetProcessWindowStation()
-                        winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
-                        if winsta:
-                            user32.SetProcessWindowStation(winsta)
-                            desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
-                            if desktop:
-                                old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
-                                user32.SetThreadDesktop(desktop)
-                    except Exception:
-                        pass
+        """Capture screen and return JPEG bytes. Uses BitBlt with desktop switch."""
+        # Direct BitBlt with interactive desktop switch — most reliable as SYSTEM
+        old_winsta = None
+        old_desktop = None
+        try:
+            if platform.system() == "Windows":
+                old_winsta = user32.GetProcessWindowStation()
+                winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
+                if winsta:
+                    user32.SetProcessWindowStation(winsta)
+                    desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
+                    if desktop:
+                        old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+                        user32.SetThreadDesktop(desktop)
+
+            width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+            if width == 0 or height == 0:
+                return None, 0, 0
+
+            # GetDC(NULL) = entire screen DC after desktop switch
+            hdc = user32.GetDC(0)
+            if not hdc:
+                return None, 0, 0
+            hdc_mem = gdi32.CreateCompatibleDC(hdc)
+            hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+            gdi32.SelectObject(hdc_mem, hbitmap)
+
+            # BitBlt from screen to memory DC
+            result_blt = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
+
+            result = None
+            if result_blt:
+                bmi = BITMAPINFO()
+                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.bmiHeader.biWidth = width
+                bmi.bmiHeader.biHeight = -height
+                bmi.bmiHeader.biPlanes = 1
+                bmi.bmiHeader.biBitCount = 32
+                bmi.bmiHeader.biCompression = BI_RGB
+
+                buf_size = width * height * 4
+                pixel_data = ctypes.create_string_buffer(buf_size)
+                gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
+
                 try:
-                    sct = mss.mss()
-                    monitor = sct.monitors[0] if sct.monitors else None
-                    if not monitor:
-                        return None, 0, 0
-                    img = sct.grab(monitor)
-                    import numpy as _np
-                    arr = _np.frombuffer(img.raw, dtype=_np.uint8).reshape((img.height, img.width, 4))
                     from PIL import Image as PILImage
-                    pil_img = PILImage.fromarray(arr[:, :, :3], 'RGB')
+                    img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
                     out = io.BytesIO()
-                    pil_img.save(out, format='JPEG', quality=quality)
-                    return out.getvalue(), img.width, img.height
-                finally:
-                    if old_desktop:
-                        user32.SetThreadDesktop(old_desktop)
-                    if old_winsta:
-                        user32.SetProcessWindowStation(old_winsta)
-            except Exception as e:
-                log.error("mss capture failed: %s", e)
+                    img.save(out, format='JPEG', quality=quality)
+                    result = out.getvalue()
+                except ImportError:
+                    pass
+
+            gdi32.DeleteObject(hbitmap)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc)
+            return result, width, height
+        except Exception as e:
+            log.error("BitBlt capture failed: %s", e)
+            return None, 0, 0
+        finally:
+            if old_desktop:
+                user32.SetThreadDesktop(old_desktop)
+            if old_winsta:
+                user32.SetProcessWindowStation(old_winsta)
 
         # Fallback to BitBlt methods
         if capture_method == "pil_imagegrab":
