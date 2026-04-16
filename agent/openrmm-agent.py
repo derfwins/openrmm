@@ -16,17 +16,19 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.4.2"
+AGENT_VERSION = "0.5.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
 
-# Logging
+# Logging - use absolute path for reliability after os.execv()
+LOG_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+LOG_FILE = LOG_DIR / "agent.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("agent.log"),
+        logging.FileHandler(str(LOG_FILE)),
         logging.StreamHandler(),
     ],
 )
@@ -238,8 +240,17 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
         os.rename(script_path, backup_path)
         os.rename(tmp_path, script_path)
         log.info("Update applied: %s -> %s. Restarting...", current_version, latest_version)
-        # Restart self
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        # Restart self - use subprocess on Windows (os.execv unreliable), execv on Unix
+        if platform.system() == "Windows":
+            import subprocess
+            subprocess.Popen(
+                [sys.executable] + sys.argv,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+            sys.exit(0)
+        else:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         log.error("Auto-update failed: %s", e)
         # Restore backup if exists
