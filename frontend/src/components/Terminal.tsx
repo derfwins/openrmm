@@ -175,7 +175,7 @@ const Terminal = ({ agentId, token }: Props) => {
       )}
 
       {/* Terminal */}
-      <div ref={termRef} className="flex-1 bg-[#1a1b26]" style={{ minHeight: '300px' }} />
+      <div ref={termRef} className="flex-1 bg-[#1a1b26]" style={{ minHeight: '400px', height: 'calc(100vh - 200px)' }} />
     </div>
   )
 }
