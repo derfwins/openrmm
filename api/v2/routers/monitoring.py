@@ -468,3 +468,172 @@ async def create_alert_rule(data: AlertRuleCreate, db: AsyncSession = Depends(ge
     await db.commit()
     await db.refresh(rule)
     return {"id": rule.id}
+
+# --- Auto-Discovery ---
+
+class DiscoverRequest(BaseModel):
+    target_host: str
+    snmp_community: str = "public"
+    snmp_version: str = "2c"
+
+class DiscoveredSensor(BaseModel):
+    sensor_type: str
+    display_name: str
+    target_host: str
+    description: str
+    auto_create: bool = True
+
+class DiscoverResult(BaseModel):
+    alive: bool
+    latency_ms: Optional[float] = None
+    device_type: Optional[str] = None  # cisco, juniper, hp, windows, linux, printer, ups, etc.
+    sys_descr: Optional[str] = None
+    sys_name: Optional[str] = None
+    suggested_sensors: list[DiscoveredSensor] = []
+
+@router.post("/discover/", response_model=DiscoverResult)
+async def discover_device(data: DiscoverRequest, _user=Depends(get_current_user)):
+    """Probe a device and auto-suggest sensors based on what's found."""
+    import subprocess
+    import asyncio
+
+    result = DiscoverResult(alive=False)
+
+    # 1. Ping check
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ping", "-c", "1", "-W", "2", data.target_host,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=3)
+        result.alive = (proc.returncode == 0)
+    except Exception:
+        pass
+
+    # 2. SNMP sysDescr walk
+    snmp_ok = False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "snmpwalk", "-v", data.snmp_version, "-c", data.snmp_community,
+            data.target_host, "1.3.6.1.2.1.1", "-O", "q",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode == 0 and stdout:
+            snmp_ok = True
+            output = stdout.decode("utf-8", errors="ignore")
+            lines = output.strip().split("\n")
+
+            for line in lines:
+                if "1.3.6.1.2.1.1.1.0" in line or "sysDescr" in line:
+                    result.sys_descr = line.split('"', 1)[-1].rstrip('"') if '"' in line else line.split("=", 1)[-1].strip()
+                elif "1.3.6.1.2.1.1.5.0" in line or "sysName" in line:
+                    result.sys_name = line.split('"', 1)[-1].rstrip('"') if '"' in line else line.split("=", 1)[-1].strip()
+
+            # Classify device from sysDescr
+            descr_lower = (result.sys_descr or "").lower()
+            if any(k in descr_lower for k in ["cisco", "ios", "nx-os"]):
+                result.device_type = "cisco"
+            elif "juniper" in descr_lower or "junos" in descr_lower:
+                result.device_type = "juniper"
+            elif "arista" in descr_lower:
+                result.device_type = "arista"
+            elif "hp " in descr_lower or "aruba" in descr_lower or "procurve" in descr_lower:
+                result.device_type = "hp_aruba"
+            elif "mikrotik" in descr_lower or "routeros" in descr_lower:
+                result.device_type = "mikrotik"
+            elif "ubiquiti" in descr_lower or "edgeswitch" in descr_lower:
+                result.device_type = "ubiquiti"
+            elif "palo alto" in descr_lower or "pan-os" in descr_lower:
+                result.device_type = "palo_alto"
+            elif "fortigate" in descr_lower or "fortinet" in descr_lower:
+                result.device_type = "fortinet"
+            elif "dell" in descr_lower or "powerconnect" in descr_lower or "os10" in descr_lower:
+                result.device_type = "dell"
+            elif "windows" in descr_lower:
+                result.device_type = "windows"
+            elif "linux" in descr_lower or "net-snmp" in descr_lower:
+                result.device_type = "linux"
+            elif any(k in descr_lower for k in ["printer", "laserjet", "ricoh", "xerox", "brother", "canon"]):
+                result.device_type = "printer"
+            elif any(k in descr_lower for k in ["apc", "cyberpower", "eaton", "ups"]):
+                result.device_type = "ups"
+            elif "synology" in descr_lower:
+                result.device_type = "synology"
+            elif "qnap" in descr_lower:
+                result.device_type = "qnap"
+            elif descr_lower:
+                result.device_type = "snmp_device"
+
+    except Exception:
+        pass
+
+    # 3. Suggest sensors based on discovery
+    host = data.target_host
+    name = result.sys_name or host
+    dtype = result.device_type
+
+    # Always suggest ping if alive
+    if result.alive:
+        result.suggested_sensors.append(DiscoveredSensor(
+            sensor_type="ping", display_name=f"{name} - Ping",
+            target_host=host, description="ICMP ping response time",
+        ))
+
+    if snmp_ok:
+        result.suggested_sensors.append(DiscoveredSensor(
+            sensor_type="snmp_system", display_name=f"{name} - System",
+            target_host=host, description="SNMP system info (uptime, hostname, contact)",
+        ))
+
+        # Network devices get interface monitoring
+        if dtype in ("cisco", "juniper", "arista", "hp_aruba", "mikrotik", "ubiquiti", "dell", "palo_alto", "fortinet", "snmp_device"):
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_interface", display_name=f"{name} - Interfaces",
+                target_host=host, description="SNMP interface bandwidth (in/out bps, errors)",
+            ))
+
+        # Network devices get CPU/memory
+        if dtype in ("cisco", "juniper", "arista", "hp_aruba", "palo_alto", "fortinet"):
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_cpu", display_name=f"{name} - CPU",
+                target_host=host, description="SNMP device CPU utilization",
+            ))
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_disk", display_name=f"{name} - Memory",
+                target_host=host, description="SNMP device memory usage",
+            ))
+
+        # Printers
+        if dtype == "printer":
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_printer", display_name=f"{name} - Printer Status",
+                target_host=host, description="Toner levels, paper status, tray info",
+            ))
+
+        # UPS
+        if dtype == "ups":
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_ups", display_name=f"{name} - UPS Status",
+                target_host=host, description="Battery, input/output power, runtime",
+            ))
+
+        # Servers
+        if dtype in ("windows", "linux"):
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_cpu", display_name=f"{name} - CPU",
+                target_host=host, description="SNMP CPU utilization",
+            ))
+            result.suggested_sensors.append(DiscoveredSensor(
+                sensor_type="snmp_disk", display_name=f"{name} - Disk/Memory",
+                target_host=host, description="SNMP storage and memory usage",
+            ))
+
+    elif result.alive:
+        # No SNMP - just basic checks
+        result.suggested_sensors.append(DiscoveredSensor(
+            sensor_type="port", display_name=f"{name} - HTTP",
+            target_host=host, description="HTTP(S) check on port 80/443",
+        ))
+
+    return result

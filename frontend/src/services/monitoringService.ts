@@ -53,3 +53,21 @@ export const getMonitoringDashboard = () => api<MonitoringDashboard>('/monitorin
 export const getBackups = (sensorId: number) => api<MonitoringBackup[]>(`/monitoring/backups/${sensorId}/`)
 export const getBackupDiff = (sensorId: number, fromId: number, toId: number) =>
   api<{ from: string; to: string }>(`/monitoring/backups/${sensorId}/diff/?from_id=${fromId}&to_id=${toId}`)
+
+// Discovery
+export interface DiscoverResult {
+  alive: boolean
+  latency_ms: number | null
+  device_type: string | null
+  sys_descr: string | null
+  sys_name: string | null
+  suggested_sensors: Array<{
+    sensor_type: string
+    display_name: string
+    target_host: string
+    description: string
+    auto_create: boolean
+  }>
+}
+export const discoverDevice = (target_host: string, snmp_community = 'public', snmp_version = '2c') =>
+  api<DiscoverResult>('/monitoring/discover/', { method: 'POST', body: JSON.stringify({ target_host, snmp_community, snmp_version }) })
