@@ -8,7 +8,7 @@ import type {
 const API = ''
 
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('openrmm_token')
+  const token = localStorage.getItem('token')
   const res = await fetch(`${API}${path}`, {
     ...opts,
     headers: {

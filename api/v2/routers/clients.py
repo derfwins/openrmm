@@ -114,3 +114,30 @@ async def delete_site(pk: int, user: User = Depends(get_current_user), db: Async
     await db.delete(site)
     await db.commit()
     return "ok"
+
+
+@router.get("/{client_id}/sites/")
+async def get_client_sites(client_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Site).where(Site.client_id == client_id))
+    sites = result.scalars().all()
+    return [{"id": s.id, "name": s.name, "client_id": s.client_id} for s in sites]
+
+
+@router.get("/{client_id}/agents/")
+async def get_client_agents(client_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from v2.models.agent import Agent
+    site_result = await db.execute(select(Site.id).where(Site.client_id == client_id))
+    site_ids = [row[0] for row in site_result.all()]
+    if not site_ids:
+        return []
+    result = await db.execute(select(Agent).where(Agent.site_id.in_(site_ids)))
+    agents = result.scalars().all()
+    return [
+        {
+            "id": a.id, "hostname": a.hostname, "agent_id": a.agent_id,
+            "site_id": a.site_id, "status": a.status, "plat": a.plat,
+            "last_seen": a.last_seen.isoformat() if a.last_seen else None,
+            "local_ip": a.local_ip, "os_name": a.os_name,
+        }
+        for a in agents
+    ]

@@ -23,12 +23,13 @@ import type { MonitoringSensor } from './types/monitoring'
 import AICopilot from './components/AICopilot'
 import UserManagement from './components/UserManagement'
 import InstallAgent from './components/InstallAgent'
-import Clients from './components/Clients'
+import { Clients } from './components/Clients'
 import AuditLog from './components/AuditLog'
 import Sidebar from './components/Sidebar'
 import QuickActions from './components/QuickActions'
 import NotificationCenter from './components/NotificationCenter'
 import { WebSocketProvider } from './contexts/WebSocketContext'
+import { ClientProvider } from './contexts/ClientContext'
 
 export const AuthContext = {
   isAuthenticated: () => localStorage.getItem('token') !== null,
@@ -136,11 +137,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: string |
 function App() {
   return (
     <BrowserRouter>
+      <ClientProvider>
       <WebSocketProvider>
       <ErrorBoundary>
       <QuickActions />
       <Routes>
-        <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} />
+        <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/clients" /> : <Login />} />
         <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
         <Route path="/devices" element={<AppLayout><DeviceList /></AppLayout>} />
         <Route path="/device/:id" element={<AppLayout><DeviceDetail /></AppLayout>} />
@@ -161,11 +163,12 @@ function App() {
         <Route path="/monitoring/sensors" element={<AppLayout><MonitoringSensorsPage /></AppLayout>} />
         <Route path="/monitoring/probes" element={<AppLayout><ProbeManager /></AppLayout>} />
         <Route path="/monitoring/backups" element={<AppLayout><MonitoringBackupsPage /></AppLayout>} />
-        <Route path="/" element={<Navigate to="/dashboard" />} />
-        <Route path="*" element={<Navigate to="/dashboard" />} />
+        <Route path="/" element={<Navigate to="/clients" />} />
+        <Route path="*" element={<Navigate to="/clients" />} />
       </Routes>
       </ErrorBoundary>
       </WebSocketProvider>
+      </ClientProvider>
     </BrowserRouter>
   )
 }

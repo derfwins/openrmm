@@ -5,6 +5,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
+from typing import Optional
 
 from v2.database import get_db
 from v2.models.user import User
@@ -186,10 +187,20 @@ def _build_linux_installer(api_url: str, client_id: int, site_id: int, agent_typ
 
 @router.get("/")
 async def list_agents(
+    client_id: Optional[int] = Query(None),
+    site_id: Optional[int] = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Agent))
+    stmt = select(Agent)
+    if site_id:
+        stmt = stmt.where(Agent.site_id == site_id)
+    elif client_id:
+        # Get all site IDs for this client
+        site_result = await db.execute(select(Site.id).where(Site.client_id == client_id))
+        site_ids = [row[0] for row in site_result.all()]
+        stmt = stmt.where(Agent.site_id.in_(site_ids))
+    result = await db.execute(stmt)
     agents = result.scalars().all()
     return [
         {

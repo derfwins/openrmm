@@ -1,5 +1,61 @@
 import { useState } from 'react'
 import { useLocation, Link } from 'react-router-dom'
+import { useClient } from '../contexts/ClientContext'
+
+function ClientSelector({ collapsed }: { collapsed: boolean }) {
+  const { clients, selectedClient, selectClient } = useClient()
+  const [open, setOpen] = useState(false)
+
+  if (collapsed) {
+    return (
+      <div className="px-2 py-2 border-b border-gray-800/50">
+        <button
+          onClick={() => selectClient(null)}
+          className="w-full p-2 rounded-lg bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 text-xs transition-colors"
+          title="All Clients"
+        >
+          🏢
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="px-3 py-3 border-b border-gray-800/50 relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-sm"
+      >
+        <span className="text-gray-300 truncate">
+          {selectedClient ? selectedClient.name : 'All Clients'}
+        </span>
+        <svg className={`w-3 h-3 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute left-3 right-3 top-full mt-1 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+          <button
+            onClick={() => { selectClient(null); setOpen(false) }}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${!selectedClient ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
+          >
+            All Clients
+          </button>
+          {clients.map(c => (
+            <button
+              key={c.id}
+              onClick={() => { selectClient(c); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${selectedClient?.id === c.id ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
+            >
+              {c.name}
+              <span className="text-xs text-gray-600 ml-1">({c.sites?.length || 0})</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)
@@ -51,6 +107,9 @@ const Sidebar = () => {
         </div>
         {!collapsed && <span className="font-semibold text-white tracking-tight">OpenRMM</span>}
       </div>
+
+      {/* Client Selector */}
+      <ClientSelector collapsed={collapsed} />
 
       {/* Nav sections */}
       <nav className="flex-1 py-3 px-2.5 overflow-y-auto space-y-5">

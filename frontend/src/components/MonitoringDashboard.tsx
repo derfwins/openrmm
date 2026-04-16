@@ -12,7 +12,7 @@ export default function MonitoringDashboard() {
     try {
       const data = await getMonitoringDashboard()
       setDash(data)
-    } catch { /* ignore */ }
+    } catch (e) { console.error('Monitoring dashboard load error:', e) }
     setLoading(false)
   }, [])
 

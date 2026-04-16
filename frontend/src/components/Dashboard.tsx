@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
+import { useClient } from '../contexts/ClientContext'
 
 interface DashboardStats {
   totalAgents: number
@@ -38,6 +39,7 @@ interface AlertItem {
 const REFRESH_INTERVAL = 30_000
 
 const Dashboard = () => {
+  const { selectedClient } = useClient()
   const [stats, setStats] = useState<DashboardStats>({
     totalAgents: 0, onlineAgents: 0, offlineAgents: 0, totalAlerts: 0,
   })
@@ -51,9 +53,10 @@ const Dashboard = () => {
   const loadDashboard = useCallback(async () => {
     try {
       setError(null)
+      const clientId = selectedClient?.id
 
       const [agentsResult, alertsResult, healthResult] = await Promise.allSettled([
-        apiService.getDevices(),
+        apiService.getDevices(clientId),
         apiService.getAlerts(false),
         apiService.getHealth(),
       ])
@@ -101,7 +104,7 @@ const Dashboard = () => {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [selectedClient?.id])
 
   // Initial load + auto-refresh
   useEffect(() => {

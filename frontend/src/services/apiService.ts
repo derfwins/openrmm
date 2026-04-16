@@ -44,8 +44,12 @@ export const apiService = {
   },
 
   // Devices / Agents
-  async getDevices() {
-    const response = await fetch(`${API_BASE_URL}/agents/`, {
+  async getDevices(clientId?: number, siteId?: number) {
+    const params = new URLSearchParams()
+    if (clientId) params.set('client_id', String(clientId))
+    if (siteId) params.set('site_id', String(siteId))
+    const qs = params.toString() ? `?${params}` : ''
+    const response = await fetch(`${API_BASE_URL}/agents/${qs}`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch devices')

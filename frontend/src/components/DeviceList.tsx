@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
+import { useClient } from '../contexts/ClientContext'
 
 const DeviceList = () => {
+  const { selectedClient } = useClient()
   const [agents, setAgents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -11,13 +13,13 @@ const DeviceList = () => {
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'hostname' | 'status' | 'last_seen'>('hostname')
 
-  useEffect(() => { loadAgents() }, [])
+  useEffect(() => { loadAgents() }, [selectedClient?.id])
 
   const loadAgents = async () => {
     try {
       setLoading(true)
       setError(null)
-      const data = await apiService.getDevices()
+      const data = await apiService.getDevices(selectedClient?.id)
       const list = data.results || data || []
       setAgents(list)
     } catch (err: any) {
