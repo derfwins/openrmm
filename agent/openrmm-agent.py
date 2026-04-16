@@ -1547,6 +1547,32 @@ async def ws_agent_connect(server: str, agent_id: str):
                             os.execv(sys.executable, [sys.executable] + sys.argv)
                         sys.exit(0)
 
+                    elif msg_type == "uninstall_agent":
+                        log.info("Uninstall command received, removing agent...")
+                        if platform.system() == "Windows":
+                            # Remove scheduled task, then delete install dir
+                            import subprocess
+                            try:
+                                subprocess.run(["schtasks", "/Delete", "/TN", "OpenRMM-Agent", "/F"], capture_output=True, timeout=10)
+                            except Exception:
+                                pass
+                            # Self-delete in background
+                            install_dir = os.path.dirname(os.path.abspath(__file__))
+                            subprocess.Popen(
+                                f'ping -n 3 127.0.0.1 >nul & rmdir /s /q "{install_dir}"',
+                                shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                            )
+                        else:
+                            # Linux: stop service, remove files
+                            try:
+                                subprocess.run(["systemctl", "stop", "openrmm-agent"], capture_output=True, timeout=10)
+                                subprocess.run(["systemctl", "disable", "openrmm-agent"], capture_output=True, timeout=10)
+                            except Exception:
+                                pass
+                            install_dir = os.path.dirname(os.path.abspath(__file__))
+                            subprocess.Popen(f'sleep 2 && rm -rf "{install_dir}" /etc/systemd/system/openrmm-agent.service', shell=True)
+                        sys.exit(0)
+
                     elif msg_type == "resize":
                         session_id = data.get("session_id")
                         sess = sessions.get(session_id)

@@ -64,6 +64,15 @@ export const apiService = {
     return response.json()
   },
 
+  async deleteDevice(id: string, uninstall: boolean = false) {
+    const response = await fetch(`${API_BASE_URL}/agents/${id}/?uninstall=${uninstall}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to delete device')
+    return response.json()
+  },
+
   // Alerts
   async getAlerts(resolved?: boolean) {
     const params = resolved !== undefined ? `?resolved=${resolved}` : ''

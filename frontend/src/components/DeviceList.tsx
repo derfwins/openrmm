@@ -8,6 +8,19 @@ const DeviceList = () => {
   const [agents, setAgents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const handleDelete = async (agent: any) => {
+    const name = agent.hostname || agent.agent_id || 'this device'
+    const uninstall = confirm(`Delete "${name}" from OpenRMM?\n\nClick OK to also send an uninstall command to remove the agent from the machine.\nClick Cancel to only remove from the database (agent will re-register on next heartbeat).`)
+    if (!uninstall) return
+    const removeFromMachine = confirm(`Also remove the agent software from the machine?\nThis will stop the agent service and delete its files.`)
+    try {
+      await apiService.deleteDevice(agent.agent_id || agent.id, removeFromMachine)
+      setAgents(prev => prev.filter(a => (a.agent_id || a.id) !== (agent.agent_id || agent.id)))
+    } catch (e) {
+      alert('Failed to delete device: ' + e)
+    }
+  }
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
@@ -224,12 +237,21 @@ const DeviceList = () => {
                     {agent.last_seen ? timeAgo(agent.last_seen) : '—'}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Link
-                      to={`/device/${agent.agent_id || agent.id}`}
-                      className="text-xs text-blue-500 hover:text-blue-600 font-medium"
-                    >
-                      Manage →
-                    </Link>
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        to={`/device/${agent.agent_id || agent.id}`}
+                        className="text-xs text-blue-500 hover:text-blue-600 font-medium"
+                      >
+                        Manage →
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(agent)}
+                        className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        title="Delete device"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

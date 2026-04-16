@@ -391,3 +391,39 @@ async def restart_agent(agent_id: str):
         return {"status": "ok", "message": "Restart command sent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send restart: {e}")
+
+
+@router.delete("/{agent_id}/")
+async def delete_agent(
+    agent_id: str,
+    uninstall: bool = Query(False),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an agent from the database. Optionally send uninstall command first."""
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        # Try numeric ID
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+            agent = result.scalar_one_or_none()
+        except ValueError:
+            pass
+    if not agent:
+        raise HTTPException(404, detail="Agent not found")
+
+    # If uninstall requested, send uninstall command to agent via WebSocket
+    if uninstall:
+        from v2.routers.ws_state import agent_connections
+        agent_ws = agent_connections.get(agent.agent_id)
+        if agent_ws:
+            try:
+                await agent_ws.send_json({"type": "uninstall_agent"})
+            except Exception:
+                pass  # Best effort — agent may not be connected
+
+    # Delete from database
+    await db.delete(agent)
+    await db.commit()
+    return {"status": "ok", "message": "Agent deleted" + (" and uninstall command sent" if uninstall else "")}
