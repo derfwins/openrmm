@@ -57,10 +57,6 @@ export default defineConfig({
         target: 'http://openrmm-backend:8000',
         changeOrigin: true,
       },
-      '/monitoring': {
-        target: 'http://openrmm-backend:8000',
-        changeOrigin: true,
-      },
     },
   },
 })

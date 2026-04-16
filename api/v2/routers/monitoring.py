@@ -14,7 +14,7 @@ from v2.models.monitoring import (
 )
 from v2.routers.auth import get_current_user
 
-router = APIRouter(prefix="/monitoring", tags=["monitoring"])
+router = APIRouter(prefix="/v2/monitoring", tags=["monitoring"])
 
 
 # --- Pydantic Schemas ---
