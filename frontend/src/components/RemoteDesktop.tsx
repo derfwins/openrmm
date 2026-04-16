@@ -230,6 +230,30 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       case FRAME_H264_KEY:
       case FRAME_H264_DELTA: {
         const isKeyframe = frameType === FRAME_H264_KEY
+
+        // Check if this is actually JPEG data (fallback from agent)
+        const jpegMagic = payload.byteLength >= 3 &&
+          new Uint8Array(payload)[0] === 0xFF &&
+          new Uint8Array(payload)[1] === 0xD8 &&
+          new Uint8Array(payload)[2] === 0xFF
+
+        if (jpegMagic) {
+          // Render JPEG directly
+          const blob = new Blob([payload], { type: 'image/jpeg' })
+          createImageBitmap(blob).then(bmp => {
+            const canvas = canvasRef.current
+            const ctx = canvas?.getContext('2d')
+            if (ctx && canvas) {
+              canvas.width = bmp.width
+              canvas.height = bmp.height
+              ctx.drawImage(bmp, 0, 0)
+            }
+            bmp.close()
+            fpsCounterRef.current.frames++
+          }).catch(() => {})
+          break
+        }
+
         const decoder = decoderRef.current
 
         if (decoder && useWebCodecs && !codecFailedRef.current && decoder.state !== 'closed') {

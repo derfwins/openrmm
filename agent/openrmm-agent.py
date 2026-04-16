@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.4"
+AGENT_VERSION = "0.8.5"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -1255,7 +1255,8 @@ async def ws_agent_connect(server: str, agent_id: str):
                     # --- Desktop session handling ---
                     elif msg_type == "desktop_start":
                         session_id = data.get("session_id")
-                        use_h264 = capture_init_h264 is not None and capture_frame_h264 is not None
+                        use_h264 = False  # TODO: re-enable H.264 when WebCodecs is fixed
+                        # use_h264 = capture_init_h264 is not None and capture_frame_h264 is not None
                         log.info("Desktop capture session started: %s (h264=%s)", session_id, use_h264)
 
                         # --- Binary WS frame helper ---
@@ -1332,7 +1333,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 sessions["_desktop_" + session_id] = {"task": capture_task, "config": desktop_config}
 
                         if not use_h264 and capture_screen:
-                            # --- Legacy JPEG mode (fallback) ---
+                            # --- JPEG binary mode (fallback) ---
                             try:
                                 _frame, w, h = capture_screen(quality=10)
                                 log.info("Screen probe: %dx%d", w, h)
@@ -1340,14 +1341,16 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 log.error("Screen probe failed: %s", e)
                                 _frame, w, h = None, 0, 0
                             if w > 0:
-                                await ws.send(json.dumps({
+                                # Send desktop_info as binary config frame
+                                info_json = json.dumps({
                                     "type": "desktop_info",
                                     "session_id": session_id,
                                     "width": w,
                                     "height": h,
                                     "monitors": 1,
                                     "encoding": "jpeg",
-                                }))
+                                }).encode('utf-8')
+                                await send_binary_frame(0x05, info_json)
 
                             desktop_config = {"quality": 55, "fps": 10, "running": True}
 
@@ -1358,12 +1361,8 @@ async def ws_agent_connect(server: str, agent_id: str):
                                     try:
                                         frame, w, h = capture_screen(quality=desktop_config["quality"])
                                         if frame and w > 0:
-                                            b64 = base64.b64encode(frame).decode('ascii')
-                                            await ws.send(json.dumps({
-                                                "type": "desktop_frame",
-                                                "session_id": session_id,
-                                                "frame": b64,
-                                            }))
+                                            # Send as binary keyframe (0x01) — it's a full JPEG
+                                            await send_binary_frame(0x01, frame)
                                             consecutive_errors = 0
                                         else:
                                             consecutive_errors += 1
