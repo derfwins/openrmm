@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.7.2"
+AGENT_VERSION = "0.7.3"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -270,7 +270,7 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
 # --- Screen Capture & Input Simulation ---
 
 def _init_screen_capture_windows():
-    """Initialize Windows screen capture via DWM/BitBlt using ctypes."""
+    """Initialize Windows screen capture. Tries multiple methods."""
     import ctypes
     import ctypes.wintypes
 
@@ -304,91 +304,193 @@ def _init_screen_capture_windows():
             ("bmiColors", ctypes.c_uint32 * 3),
         ]
 
-    def capture_screen(quality=55):
-        """Capture screen and return JPEG bytes."""
-        # Try PIL ImageGrab first (may fail when running as SYSTEM in Session 0)
+    # Determine what capture method works
+    capture_method = "unknown"
+
+    # Test 1: Try connecting to the interactive desktop as SYSTEM
+    # This works if the service has been granted access to winsta0
+    test_winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)  # WINSTA_ALL_ACCESS
+    if test_winsta:
+        old_winsta = user32.GetProcessWindowStation()
+        if user32.SetProcessWindowStation(test_winsta):
+            test_desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)  # DESKTOP_ALL_ACCESS
+            if test_desk:
+                old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+                if user32.SetThreadDesktop(test_desk):
+                    capture_method = "bitblt_interactive"
+                    user32.SetThreadDesktop(old_desktop)
+                user32.CloseDesktop(test_desk)
+            user32.SetProcessWindowStation(old_winsta)
+        user32.CloseWindowStation(test_winsta)
+
+    # Test 2: Check if ImageGrab works (running as user)
+    if capture_method == "unknown":
         try:
             from PIL import ImageGrab
-            img = ImageGrab.grab()
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=quality)
-            return buf.getvalue(), img.width, img.height
-        except Exception as e:
-            log.debug("PIL ImageGrab failed: %s, trying ctypes BitBlt", e)
+            _test = ImageGrab.grab()
+            _test.close()
+            capture_method = "pil_imagegrab"
+        except Exception:
+            pass
 
-        # Fallback: ctypes BitBlt capture
-        # When running as SYSTEM, we need to attach to the interactive desktop
-        try:
-            # Try to switch to the interactive desktop (winsta0\default)
-            hwinsta = user32.GetProcessWindowStation()
-            hdesk = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+    # Test 3: Try BitBlt on current desktop (works if running as user)
+    if capture_method == "unknown":
+        hdc = user32.GetDC(0)
+        if hdc:
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+            if width > 0 and height > 0:
+                hdc_mem = gdi32.CreateCompatibleDC(hdc)
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+                gdi32.SelectObject(hdc_mem, hbitmap)
+                if gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY):
+                    capture_method = "bitblt_current"
+                gdi32.DeleteObject(hbitmap)
+                gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc)
 
-            # Open the interactive window station and desktop
-            winsta = user32.OpenWindowStationW("WinSta0", False, 0x0001)  # WINSTA_READSCREEN
-            if winsta:
-                user32.SetProcessWindowStation(winsta)
-                desktop = user32.OpenDesktopW("Default", 0, False, 0x0001)  # DESKTOP_READSCREEN
-                if desktop:
-                    user32.SetThreadDesktop(desktop)
+    # Test 4: Use screen capture via PrintWindow (works for some services)
+    if capture_method == "unknown":
+        capture_method = "printwindow"
 
-            width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
-            height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
-            if width == 0 or height == 0:
-                log.error("GetSystemMetrics returned 0x0 - no screen?")
-                return None, 0, 0
+    log.info("Screen capture method: %s", capture_method)
 
-            hdesktop = user32.GetDesktopWindow()
-            hdc = user32.GetDC(hdesktop)
-            hdc_mem = gdi32.CreateCompatibleDC(hdc)
-            hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
-            gdi32.SelectObject(hdc_mem, hbitmap)
-            result_blt = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
-            if not result_blt:
-                log.error("BitBlt failed")
+    def capture_screen(quality=55):
+        """Capture screen and return JPEG bytes."""
+        # Method 1: PIL ImageGrab (runs as interactive user)
+        if capture_method == "pil_imagegrab":
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grab()
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=quality)
+                return buf.getvalue(), img.width, img.height
+            except Exception as e:
+                log.debug("PIL ImageGrab failed: %s", e)
+
+        # Method 2: BitBlt on interactive desktop (switch desktop first)
+        if capture_method in ("bitblt_interactive", "bitblt_current"):
+            old_winsta = None
+            old_desktop = None
+            try:
+                if capture_method == "bitblt_interactive":
+                    # Switch to interactive desktop
+                    old_winsta = user32.GetProcessWindowStation()
+                    winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
+                    if winsta:
+                        user32.SetProcessWindowStation(winsta)
+                        desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
+                        if desktop:
+                            old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+                            user32.SetThreadDesktop(desktop)
+
+                width = user32.GetSystemMetrics(0)
+                height = user32.GetSystemMetrics(1)
+                if width == 0 or height == 0:
+                    return None, 0, 0
+
+                hdesktop = user32.GetDesktopWindow()
+                hdc = user32.GetDC(hdesktop)
+                if not hdc:
+                    return None, 0, 0
+                hdc_mem = gdi32.CreateCompatibleDC(hdc)
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+                gdi32.SelectObject(hdc_mem, hbitmap)
+                result_blt = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
+                if not result_blt:
+                    gdi32.DeleteObject(hbitmap)
+                    gdi32.DeleteDC(hdc_mem)
+                    user32.ReleaseDC(hdesktop, hdc)
+                    return None, 0, 0
+
+                bmi = BITMAPINFO()
+                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.bmiHeader.biWidth = width
+                bmi.bmiHeader.biHeight = -height
+                bmi.bmiHeader.biPlanes = 1
+                bmi.bmiHeader.biBitCount = 32
+                bmi.bmiHeader.biCompression = BI_RGB
+
+                buf_size = width * height * 4
+                pixel_data = ctypes.create_string_buffer(buf_size)
+                gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
+
+                result = None
+                try:
+                    from PIL import Image as PILImage
+                    img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
+                    out = io.BytesIO()
+                    img.save(out, format='JPEG', quality=quality)
+                    result = out.getvalue()
+                except ImportError:
+                    pass
+
                 gdi32.DeleteObject(hbitmap)
                 gdi32.DeleteDC(hdc_mem)
                 user32.ReleaseDC(hdesktop, hdc)
+                return result, width, height
+            except Exception as e:
+                log.error("BitBlt capture failed: %s", e)
+                return None, 0, 0
+            finally:
+                # Restore original desktop
+                if old_desktop:
+                    user32.SetThreadDesktop(old_desktop)
+                if old_winsta:
+                    user32.SetProcessWindowStation(old_winsta)
+
+        # Method 3: PrintWindow - capture a specific window
+        if capture_method == "printwindow":
+            try:
+                # Find the shell window (desktop)
+                hwnd = user32.FindWindowW(None, "Program Manager")
+                if not hwnd:
+                    return None, 0, 0
+                rect = ctypes.wintypes.RECT()
+                user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                width = rect.right - rect.left
+                height = rect.bottom - rect.top
+                if width <= 0 or height <= 0:
+                    return None, 0, 0
+
+                hdc = user32.GetDC(0)
+                hdc_mem = gdi32.CreateCompatibleDC(hdc)
+                hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+                gdi32.SelectObject(hdc_mem, hbitmap)
+                # PrintWindow captures the window even from a different session
+                user32.PrintWindow(hwnd, hdc_mem, 2)  # PW_RENDERFULLCONTENT
+
+                bmi = BITMAPINFO()
+                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                bmi.bmiHeader.biWidth = width
+                bmi.bmiHeader.biHeight = -height
+                bmi.bmiHeader.biPlanes = 1
+                bmi.bmiHeader.biBitCount = 32
+                bmi.bmiHeader.biCompression = BI_RGB
+
+                buf_size = width * height * 4
+                pixel_data = ctypes.create_string_buffer(buf_size)
+                gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
+
+                result = None
+                try:
+                    from PIL import Image as PILImage
+                    img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
+                    out = io.BytesIO()
+                    img.save(out, format='JPEG', quality=quality)
+                    result = out.getvalue()
+                except ImportError:
+                    pass
+
+                gdi32.DeleteObject(hbitmap)
+                gdi32.DeleteDC(hdc_mem)
+                user32.ReleaseDC(0, hdc)
+                return result, width, height
+            except Exception as e:
+                log.error("PrintWindow capture failed: %s", e)
                 return None, 0, 0
 
-            # Get bitmap bits
-            bmi = BITMAPINFO()
-            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bmi.bmiHeader.biWidth = width
-            bmi.bmiHeader.biHeight = -height  # top-down
-            bmi.bmiHeader.biPlanes = 1
-            bmi.bmiHeader.biBitCount = 32
-            bmi.bmiHeader.biCompression = BI_RGB
-
-            buf_size = width * height * 4
-            pixel_data = ctypes.create_string_buffer(buf_size)
-            gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
-
-            # Convert BGRA to RGB for PIL
-            try:
-                from PIL import Image as PILImage
-                img = PILImage.frombytes('RGB', (width, height), pixel_data.raw, 'raw', 'BGRX')
-                out = io.BytesIO()
-                img.save(out, format='JPEG', quality=quality)
-                result = out.getvalue()
-            except ImportError:
-                # No PIL available - can't encode JPEG
-                log.error("No PIL available for JPEG encoding")
-                result = None
-
-            gdi32.DeleteObject(hbitmap)
-            gdi32.DeleteDC(hdc_mem)
-            user32.ReleaseDC(hdesktop, hdc)
-
-            # Restore original desktop
-            if hdesk:
-                user32.SetThreadDesktop(hdesk)
-            if hwinsta:
-                user32.SetProcessWindowStation(hwinsta)
-
-            return result, width, height
-        except Exception as e2:
-            log.error("ctypes BitBlt capture failed: %s", e2)
-            return None, 0, 0
+        return None, 0, 0
 
     return capture_screen
 
