@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.5.0"
+AGENT_VERSION = "0.5.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -345,11 +345,13 @@ async def ws_agent_connect(server: str, agent_id: str):
                         input_q: queue.Queue = queue.Queue()
                         output_q: queue.Queue = queue.Queue()
 
-                        # Determine shell
+                        # Determine shell - use powershell on Windows for better interactive support
                         if platform.system() == "Windows":
-                            cmd = ["cmd.exe"]
+                            cmd = ["powershell.exe", "-NoLogo", "-NoExit", "-Command", "-"]
+                            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
                         else:
                             cmd = ["/bin/bash", "-i"]
+                            creationflags = 0
 
                         proc = subprocess.Popen(
                             cmd,
@@ -357,6 +359,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
                             bufsize=0,
+                            creationflags=creationflags,
                         )
 
                         sessions[session_id] = {
