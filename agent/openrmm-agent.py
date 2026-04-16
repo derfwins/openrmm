@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.6"
+AGENT_VERSION = "0.8.7"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -1376,9 +1376,9 @@ async def ws_agent_connect(server: str, agent_id: str):
                             # --- JPEG binary mode (fallback) ---
                             try:
                                 _frame, w, h = capture_screen(quality=10)
-                                log.info("Screen probe: %dx%d", w, h)
+                                log.info("Screen probe: %dx%d, frame=%s", w, h, "yes" if _frame else "none")
                             except Exception as e:
-                                log.error("Screen probe failed: %s", e)
+                                log.error("Screen probe failed: %s", e, exc_info=True)
                                 _frame, w, h = None, 0, 0
                             if w > 0:
                                 # Send desktop_info as binary config frame
