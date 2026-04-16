@@ -95,8 +95,11 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                     if session and session.get("browser_ws"):
                         try:
                             await session["browser_ws"].send_json(data)
-                        except Exception:
-                            pass
+                            logger.warning(f"RELAY: output to browser, session={session_id}, len={len(data.get('data',''))}")
+                        except Exception as e:
+                            logger.error(f"RELAY FAIL: {e}")
+                    else:
+                        logger.warning(f"RELAY MISS: no browser for session {session_id}, sessions={list(terminal_sessions.keys())}")
 
                 elif msg_type == "exit":
                     session_id = data.get("session_id")
