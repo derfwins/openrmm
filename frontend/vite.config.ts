@@ -57,6 +57,11 @@ export default defineConfig({
         target: 'http://openrmm-backend:8000',
         changeOrigin: true,
       },
+      '/ws': {
+        target: 'ws://openrmm-backend:8000',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
 })
