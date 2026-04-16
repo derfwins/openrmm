@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLocation, Link } from 'react-router-dom'
+import { useLocation, Link, useNavigate } from 'react-router-dom'
 import { useClient } from '../contexts/ClientContext'
 
 function ClientSelector({ collapsed }: { collapsed: boolean }) {
@@ -60,36 +60,33 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
+  const { selectedClient, selectClient } = useClient()
 
-  const sections = [
+  // When a client is selected, show client-scoped navigation
+  const clientNav = [
     {
+      label: selectedClient?.name || 'Client',
       items: [
         { icon: '📊', label: 'Dashboard', path: '/dashboard' },
         { icon: '💻', label: 'Devices', path: '/devices' },
-        { icon: '🏢', label: 'Clients', path: '/clients' },
-        { icon: '📥', label: 'Install Agent', path: '/install' },
-      ]
-    },
-    {
-      label: 'Management',
-      items: [
-        { icon: '🔔', label: 'Alerts', path: '/alerts' },
         { icon: '📡', label: 'Monitoring', path: '/monitoring' },
+        { icon: '🔔', label: 'Alerts', path: '/alerts' },
         { icon: '📜', label: 'Scripts', path: '/scripts' },
         { icon: '⚡', label: 'Automation', path: '/automation' },
         { icon: '📦', label: 'Software', path: '/software' },
         { icon: '🔧', label: 'Patches', path: '/patches' },
+        { icon: '📥', label: 'Install Agent', path: '/install' },
       ]
     },
-    {
-      label: 'Tools',
-      items: [
-        { icon: '🤖', label: 'AI Copilot', path: '/ai' },
-      ]
-    },
+  ]
+
+  // Global nav (always shown)
+  const globalNav = [
     {
       label: 'System',
       items: [
+        { icon: '🤖', label: 'AI Copilot', path: '/ai' },
         { icon: '📈', label: 'Reports', path: '/reports' },
         { icon: '📋', label: 'Audit Log', path: '/audit' },
         { icon: '👥', label: 'Users', path: '/users' },
@@ -97,6 +94,18 @@ const Sidebar = () => {
       ]
     },
   ]
+
+  // When no client selected, show clients list + global
+  const noClientNav = [
+    {
+      items: [
+        { icon: '🏢', label: 'Clients', path: '/clients' },
+      ]
+    },
+    ...globalNav,
+  ]
+
+  const sections = selectedClient ? [...clientNav, ...globalNav] : noClientNav
 
   return (
     <aside className={`bg-gray-950 shrink-0 flex flex-col transition-all duration-200 ${collapsed ? 'w-[68px]' : 'w-[220px]'} border-r border-gray-800`}>
