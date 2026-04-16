@@ -50,6 +50,7 @@ export interface MonitoringSensor {
   last_value_text: string | null
   status: SensorStatus
   tags: string[] | null
+  snmp_oid?: string
   created_at: string
   probe?: MonitoringProbe
 }
