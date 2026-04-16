@@ -458,10 +458,12 @@ def _init_screen_capture_windows():
             packets = state['stream'].encode(frame)
 
             state['frame_count'] += 1
-            is_keyframe = (state['frame_count'] % state['gop_size'] == 1)
 
             result = b''
+            is_keyframe = False
             for pkt in packets:
+                if pkt.is_keyframe:
+                    is_keyframe = True
                 result += bytes(pkt)
 
             if not result:

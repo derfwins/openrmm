@@ -174,7 +174,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       })
 
       decoder.configure({
-        codec: 'avc1.42E01E', // H.264 Baseline Profile
+        codec: 'avc1.42E01E', // H.264 Constrained Baseline
         optimizeForLatency: true,
       })
 
