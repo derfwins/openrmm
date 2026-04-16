@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { getMonitoringDashboard } from '../services/monitoringService'
 import type { MonitoringDashboard, SensorStatus } from '../types/monitoring'
 import { STATUS_COLORS } from '../types/monitoring'
+import AddSensorModal from './AddSensorModal'
 
 export default function MonitoringDashboard() {
   const [dash, setDash] = useState<MonitoringDashboard | null>(null)
@@ -42,6 +43,7 @@ export default function MonitoringDashboard() {
           <div className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-300">
             Uptime <span className="text-emerald-400 font-medium">{okPercent}%</span>
           </div>
+          <AddSensorModal onCreated={load} />
         </div>
       </div>
 

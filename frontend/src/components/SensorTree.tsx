@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { getSensors, pauseSensor, resumeSensor, deleteSensor } from '../services/monitoringService'
 import type { MonitoringSensor, SensorType, SensorStatus } from '../types/monitoring'
 import { SENSOR_TYPE_LABELS, SENSOR_TYPE_ICONS, STATUS_COLORS } from '../types/monitoring'
+import AddSensorModal from './AddSensorModal'
 
 export default function SensorTree({ onSensorSelect }: { onSensorSelect: (s: MonitoringSensor) => void }) {
   const [sensors, setSensors] = useState<MonitoringSensor[]>([])
@@ -46,6 +47,7 @@ export default function SensorTree({ onSensorSelect }: { onSensorSelect: (s: Mon
     <div className="flex flex-col h-full bg-gray-950/50 border-r border-white/[0.06]">
       {/* Search & filter */}
       <div className="p-3 space-y-2 border-b border-white/[0.06]">
+        <AddSensorModal onCreated={load} />
         <input
           type="text"
           placeholder="Search sensors..."
