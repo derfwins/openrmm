@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { useState, useEffect, Component } from 'react'
 import type { ReactNode } from 'react'
 import { API_BASE_URL } from './config'
@@ -13,6 +13,7 @@ import AutomationBuilder from './components/AutomationBuilder'
 import Reports from './components/Reports'
 import SoftwareManager from './components/SoftwareManager'
 import Settings from './components/Settings'
+import RemoteDesktop from './components/RemoteDesktop'
 import AICopilot from './components/AICopilot'
 import UserManagement from './components/UserManagement'
 import InstallAgent from './components/InstallAgent'
@@ -137,6 +138,7 @@ function App() {
         <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
         <Route path="/devices" element={<AppLayout><DeviceList /></AppLayout>} />
         <Route path="/device/:id" element={<AppLayout><DeviceDetail /></AppLayout>} />
+        <Route path="/desktop/:id" element={<DesktopPage />} />
         <Route path="/scripts" element={<AppLayout><ScriptLibrary /></AppLayout>} />
         <Route path="/alerts" element={<AppLayout><AlertPanel /></AppLayout>} />
         <Route path="/software" element={<AppLayout><SoftwareManager /></AppLayout>} />
@@ -156,6 +158,19 @@ function App() {
       </WebSocketProvider>
     </BrowserRouter>
   )
+}
+
+// Fullscreen desktop page
+function DesktopPage() {
+  const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const token = searchParams.get('token') || ''
+
+  if (!id || !token) {
+    return <div className="flex items-center justify-center h-screen bg-black text-white">Missing agent ID or token</div>
+  }
+
+  return <RemoteDesktop agentId={id} token={token} />
 }
 
 export default App

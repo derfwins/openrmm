@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
-import RemoteDesktop from './RemoteDesktop'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -13,7 +12,6 @@ const DeviceDetail = () => {
   const [commandOutput, setCommandOutput] = useState<string | null>(null)
   const [commandRunning, setCommandRunning] = useState(false)
   const [showTerminal, setShowTerminal] = useState(false)
-  const [showDesktop, setShowDesktop] = useState(false)
   const [token] = useState(() => localStorage.getItem('token') || '')
 
   useEffect(() => {
@@ -129,10 +127,13 @@ const DeviceDetail = () => {
             </button>
             {agent.status === 'online' && (
               <button
-                onClick={() => setShowDesktop(!showDesktop)}
-                className={`px-4 py-2 text-sm rounded-lg transition-colors ${showDesktop ? 'bg-purple-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+                onClick={() => {
+                  const url = `/desktop/${id}?token=${token}`
+                  window.open(url, '_blank', 'width=1280,height=800')
+                }}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700"
               >
-                🖥️ {showDesktop ? 'Hide Desktop' : 'Remote Desktop'}
+                🖥️ Remote Desktop
               </button>
             )}
           </div>
@@ -140,16 +141,9 @@ const DeviceDetail = () => {
       </div>
 
       {/* Terminal Panel */}
-      {showTerminal && !showDesktop && (
+      {showTerminal && (
         <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden" style={{ height: '400px' }}>
           <Terminal agentId={id || ''} token={token} />
-        </div>
-      )}
-
-      {/* Remote Desktop Panel */}
-      {showDesktop && (
-        <div className="bg-black rounded-xl border border-gray-700 overflow-hidden" style={{ height: '500px' }}>
-          <RemoteDesktop agentId={id || ''} token={token} onClose={() => setShowDesktop(false)} />
         </div>
       )}
 

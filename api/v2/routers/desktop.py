@@ -159,9 +159,11 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
                         # Prepend session_id header so agent knows which session
                         sid_bytes = session_id.encode("utf-8")
                         sid_header = struct.pack("!I", len(sid_bytes)) + sid_bytes
-                        await agent_ws.send(sid_header + raw)
+                        msg = sid_header + raw
+                        logger.warning(f"Desktop WS: relaying binary to agent, total_len={len(msg)}, raw_type={type(raw).__name__}")
+                        await agent_ws.send_bytes(msg)
                     except Exception as e:
-                        logger.warning(f"Desktop WS: failed to relay binary to agent: {e}")
+                        logger.error(f"Desktop WS: failed to relay binary to agent: {e}", exc_info=True)
                         break
                 else:
                     await websocket.send_json({"type": "error", "message": "Agent disconnected"})

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 interface Props {
   agentId: string
   token: string
-  onClose: () => void
+  onClose?: () => void
 }
 
 type Quality = 'low' | 'medium' | 'high'
