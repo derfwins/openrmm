@@ -60,23 +60,24 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                         logger.warning(f"Agent {agent_id}: binary frame too short ({len(raw)} bytes)")
                         continue
 
-                    # Parse the session_id prefix that desktop.py prepended
-                    # Format: 4-byte sid_length + sid_bytes + 1-byte frame_type + 4-byte payload_length + payload
-                    import struct as _struct
-                    if len(raw) < 4:
-                        continue
-                    sid_len = _struct.unpack("!I", raw[:4])[0]
-                    if len(raw) < 4 + sid_len + 5:
-                        logger.warning(f"Agent {agent_id}: binary frame truncated")
-                        continue
-                    sid = raw[4:4+sid_len].decode("utf-8")
-                    frame_data = raw[4+sid_len:]  # type + len + payload
-                    ftype = frame_data[0] if frame_data else 0
+                    # Agent sends: 1-byte type + 4-byte length + payload
+                    # No session_id prefix — relay to all desktop sessions for this agent
+                    ftype = raw[0] if raw else 0
                     from v2.routers.desktop import _frame_type_name
-                    logger.warning(f"Agent {agent_id}: binary frame type={_frame_type_name(ftype)} session={sid} len={len(frame_data)}")
+                    logger.warning(f"Agent {agent_id}: binary frame type={_frame_type_name(ftype)} len={len(raw)}")
 
-                    # Relay to browser as-is (the 5-byte header frame, no session_id prefix)
-                    await relay_desktop_frame(agent_id, sid, frame_data)
+                    # Relay to all browser desktop sessions for this agent
+                    from v2.routers.ws_state import desktop_sessions
+                    sessions_to_remove = []
+                    for sid, sess in desktop_sessions.items():
+                        if sess.get("agent_id") == agent_id and sess.get("browser_ws"):
+                            try:
+                                await sess["browser_ws"].send_bytes(raw)
+                            except Exception as e:
+                                logger.warning(f"Failed to relay desktop frame to session {sid}: {e}")
+                                sessions_to_remove.append(sid)
+                    for sid in sessions_to_remove:
+                        desktop_sessions.pop(sid, None)
                     continue
                 else:
                     continue
