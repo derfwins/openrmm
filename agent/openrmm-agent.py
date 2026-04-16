@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.1"
+AGENT_VERSION = "0.9.2"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -529,27 +529,210 @@ def _init_screen_capture_windows():
                     pass
         _h264_state = {}
 
-    # --- JPEG capture ---
-    def capture_screen(quality=55):
-        """Capture screen and return JPEG bytes. Uses mss (works in user session)."""
+    # --- Screen capture helper (runs in user session) ---
+    _capture_helper_running = False
+    _capture_pipe_name = "OpenRMM_Capture_" + str(uuid.uuid4())[:8]
+
+    def _start_capture_helper():
+        """Spawn a capture helper process in the user's interactive session."""
+        nonlocal _capture_helper_running
+        if _capture_helper_running:
+            return True
+
         try:
-            sct = mss.mss()
-            monitor = sct.monitors[0] if sct.monitors else None
-            if not monitor:
-                return None, 0, 0
-            img = sct.grab(monitor)
-            import numpy as _np
-            arr = _np.frombuffer(img.raw, dtype=_np.uint8).reshape((img.height, img.width, 4))
-            from PIL import Image as PILImage
-            # mss returns BGRA - convert to RGB for PIL
-            rgb_arr = arr[:, :, [2, 1, 0]]  # BGR -> RGB
-            pil_img = PILImage.fromarray(rgb_arr, 'RGB')
-            out = io.BytesIO()
-            pil_img.save(out, format='JPEG', quality=quality)
-            return out.getvalue(), img.width, img.height
+            advapi32 = ctypes.windll.advapi32
+            wtsapi32 = ctypes.windll.wtsapi32
+            userenv = ctypes.windll.userenv
+
+            # Enable required privileges
+            _enable_privilege("SeIncreaseQuotaPrivilege")
+            _enable_privilege("SeAssignPrimaryTokenPrivilege")
+
+            # Get the active console session ID
+            session_id = kernel32.WTSGetActiveConsoleSessionId()
+            if session_id == 0xFFFFFFFF:
+                log.error("No active console session")
+                return False
+
+            # Get user token from the session
+            user_token = ctypes.c_void_p()
+            if not wtsapi32.WTSQueryUserToken(session_id, ctypes.byref(user_token)):
+                log.error("WTSQueryUserToken failed: %d", ctypes.get_last_error())
+                return False
+
+            try:
+                # Write the helper script
+                import tempfile
+                helper_path = os.path.join(tempfile.gettempdir(), 'openrmm_capture_helper.py')
+                pipe_name = _capture_pipe_name
+                with open(helper_path, 'w') as f:
+                    f.write(CAPTURE_HELPER_SCRIPT.format(pipe_name=pipe_name))
+
+                # Launch helper as user
+                cmd = f'pythonw.exe "{helper_path}"'
+                cmd_buf = ctypes.create_unicode_buffer(cmd)
+
+                # Set up STARTUPINFO
+                si = _create_startup_info()
+                pi = ctypes.create_string_buffer(16)  # PROCESS_INFORMATION
+
+                # Create the environment block for the user
+                env_block = ctypes.c_void_p()
+                userenv.CreateEnvironmentBlock(ctypes.byref(env_block), user_token, False)
+
+                success = advapi32.CreateProcessAsUserW(
+                    user_token, None, cmd_buf, None, None,
+                    False,  # don't inherit handles
+                    0x04000000,  # CREATE_NO_WINDOW
+                    env_block,  # use user's environment
+                    None, si, pi
+                )
+
+                if env_block.value:
+                    userenv.DestroyEnvironmentBlock(env_block)
+
+                if not success:
+                    log.error("CreateProcessAsUserW failed: %d", ctypes.get_last_error())
+                    return False
+
+                hproc = struct.unpack_from('I', pi, 0)[0]
+                hthread = struct.unpack_from('I', pi, 4)[0]
+                kernel32.CloseHandle(hthread)
+                kernel32.CloseHandle(hproc)
+
+                # Wait briefly for the helper to start its pipe server
+                import time
+                time.sleep(1.0)
+                _capture_helper_running = True
+                log.info("Capture helper started in session %d (pipe=%s)", session_id, pipe_name)
+                return True
+
+            finally:
+                kernel32.CloseHandle(user_token)
         except Exception as e:
-            log.error("mss capture failed: %s", e)
+            log.error("Failed to start capture helper: %s", e, exc_info=True)
+            return False
+
+    def _create_startup_info():
+        """Create STARTUPINFOW structure for CreateProcessAsUserW."""
+        # STARTUPINFOW is 104 bytes on x64
+        si = ctypes.create_string_buffer(104)
+        struct.pack_into('I', si, 0, 104)  # cb = sizeof(STARTUPINFOW)
+        # wShowWindow = SW_HIDE (offset 48, 2 bytes)
+        struct.pack_into('H', si, 48, 0)
+        # dwFlags = STARTF_USESHOWWINDOW (offset 44, 4 bytes)
+        struct.pack_into('I', si, 44, 1)
+        return si
+
+    def capture_screen(quality=55):
+        """Capture screen via helper process in user session. Returns (jpeg_bytes, w, h)."""
+        if not _capture_helper_running:
+            if not _start_capture_helper():
+                return None, 0, 0
+
+        try:
+            import win32pipe
+            import win32file
+            pipe_path = f'\\\\.\\pipe\\{_capture_pipe_name}'
+            handle = win32file.CreateFile(
+                pipe_path,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None
+            )
+            # Send capture request: "CAPTURE quality\n"
+            win32file.WriteFile(handle, f'CAPTURE {quality}\n'.encode())
+            # Read response: 4-byte width + 4-byte height + JPEG data
+            result = b''
+            while True:
+                _, data = win32file.ReadFile(handle, 65536)
+                if not data:
+                    break
+                result += data
+                if len(data) < 65536:
+                    break
+            win32file.CloseHandle(handle)
+
+            if len(result) < 8:
+                return None, 0, 0
+            w, h = struct.unpack('II', result[:8])
+            jpeg = result[8:]
+            return jpeg, w, h
+        except Exception as e:
+            log.error("capture_screen pipe error: %s", e)
             return None, 0, 0
+
+    # The helper script that runs in the user's interactive session
+    CAPTURE_HELPER_SCRIPT = '''
+import ctypes
+import struct
+import io
+import sys
+import time
+import win32pipe
+import win32file
+import win32event
+
+PIPE_NAME = "\\\\\\\\.\\\\pipe\\\\{pipe_name}"
+
+def capture_screen(quality=55):
+    """Capture screen using mss and return as JPEG."""
+    try:
+        import mss
+        import numpy as np
+        from PIL import Image
+        sct = mss.mss()
+        monitor = sct.monitors[0] if sct.monitors else None
+        if not monitor:
+            return None, 0, 0
+        img = sct.grab(monitor)
+        arr = np.frombuffer(img.raw, dtype=np.uint8).reshape((img.height, img.width, 4))
+        rgb_arr = arr[:, :, [2, 1, 0]]
+        pil_img = Image.fromarray(rgb_arr, 'RGB')
+        out = io.BytesIO()
+        pil_img.save(out, format='JPEG', quality=quality)
+        return out.getvalue(), img.width, img.height
+    except Exception as e:
+        sys.stderr.write(f"capture error: {{e}}\\n")
+        return None, 0, 0
+
+def main():
+    # Create named pipe server
+    pipe = win32pipe.CreateNamedPipe(
+        PIPE_NAME,
+        win32pipe.PIPE_ACCESS_DUPLEX,
+        win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_WAIT,
+        1,  # max instances
+        65536,  # out buffer
+        65536,  # in buffer
+        5000,  # timeout ms
+        None
+    )
+
+    while True:
+        try:
+            win32pipe.ConnectNamedPipe(pipe, None)
+
+            # Read request
+            _, data = win32file.ReadFile(pipe, 256)
+            request = data.decode('utf-8', errors='ignore').strip()
+
+            if request.startswith('CAPTURE'):
+                parts = request.split()
+                quality = int(parts[1]) if len(parts) > 1 else 55
+                jpeg, w, h = capture_screen(quality)
+                if jpeg and w > 0:
+                    header = struct.pack('II', w, h)
+                    win32file.WriteFile(pipe, header + jpeg)
+                else:
+                    win32file.WriteFile(pipe, struct.pack('II', 0, 0))
+
+            win32pipe.DisconnectNamedPipe(pipe)
+        except Exception:
+            time.sleep(0.1)
+
+main()
+'''
+
     return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
 
 
@@ -1402,6 +1585,7 @@ def auto_install_deps():
     }
     if platform.system() == "Windows":
         required['winpty'] = 'pywinpty>=2.0.0'
+        required['win32api'] = 'pywin32>=306'
 
     missing = []
     for module, package in required.items():
