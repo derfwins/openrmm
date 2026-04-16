@@ -5,6 +5,7 @@ import { useClient } from '../contexts/ClientContext'
 function ClientSelector({ collapsed }: { collapsed: boolean }) {
   const { clients, selectedClient, selectClient } = useClient()
   const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
 
   if (collapsed) {
     return (
@@ -20,10 +21,14 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
     )
   }
 
+  const filtered = search
+    ? clients.filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
+    : clients
+
   return (
     <div className="px-3 py-3 border-b border-gray-800/50 relative">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => { setOpen(!open); setSearch('') }}
         className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-sm"
       >
         <span className="text-gray-300 truncate">
@@ -34,23 +39,40 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
         </svg>
       </button>
       {open && (
-        <div className="absolute left-3 right-3 top-full mt-1 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
-          <button
-            onClick={() => { selectClient(null); setOpen(false) }}
-            className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${!selectedClient ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
-          >
-            All Clients
-          </button>
-          {clients.map(c => (
+        <div className="absolute left-3 right-3 top-full mt-1 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 max-h-72 flex flex-col">
+          {/* Search */}
+          <div className="p-2 border-b border-white/[0.06]">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search clients..."
+              className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+              autoFocus
+            />
+          </div>
+          {/* List */}
+          <div className="overflow-y-auto flex-1">
             <button
-              key={c.id}
-              onClick={() => { selectClient(c); setOpen(false) }}
-              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${selectedClient?.id === c.id ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
+              onClick={() => { selectClient(null); setOpen(false); setSearch('') }}
+              className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${!selectedClient ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
             >
-              {c.name}
-              <span className="text-xs text-gray-600 ml-1">({c.sites?.length || 0})</span>
+              All Clients
             </button>
-          ))}
+            {filtered.map(c => (
+              <button
+                key={c.id}
+                onClick={() => { selectClient(c); setOpen(false); setSearch('') }}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 transition-colors ${selectedClient?.id === c.id ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'}`}
+              >
+                {c.name}
+                <span className="text-xs text-gray-600 ml-1">({c.sites?.length || 0})</span>
+              </button>
+            ))}
+            {search && filtered.length === 0 && (
+              <div className="px-3 py-4 text-xs text-gray-600 text-center">No clients match &ldquo;{search}&rdquo;</div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -60,8 +82,7 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)
   const location = useLocation()
-  const navigate = useNavigate()
-  const { selectedClient, selectClient } = useClient()
+  const { selectedClient } = useClient()
 
   // When a client is selected, show client-scoped navigation
   const clientNav = [
