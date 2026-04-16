@@ -130,7 +130,7 @@ For production, use Cloudflare tunnels instead of certbot:
 
 - `rmm.derfwins.com` → Backend API (:8000)
 - `rmmapp.derfwins.com` → Frontend (:5173)  
-- `mesh.derfwins.com` → Mesh Central (:8080)
+- `rmmapp.derfwins.com` → OpenRMM Dashboard (Cloudflare → nginx)
 
 The frontend auto-detects the API URL based on hostname.
 

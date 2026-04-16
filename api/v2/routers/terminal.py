@@ -8,21 +8,14 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 
 from v2.config import settings
-from v2.routers.desktop import desktop_sessions, relay_desktop_frame, relay_desktop_json
+from v2.routers.ws_state import agent_connections, terminal_sessions, desktop_sessions
+from v2.routers.desktop import relay_desktop_frame, relay_desktop_json
 from v2.database import AsyncSessionLocal
 from v2.models.agent import Agent
 from v2.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# In-memory session storage
-# agent_connections: agent_id -> WebSocket (persistent agent connection)
-agent_connections: dict[str, WebSocket] = {}
-# terminal_sessions: session_id -> { "browser_ws": WebSocket, "agent_id": str }
-terminal_sessions: dict[str, dict] = {}
-# pending_sessions: session_id -> asyncio.Event (browser waits for agent to join)
-pending_sessions: dict[str, asyncio.Event] = {}
 
 
 async def verify_token(token: str) -> User | None:

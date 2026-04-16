@@ -11,13 +11,10 @@ from v2.config import settings
 from v2.database import AsyncSessionLocal
 from v2.models.agent import Agent
 from v2.models.user import User
-from v2.routers.terminal import agent_connections, verify_token, lookup_agent_id
+from v2.routers.ws_state import agent_connections, desktop_sessions
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Desktop sessions: session_id -> { "browser_ws": WebSocket, "agent_id": str }
-desktop_sessions: dict[str, dict] = {}
 
 
 @router.websocket("/ws/desktop/{agent_id}/")

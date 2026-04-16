@@ -6,7 +6,7 @@ interface Role {
   name: string
   is_superuser: boolean
   can_list_agents: boolean
-  can_use_mesh: boolean
+  can_use_remote_desktop: boolean
   can_uninstall_agents: boolean
   can_update_agents: boolean
   can_edit_agent: boolean
@@ -78,7 +78,7 @@ const PERMISSION_GROUPS = [
       { key: 'can_uninstall_agents', label: 'Uninstall Agents' },
       { key: 'can_update_agents', label: 'Update Agents' },
       { key: 'can_recover_agents', label: 'Recover Agents' },
-      { key: 'can_use_mesh', label: 'Use Mesh (Remote Desktop)' },
+      { key: 'can_use_remote_desktop', label: 'Use Remote Desktop' },
       { key: 'can_manage_procs', label: 'Manage Processes' },
       { key: 'can_send_cmd', label: 'Send Commands' },
       { key: 'can_run_scripts', label: 'Run Scripts' },

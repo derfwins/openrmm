@@ -11,7 +11,7 @@ export interface AgentInfo {
   first_seen: string
   monitoring_type: 'server' | 'workstation'
   description: string
-  mesh_node_id: string
+  remote_desktop_id: string
   is_maintenance: boolean
   cpu_model: string
   cpu_cores: number
