@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.7.1"
+AGENT_VERSION = "0.7.2"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -273,16 +273,16 @@ def _init_screen_capture_windows():
     """Initialize Windows screen capture via DWM/BitBlt using ctypes."""
     import ctypes
     import ctypes.wintypes
-    
+
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
     kernel32 = ctypes.windll.kernel32
-    
+
     # Constants
     SRCCOPY = 0x00CC0020
     DIB_RGB_COLORS = 0
     BI_RGB = 0
-    
+
     class BITMAPINFOHEADER(ctypes.Structure):
         _fields_ = [
             ("biSize", ctypes.wintypes.DWORD),
@@ -297,35 +297,59 @@ def _init_screen_capture_windows():
             ("biClrUsed", ctypes.wintypes.DWORD),
             ("biClrImportant", ctypes.wintypes.DWORD),
         ]
-    
+
     class BITMAPINFO(ctypes.Structure):
         _fields_ = [
             ("bmiHeader", BITMAPINFOHEADER),
             ("bmiColors", ctypes.c_uint32 * 3),
         ]
-    
+
     def capture_screen(quality=55):
         """Capture screen and return JPEG bytes."""
+        # Try PIL ImageGrab first (may fail when running as SYSTEM in Session 0)
         try:
             from PIL import ImageGrab
             img = ImageGrab.grab()
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=quality)
             return buf.getvalue(), img.width, img.height
-        except ImportError:
-            # Fallback: pure ctypes capture
-            width = user32.GetSystemMetrics(0)
-            height = user32.GetSystemMetrics(1)
+        except Exception as e:
+            log.debug("PIL ImageGrab failed: %s, trying ctypes BitBlt", e)
+
+        # Fallback: ctypes BitBlt capture
+        # When running as SYSTEM, we need to attach to the interactive desktop
+        try:
+            # Try to switch to the interactive desktop (winsta0\default)
+            hwinsta = user32.GetProcessWindowStation()
+            hdesk = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+
+            # Open the interactive window station and desktop
+            winsta = user32.OpenWindowStationW("WinSta0", False, 0x0001)  # WINSTA_READSCREEN
+            if winsta:
+                user32.SetProcessWindowStation(winsta)
+                desktop = user32.OpenDesktopW("Default", 0, False, 0x0001)  # DESKTOP_READSCREEN
+                if desktop:
+                    user32.SetThreadDesktop(desktop)
+
+            width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
             if width == 0 or height == 0:
+                log.error("GetSystemMetrics returned 0x0 - no screen?")
                 return None, 0, 0
-            
+
             hdesktop = user32.GetDesktopWindow()
             hdc = user32.GetDC(hdesktop)
             hdc_mem = gdi32.CreateCompatibleDC(hdc)
             hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
             gdi32.SelectObject(hdc_mem, hbitmap)
-            gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
-            
+            result_blt = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc, 0, 0, SRCCOPY)
+            if not result_blt:
+                log.error("BitBlt failed")
+                gdi32.DeleteObject(hbitmap)
+                gdi32.DeleteDC(hdc_mem)
+                user32.ReleaseDC(hdesktop, hdc)
+                return None, 0, 0
+
             # Get bitmap bits
             bmi = BITMAPINFO()
             bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -334,11 +358,11 @@ def _init_screen_capture_windows():
             bmi.bmiHeader.biPlanes = 1
             bmi.bmiHeader.biBitCount = 32
             bmi.bmiHeader.biCompression = BI_RGB
-            
+
             buf_size = width * height * 4
             pixel_data = ctypes.create_string_buffer(buf_size)
             gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, pixel_data, ctypes.byref(bmi), DIB_RGB_COLORS)
-            
+
             # Convert BGRA to RGB for PIL
             try:
                 from PIL import Image as PILImage
@@ -347,15 +371,25 @@ def _init_screen_capture_windows():
                 img.save(out, format='JPEG', quality=quality)
                 result = out.getvalue()
             except ImportError:
-                # No PIL available - can't encode JPEG without it
+                # No PIL available - can't encode JPEG
+                log.error("No PIL available for JPEG encoding")
                 result = None
-            
+
             gdi32.DeleteObject(hbitmap)
             gdi32.DeleteDC(hdc_mem)
             user32.ReleaseDC(hdesktop, hdc)
-            
+
+            # Restore original desktop
+            if hdesk:
+                user32.SetThreadDesktop(hdesk)
+            if hwinsta:
+                user32.SetProcessWindowStation(hwinsta)
+
             return result, width, height
-    
+        except Exception as e2:
+            log.error("ctypes BitBlt capture failed: %s", e2)
+            return None, 0, 0
+
     return capture_screen
 
 
@@ -387,7 +421,7 @@ def _init_screen_capture_linux():
                 return result.stdout, w, h
         except Exception as e:
             log.debug("Linux screen capture failed: %s", e)
-        
+
         # Try Pillow as fallback
         try:
             from PIL import ImageGrab
@@ -397,9 +431,9 @@ def _init_screen_capture_linux():
             return buf.getvalue(), img.width, img.height
         except Exception as e:
             log.debug("PIL screen capture failed: %s", e)
-        
+
         return None, 0, 0
-    
+
     return capture_screen
 
 
@@ -407,9 +441,9 @@ def _init_input_windows():
     """Initialize Windows input simulation via SendInput."""
     import ctypes
     import ctypes.wintypes
-    
+
     user32 = ctypes.windll.user32
-    
+
     # SendInput constants
     INPUT_MOUSE = 0
     INPUT_KEYBOARD = 1
@@ -424,7 +458,7 @@ def _init_input_windows():
     MOUSEEVENTF_ABSOLUTE = 0x8000
     KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_UNICODE = 0x0004
-    
+
     class MOUSEINPUT(ctypes.Structure):
         _fields_ = [
             ("dx", ctypes.wintypes.LONG),
@@ -434,7 +468,7 @@ def _init_input_windows():
             ("time", ctypes.wintypes.DWORD),
             ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
         ]
-    
+
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
             ("wVk", ctypes.wintypes.WORD),
@@ -443,19 +477,19 @@ def _init_input_windows():
             ("time", ctypes.wintypes.DWORD),
             ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
         ]
-    
+
     class INPUT_UNION(ctypes.Union):
         _fields_ = [
             ("mi", MOUSEINPUT),
             ("ki", KEYBDINPUT),
         ]
-    
+
     class INPUT(ctypes.Structure):
         _fields_ = [
             ("type", ctypes.wintypes.DWORD),
             ("ii", INPUT_UNION),
         ]
-    
+
     # Virtual key code map for common keys
     VK_MAP = {
         'Shift': 0x10, 'Control': 0x11, 'Alt': 0x12, 'Meta': 0x5B,
@@ -469,20 +503,20 @@ def _init_input_windows():
         'CapsLock': 0x14, 'NumLock': 0x90, 'ScrollLock': 0x91,
         ' ': 0x20, 'Space': 0x20,
     }
-    
+
     extra = ctypes.pointer(ctypes.c_ulong(0))
-    
+
     def send_mouse(action, x, y, button=0, delta=0):
         """Send mouse input to Windows."""
         width = user32.GetSystemMetrics(0)
         height = user32.GetSystemMetrics(1)
         if width == 0 or height == 0:
             return
-        
+
         # Convert to absolute coordinates (0-65535 range)
         abs_x = int(x * 65535 / width)
         abs_y = int(y * 65535 / height)
-        
+
         if action == 'move':
             inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
                 dx=abs_x, dy=abs_y, mouseData=0,
@@ -490,7 +524,7 @@ def _init_input_windows():
                 time=0, dwExtraInfo=extra,
             )))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-        
+
         elif action == 'down':
             flag = {0: MOUSEEVENTF_LEFTDOWN, 1: MOUSEEVENTF_MIDDLEDOWN, 2: MOUSEEVENTF_RIGHTDOWN}.get(button, MOUSEEVENTF_LEFTDOWN)
             # Move first, then click
@@ -506,7 +540,7 @@ def _init_input_windows():
             )))
             inputs = (INPUT * 2)(move_inp, click_inp)
             user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
-        
+
         elif action == 'up':
             flag = {0: MOUSEEVENTF_LEFTUP, 1: MOUSEEVENTF_MIDDLEUP, 2: MOUSEEVENTF_RIGHTUP}.get(button, MOUSEEVENTF_LEFTUP)
             inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
@@ -515,7 +549,7 @@ def _init_input_windows():
                 time=0, dwExtraInfo=extra,
             )))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-        
+
         elif action == 'wheel':
             inp = INPUT(type=INPUT_MOUSE, ii=INPUT_UNION(mi=MOUSEINPUT(
                 dx=abs_x, dy=abs_y, mouseData=int(delta),
@@ -523,7 +557,7 @@ def _init_input_windows():
                 time=0, dwExtraInfo=extra,
             )))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-    
+
     def send_keyboard(action, key, code='', shift=False, ctrl=False, alt=False, meta=False):
         """Send keyboard input to Windows."""
         # Determine VK code
@@ -537,17 +571,17 @@ def _init_input_windows():
             )))
             user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
             return
-        
+
         if vk == 0:
             return  # Unknown key
-        
+
         flags = KEYEVENTF_KEYUP if action == 'up' else 0
         inp = INPUT(type=INPUT_KEYBOARD, ii=INPUT_UNION(ki=KEYBDINPUT(
             wVk=vk, wScan=0, dwFlags=flags,
             time=0, dwExtraInfo=extra,
         )))
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-    
+
     return send_mouse, send_keyboard
 
 
@@ -568,7 +602,7 @@ def _init_input_linux():
                 subprocess.run(['xdotool', 'click', str(btn)], timeout=2)
         except Exception as e:
             log.debug("xdotool mouse failed: %s", e)
-    
+
     def send_keyboard(action, key, code='', shift=False, ctrl=False, alt=False, meta=False):
         try:
             import subprocess
@@ -576,7 +610,7 @@ def _init_input_linux():
                 subprocess.run(['xdotool', 'key', '--clearmodifiers', key], timeout=2)
         except Exception as e:
             log.debug("xdotool keyboard failed: %s", e)
-    
+
     return send_mouse, send_keyboard
 
 
@@ -615,7 +649,7 @@ def ws_agent_loop(server: str, agent_id: str):
         try:
             import asyncio
             asyncio.run(ws_agent_connect(server, agent_id))
-            # Clean disconnect — wait a bit before reconnecting
+            # Clean disconnect - wait a bit before reconnecting
             ws_backoff = 1
             time.sleep(2)
         except KeyboardInterrupt:
