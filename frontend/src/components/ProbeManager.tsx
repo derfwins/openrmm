@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getProbes, deleteProbe } from '../services/monitoringService'
-import type { MonitoringProbe, ProbeStatus } from '../types/monitoring'
+import type { MonitoringProbe } from '../types/monitoring'
 
 export default function ProbeManager() {
   const [probes, setProbes] = useState<MonitoringProbe[]>([])

@@ -47,7 +47,7 @@ export default function SensorDetail({ sensor }: { sensor: MonitoringSensor | nu
     }
 
     // Line
-    const color = STATUS_COLORS[sensor.status]
+    const color = STATUS_COLORS[sensor?.status ?? 'unknown']
     ctx.strokeStyle = color
     ctx.lineWidth = 2
     ctx.lineJoin = 'round'
