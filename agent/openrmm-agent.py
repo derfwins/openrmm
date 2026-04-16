@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # Config
-AGENT_VERSION = "0.5.3"
+AGENT_VERSION = "0.6.0"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -341,44 +341,110 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                     if msg_type == "terminal_start":
                         session_id = data["session_id"]
-                        log.info("Terminal session started: %s", session_id)
+                        cols = data.get("cols", 80)
+                        rows = data.get("rows", 24)
+                        log.info("Terminal session started: %s (%dx%d)", session_id, cols, rows)
                         input_q: queue.Queue = queue.Queue()
                         output_q: queue.Queue = queue.Queue()
 
-                        # Determine shell
-                        if platform.system() == "Windows":
-                            # Use cmd.exe - it works with piped I/O
-                            # PowerShell with piped stdin/stdout doesn't show prompts
-                            cmd = ["cmd.exe", "/K", "prompt $P$G"]
-                            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-                        else:
-                            cmd = ["/bin/bash", "-i"]
-                            creationflags = 0
+                        # Use PTY for proper terminal emulation
+                        pty_proc = None
+                        proc = None
 
-                        proc = subprocess.Popen(
-                            cmd,
-                            stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            bufsize=0,
-                            creationflags=creationflags,
-                        )
+                        if platform.system() == "Windows":
+                            # Windows ConPTY via winpty
+                            try:
+                                from winpty import PtyProcess
+                                pty_proc = PtyProcess.spawn(
+                                    'cmd.exe',
+                                    cols=cols,
+                                    rows=rows,
+                                )
+                                log.info("Started ConPTY session: %s", session_id)
+                            except ImportError:
+                                log.warning("winpty not installed, falling back to subprocess")
+                                proc = subprocess.Popen(
+                                    ["cmd.exe"],
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    bufsize=0,
+                                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                                )
+                        else:
+                            # Unix PTY via pty module
+                            try:
+                                import pty as pty_module
+                                import os as os_module
+                                master_fd, slave_fd = pty_module.openpty()
+                                proc = subprocess.Popen(
+                                    ["/bin/bash", "-i"],
+                                    stdin=slave_fd,
+                                    stdout=slave_fd,
+                                    stderr=slave_fd,
+                                    bufsize=0,
+                                    preexec_fn=os_module.setsid,
+                                )
+                                os_module.close(slave_fd)
+                                # Store master_fd for read/write
+                                pty_proc = type('PtyWrapper', (), {
+                                    'fd': master_fd,
+                                    'pid': proc.pid,
+                                    'isalive': lambda self: proc.poll() is None,
+                                    'setwinsize': lambda self, c, r: None,
+                                    'read': lambda self, n=4096: os_module.read(self.fd, n),
+                                    'write': lambda self, s: os_module.write(self.fd, s if isinstance(s, bytes) else s.encode()),
+                                    'terminate': lambda self: proc.terminate(),
+                                    'wait': lambda self: proc.wait(),
+                                })()
+                                log.info("Started Unix PTY session: %s", session_id)
+                            except Exception as e:
+                                log.warning("PTY failed (%s), falling back to subprocess", e)
+                                proc = subprocess.Popen(
+                                    ["/bin/bash", "-i"],
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    bufsize=0,
+                                )
 
                         sessions[session_id] = {
                             "proc": proc,
+                            "pty": pty_proc,
                             "input_queue": input_q,
                             "output_queue": output_q,
+                            "cols": cols,
+                            "rows": rows,
                         }
 
                         # Read output in a thread
-                        def read_output(p=proc, sid=session_id, oq=output_q):
+                        def read_output(pty=pty_proc, p=proc, sid=session_id, oq=output_q):
                             try:
-                                while p.poll() is None:
-                                    chunk = p.stdout.read(4096)
-                                    if chunk:
-                                        oq.put({"type": "output", "session_id": sid, "data": chunk.decode(errors="replace")})
-                                # Process exited
-                                oq.put({"type": "exit", "session_id": sid, "code": p.returncode})
+                                if pty:
+                                    # PTY read
+                                    while True:
+                                        try:
+                                            if hasattr(pty, 'isalive') and not pty.isalive():
+                                                break
+                                            chunk = pty.read(4096)
+                                            if chunk:
+                                                if isinstance(chunk, bytes):
+                                                    chunk = chunk.decode(errors='replace')
+                                                oq.put({"type": "output", "session_id": sid, "data": chunk})
+                                        except OSError:
+                                            break
+                                        except Exception as e:
+                                            oq.put({"type": "output", "session_id": sid, "data": f"\r\n[read error: {e}]\r\n"})
+                                            break
+                                elif p:
+                                    # Subprocess fallback read
+                                    while p.poll() is None:
+                                        chunk = p.stdout.read(4096)
+                                        if chunk:
+                                            oq.put({"type": "output", "session_id": sid, "data": chunk.decode(errors="replace")})
+
+                                exit_code = p.returncode if p else -1
+                                oq.put({"type": "exit", "session_id": sid, "code": exit_code})
                             except Exception as e:
                                 oq.put({"type": "exit", "session_id": sid, "code": -1, "message": str(e)})
 
@@ -386,16 +452,22 @@ async def ws_agent_connect(server: str, agent_id: str):
                         t.start()
 
                         # Write input in a thread
-                        def write_input(p=proc, iq=input_q):
+                        def write_input(pty=pty_proc, p=proc, iq=input_q):
                             try:
-                                log.info("write_input thread started")
-                                while p.poll() is None:
+                                while True:
+                                    if pty and hasattr(pty, 'isalive') and not pty.isalive():
+                                        break
+                                    if p and p.poll() is not None:
+                                        break
                                     try:
                                         inp = iq.get(timeout=0.5)
                                         if inp.get("type") == "input":
-                                            log.info("Writing to stdin: %r", inp["data"][:50])
-                                            p.stdin.write(inp["data"].encode())
-                                            p.stdin.flush()
+                                            data_bytes = inp["data"].encode()
+                                            if pty:
+                                                pty.write(data_bytes)
+                                            elif p and p.stdin:
+                                                p.stdin.write(data_bytes)
+                                                p.stdin.flush()
                                     except queue.Empty:
                                         continue
                             except Exception as e:
@@ -418,7 +490,10 @@ async def ws_agent_connect(server: str, agent_id: str):
                         sess = sessions.get(session_id)
                         if sess:
                             try:
-                                sess["proc"].terminate()
+                                if sess.get("pty"):
+                                    sess["pty"].terminate()
+                                elif sess.get("proc"):
+                                    sess["proc"].terminate()
                             except Exception:
                                 pass
                             sessions.pop(session_id, None)
@@ -428,7 +503,16 @@ async def ws_agent_connect(server: str, agent_id: str):
                         log.debug("Sent pong")
 
                     elif msg_type == "resize":
-                        pass  # TODO
+                        session_id = data.get("session_id")
+                        sess = sessions.get(session_id)
+                        cols = data.get("cols", 80)
+                        rows = data.get("rows", 24)
+                        if sess and sess.get("pty"):
+                            try:
+                                sess["pty"].setwinsize(cols, rows)
+                                log.info("Resized PTY %s to %dx%d", session_id, cols, rows)
+                            except Exception as e:
+                                log.debug("PTY resize failed: %s", e)
 
                 except Exception as e:
                     log.error("WebSocket message error: %s", e)

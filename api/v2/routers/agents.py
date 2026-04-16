@@ -82,7 +82,7 @@ def _build_windows_installer(api_url: str, client_id: int, site_id: int, agent_t
         "",
         "# Install psutil",
         'Write-Host "Installing dependencies..." -ForegroundColor Cyan',
-        'Start-Process -Wait -FilePath $pythonExe -ArgumentList "-m pip install psutil websockets --quiet" -WindowStyle Hidden',
+        'Start-Process -Wait -FilePath $pythonExe -ArgumentList "-m pip install psutil websockets pywinpty --quiet" -WindowStyle Hidden',
         "",
         "# Download agent from server",
         '$AgentUrl = "$Server/agents/download/openrmm-agent.py"',

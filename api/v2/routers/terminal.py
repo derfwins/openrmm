@@ -183,6 +183,8 @@ async def terminal_ws(websocket: WebSocket, agent_id: str, token: str = Query(..
         await agent_ws.send_json({
             "type": "terminal_start",
             "session_id": session_id,
+            "cols": 80,
+            "rows": 24,
         })
     except Exception:
         await websocket.close(code=4005, reason="Failed to reach agent")
