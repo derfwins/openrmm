@@ -1,14 +1,55 @@
-"""WebSocket Desktop Relay - Browser <-> Server <-> Agent (Screen Sharing + Input)"""
+"""WebSocket Desktop Relay - Browser <-> Server <-> Agent (Binary H.264 + Input)
+
+Protocol:
+  Agent → Server → Browser: Binary frames with 5-byte header
+    Byte 0: Frame type (0x01=H.264 keyframe, 0x02=H.264 delta, 0x03=cursor,
+                          0x04=clipboard, 0x05=JSON config)
+    Bytes 1-4: Payload length (big endian uint32)
+    Bytes 5+: Raw binary payload
+
+  Browser → Server → Agent: Binary frames with 5-byte header
+    Byte 0: Frame type (0x10=mouse, 0x11=keyboard, 0x12=clipboard, 0x13=settings)
+    Bytes 1-4: Payload length (big endian uint32)
+    Bytes 5+: Raw binary payload
+
+  Both sides also accept JSON text frames for control messages (desktop_start,
+  desktop_stop, etc.).
+"""
 
 import asyncio
+import struct
 import uuid
 import logging
+import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import agent_connections, desktop_sessions, verify_token, lookup_agent_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Frame types from agent
+FRAME_H264_KEY = 0x01
+FRAME_H264_DELTA = 0x02
+FRAME_CURSOR = 0x03
+FRAME_CLIPBOARD = 0x04
+FRAME_CONFIG = 0x05
+
+# Frame types from browser
+FRAME_MOUSE = 0x10
+FRAME_KEYBOARD = 0x11
+FRAME_CLIPBOARD_OUT = 0x12
+FRAME_SETTINGS = 0x13
+
+FRAME_NAMES = {
+    0x01: "H264_KEY", 0x02: "H264_DELTA", 0x03: "CURSOR",
+    0x04: "CLIPBOARD", 0x05: "CONFIG",
+    0x10: "MOUSE", 0x11: "KEYBOARD", 0x12: "CLIPBOARD_OUT", 0x13: "SETTINGS",
+}
+
+
+def _frame_type_name(ftype: int) -> str:
+    return FRAME_NAMES.get(ftype, f"UNKNOWN_0x{ftype:02x}")
 
 
 @router.websocket("/ws/desktop/{agent_id}/")
@@ -53,44 +94,85 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
 
     logger.info(f"Desktop session {session_id} started for agent {agent_uuid}")
 
+    # Keepalive task — send ping every 30s to prevent Cloudflare timeout
+    async def keepalive():
+        try:
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    keepalive_task = asyncio.create_task(keepalive())
+
     # Relay browser input to agent
     try:
         while True:
-            # Desktop uses binary for frame data, JSON for control messages
             data = await websocket.receive()
-            
+
             if "text" in data:
-                # JSON control message (mouse, keyboard, clipboard, settings)
+                # JSON control message
                 try:
-                    msg = data["text"]
-                    import json
-                    parsed = json.loads(msg)
+                    parsed = json.loads(data["text"])
                     msg_type = parsed.get("type")
-                    
-                    if msg_type in ("mouse", "keyboard", "clipboard", "desktop_settings", "desktop_stop"):
+
+                    if msg_type == "desktop_stop":
                         agent_ws = agent_connections.get(agent_uuid)
                         if agent_ws:
                             parsed["session_id"] = session_id
                             await agent_ws.send_json(parsed)
-                        else:
-                            await websocket.send_json({"type": "error", "message": "Agent disconnected"})
-                            break
+                        break
+                    elif msg_type == "desktop_settings":
+                        # Convert to binary settings frame for agent
+                        agent_ws = agent_connections.get(agent_uuid)
+                        if agent_ws:
+                            parsed["session_id"] = session_id
+                            payload = json.dumps(parsed).encode("utf-8")
+                            header = struct.pack("!BI", FRAME_SETTINGS, len(payload))
+                            await agent_ws.send(header + payload)
+                    elif msg_type == "ping":
+                        pass  # ignore browser pings
+                    elif msg_type in ("mouse", "keyboard", "clipboard"):
+                        # Legacy JSON input — forward as-is with session_id
+                        agent_ws = agent_connections.get(agent_uuid)
+                        if agent_ws:
+                            parsed["session_id"] = session_id
+                            await agent_ws.send_json(parsed)
+                except json.JSONDecodeError:
+                    logger.warning(f"Desktop WS: invalid JSON from browser")
                 except Exception as e:
-                    logger.warning(f"Desktop WS: parse error: {e}")
-            elif "bytes" in data:
-                # Binary data (e.g., file transfer chunks) - relay to agent
+                    logger.warning(f"Desktop WS: control message error: {e}")
+
+            elif "bytes" in data and data["bytes"]:
+                # Binary input frame from browser — relay directly to agent
+                raw = data["bytes"]
+                if len(raw) >= 5:
+                    ftype = raw[0]
+                    logger.debug(f"Desktop WS: browser binary frame type={_frame_type_name(ftype)} len={len(raw)}")
+
                 agent_ws = agent_connections.get(agent_uuid)
                 if agent_ws:
-                    # Prepend session_id as JSON header then binary
-                    header = json.dumps({"session_id": session_id, "type": "binary"}).encode()
-                    length = len(header).to_bytes(4, "big")
-                    await agent_ws.send(length + header + data["bytes"])
+                    try:
+                        # Prepend session_id header so agent knows which session
+                        sid_bytes = session_id.encode("utf-8")
+                        sid_header = struct.pack("!I", len(sid_bytes)) + sid_bytes
+                        await agent_ws.send(sid_header + raw)
+                    except Exception as e:
+                        logger.warning(f"Desktop WS: failed to relay binary to agent: {e}")
+                        break
+                else:
+                    await websocket.send_json({"type": "error", "message": "Agent disconnected"})
+                    break
 
     except WebSocketDisconnect:
         logger.info(f"Browser disconnected from desktop {session_id}")
     except Exception as e:
         logger.error(f"Desktop session {session_id} error: {e}")
     finally:
+        keepalive_task.cancel()
         desktop_sessions.pop(session_id, None)
         # Notify agent to stop capture
         agent_ws = agent_connections.get(agent_uuid)
@@ -102,7 +184,11 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
 
 
 async def relay_desktop_frame(agent_id: str, session_id: str, data: bytes):
-    """Called from agent_ws handler to relay a desktop frame to the browser."""
+    """Called from agent_ws handler to relay a binary desktop frame to the browser.
+
+    `data` is the raw binary frame with the 5-byte header (type + length + payload).
+    We forward it as-is — the browser parses it.
+    """
     session = desktop_sessions.get(session_id)
     if session and session.get("browser_ws"):
         try:
@@ -113,20 +199,9 @@ async def relay_desktop_frame(agent_id: str, session_id: str, data: bytes):
 
 async def relay_desktop_json(agent_id: str, session_id: str, data: dict):
     """Called from agent_ws handler to relay JSON from agent to browser."""
-    import json
     session = desktop_sessions.get(session_id)
     if session and session.get("browser_ws"):
         try:
             await session["browser_ws"].send_json(data)
         except Exception:
             pass
-
-
-def register_desktop_handlers():
-    """Patch desktop message handlers into the existing agent_ws handler.
-    
-    This must be called after terminal.py is loaded so agent_connections is available.
-    We monkey-patch by adding desktop handling to the agent_ws message loop.
-    """
-    # This is handled by importing relay functions in terminal.py's agent_ws handler
-    pass

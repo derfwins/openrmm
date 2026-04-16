@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 import logging
+import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import agent_connections, terminal_sessions, desktop_sessions, pending_sessions, verify_token, lookup_agent_id
@@ -42,10 +43,45 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
 
         try:
             while True:
-                data = await websocket.receive_json()
-                msg_type = data.get("type")
-                logger.warning(f"Agent {agent_id} sent: {msg_type}")
+                data = await websocket.receive()
 
+                if "text" in data:
+                    # JSON message
+                    try:
+                        parsed = json.loads(data["text"])
+                    except json.JSONDecodeError:
+                        continue
+                    msg_type = parsed.get("type")
+                    logger.warning(f"Agent {agent_id} sent: {msg_type}")
+                elif "bytes" in data and data["bytes"]:
+                    # Binary frame from agent (desktop H.264, cursor, etc.)
+                    raw = data["bytes"]
+                    if len(raw) < 5:
+                        logger.warning(f"Agent {agent_id}: binary frame too short ({len(raw)} bytes)")
+                        continue
+
+                    # Parse the session_id prefix that desktop.py prepended
+                    # Format: 4-byte sid_length + sid_bytes + 1-byte frame_type + 4-byte payload_length + payload
+                    import struct as _struct
+                    if len(raw) < 4:
+                        continue
+                    sid_len = _struct.unpack("!I", raw[:4])[0]
+                    if len(raw) < 4 + sid_len + 5:
+                        logger.warning(f"Agent {agent_id}: binary frame truncated")
+                        continue
+                    sid = raw[4:4+sid_len].decode("utf-8")
+                    frame_data = raw[4+sid_len:]  # type + len + payload
+                    ftype = frame_data[0] if frame_data else 0
+                    from v2.routers.desktop import _frame_type_name
+                    logger.warning(f"Agent {agent_id}: binary frame type={_frame_type_name(ftype)} session={sid} len={len(frame_data)}")
+
+                    # Relay to browser as-is (the 5-byte header frame, no session_id prefix)
+                    await relay_desktop_frame(agent_id, sid, frame_data)
+                    continue
+                else:
+                    continue
+
+                # --- Handle JSON messages ---
                 if msg_type == "output":
                     # Relay output to browser
                     session_id = data.get("session_id")
@@ -80,14 +116,17 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
 
                 # --- Desktop relay messages ---
                 elif msg_type == "desktop_frame":
-                    # Agent sent a screen frame (base64 in JSON)
+                    # Legacy base64 JPEG frame (fallback)
                     session_id = data.get("session_id")
                     import base64
                     frame_data = data.get("frame")
                     if frame_data and session_id:
                         try:
                             raw = base64.b64decode(frame_data)
-                            await relay_desktop_frame(agent_id, session_id, raw)
+                            # Wrap as binary frame for browser compatibility
+                            # Type 0x01 = keyframe (legacy JPEG treated as keyframe)
+                            header = bytes([0x01]) + len(raw).to_bytes(4, "big")
+                            await relay_desktop_frame(agent_id, session_id, header + raw)
                         except Exception as e:
                             logger.warning(f"Desktop frame relay error: {e}")
 

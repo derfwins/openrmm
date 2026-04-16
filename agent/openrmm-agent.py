@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.7.4"
+AGENT_VERSION = "0.8.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -270,7 +270,7 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
 # --- Screen Capture & Input Simulation ---
 
 def _init_screen_capture_windows():
-    """Initialize Windows screen capture. Tries multiple methods."""
+    """Initialize Windows screen capture. Tries mss+av (H.264) first, falls back to JPEG."""
     import ctypes
     import ctypes.wintypes
 
@@ -278,7 +278,24 @@ def _init_screen_capture_windows():
     gdi32 = ctypes.windll.gdi32
     kernel32 = ctypes.windll.kernel32
 
-    # Constants
+    # Detect H.264 encoding availability
+    has_mss = False
+    has_av = False
+    try:
+        import mss
+        has_mss = True
+    except ImportError:
+        pass
+    try:
+        import av
+        has_av = True
+    except ImportError:
+        pass
+
+    h264_available = has_mss and has_av
+    log.info("Screen capture: mss=%s av=%s h264=%s", has_mss, has_av, h264_available)
+
+    # --- Legacy BitBlt/PIL fallback (JPEG mode) ---
     SRCCOPY = 0x00CC0020
     DIB_RGB_COLORS = 0
     BI_RGB = 0
@@ -304,16 +321,13 @@ def _init_screen_capture_windows():
             ("bmiColors", ctypes.c_uint32 * 3),
         ]
 
-    # Determine what capture method works
+    # Determine legacy capture method
     capture_method = "unknown"
-
-    # Test 1: Try connecting to the interactive desktop as SYSTEM
-    # This works if the service has been granted access to winsta0
-    test_winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)  # WINSTA_ALL_ACCESS
+    test_winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
     if test_winsta:
         old_winsta = user32.GetProcessWindowStation()
         if user32.SetProcessWindowStation(test_winsta):
-            test_desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)  # DESKTOP_ALL_ACCESS
+            test_desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
             if test_desktop:
                 old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
                 if user32.SetThreadDesktop(test_desktop):
@@ -323,7 +337,6 @@ def _init_screen_capture_windows():
             user32.SetProcessWindowStation(old_winsta)
         user32.CloseWindowStation(test_winsta)
 
-    # Test 2: Check if ImageGrab works (running as user)
     if capture_method == "unknown":
         try:
             from PIL import ImageGrab
@@ -333,7 +346,6 @@ def _init_screen_capture_windows():
         except Exception:
             pass
 
-    # Test 3: Try BitBlt on current desktop (works if running as user)
     if capture_method == "unknown":
         hdc = user32.GetDC(0)
         if hdc:
@@ -349,15 +361,133 @@ def _init_screen_capture_windows():
                 gdi32.DeleteDC(hdc_mem)
             user32.ReleaseDC(0, hdc)
 
-    # Test 4: Use screen capture via PrintWindow (works for some services)
     if capture_method == "unknown":
         capture_method = "printwindow"
 
-    log.info("Screen capture method: %s", capture_method)
+    log.info("Legacy capture method: %s", capture_method)
 
+    # --- H.264 encoder state (lazily initialized per session) ---
+    _h264_state = {}  # Populated by capture_init_h264
+
+    def capture_init_h264(fps=30, quality_crf=23):
+        """Initialize mss + av H.264 capture session. Returns (width, height) or raises."""
+        import mss
+        import av as av_mod
+        import numpy as np
+        nonlocal _h264_state
+
+        sct = mss.mss()
+        monitor = sct.monitors[0] if sct.monitors else None
+        if not monitor:
+            raise RuntimeError("No monitor found by mss")
+
+        w = monitor['width']
+        h = monitor['height']
+
+        # Create an in-memory container; we encode to raw H.264 packets
+        # Use a pipe to get raw packets without container overhead
+        import subprocess as sp
+        # We'll use av's Codec approach for direct packet access
+        codec = av_mod.Codec('h264', 'w')
+        stream = codec.create()
+        stream.width = w
+        stream.height = h
+        stream.pix_fmt = 'yuv420p'
+        stream.options = {
+            'preset': 'ultrafast',
+            'tune': 'zerolatency',
+            'crf': str(quality_crf),
+        }
+        # Need a container for stream.encode() - use null format
+        container = av_mod.open('/dev/null', 'w', format='null')
+        vstream = container.add_stream('h264', rate=fps)
+        vstream.width = w
+        vstream.height = h
+        vstream.pix_fmt = 'yuv420p'
+        vstream.options = {
+            'preset': 'ultrafast',
+            'tune': 'zerolatency',
+            'crf': str(quality_crf),
+        }
+
+        _h264_state = {
+            'sct': sct,
+            'monitor': monitor,
+            'container': container,
+            'stream': vstream,
+            'width': w,
+            'height': h,
+            'frame_count': 0,
+            'gop_size': 30,  # Keyframe every 30 frames
+        }
+        return w, h
+
+    def capture_frame_h264():
+        """Capture one frame and encode as H.264. Returns (frame_type, bytes) or None.
+        frame_type: 0x01=keyframe, 0x02=delta"""
+        import numpy as np
+        state = _h264_state
+        if not state:
+            return None
+
+        try:
+            img = state['sct'].grab(state['monitor'])
+            # mss returns BGRA raw pixels
+            arr = np.frombuffer(img.raw, dtype=np.uint8).reshape(
+                (img.height, img.width, 4)
+            )
+            import av as av_mod
+            frame = av_mod.VideoFrame.from_ndarray(arr, format='bgra')
+            packets = state['stream'].encode(frame)
+
+            state['frame_count'] += 1
+            is_keyframe = (state['frame_count'] % state['gop_size'] == 1)
+
+            result = b''
+            for pkt in packets:
+                result += bytes(pkt)
+
+            if not result:
+                return None
+
+            ftype = 0x01 if is_keyframe else 0x02
+            return (ftype, result)
+        except Exception as e:
+            log.error("H.264 capture error: %s", e)
+            return None
+
+    def capture_flush_h264():
+        """Flush remaining encoded packets from the H.264 encoder."""
+        state = _h264_state
+        if not state:
+            return []
+        try:
+            packets = state['stream'].encode()
+            results = []
+            for pkt in packets:
+                results.append((0x02, bytes(pkt)))  # Flush is always delta
+            return results
+        except Exception:
+            return []
+
+    def capture_cleanup_h264():
+        """Release H.264 capture resources."""
+        nonlocal _h264_state
+        state = _h264_state
+        if state:
+            try:
+                state['container'].close()
+            except Exception:
+                pass
+            try:
+                state['sct'].close()
+            except Exception:
+                pass
+        _h264_state = {}
+
+    # --- Legacy JPEG capture (fallback) ---
     def capture_screen(quality=55):
-        """Capture screen and return JPEG bytes."""
-        # Method 1: PIL ImageGrab (runs as interactive user)
+        """Capture screen and return JPEG bytes (legacy fallback)."""
         if capture_method == "pil_imagegrab":
             try:
                 from PIL import ImageGrab
@@ -368,13 +498,11 @@ def _init_screen_capture_windows():
             except Exception as e:
                 log.debug("PIL ImageGrab failed: %s", e)
 
-        # Method 2: BitBlt on interactive desktop (switch desktop first)
         if capture_method in ("bitblt_interactive", "bitblt_current"):
             old_winsta = None
             old_desktop = None
             try:
                 if capture_method == "bitblt_interactive":
-                    # Switch to interactive desktop
                     old_winsta = user32.GetProcessWindowStation()
                     winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
                     if winsta:
@@ -433,16 +561,13 @@ def _init_screen_capture_windows():
                 log.error("BitBlt capture failed: %s", e)
                 return None, 0, 0
             finally:
-                # Restore original desktop
                 if old_desktop:
                     user32.SetThreadDesktop(old_desktop)
                 if old_winsta:
                     user32.SetProcessWindowStation(old_winsta)
 
-        # Method 3: PrintWindow - capture a specific window
         if capture_method == "printwindow":
             try:
-                # Find the shell window (desktop)
                 hwnd = user32.FindWindowW(None, "Program Manager")
                 if not hwnd:
                     return None, 0, 0
@@ -457,8 +582,7 @@ def _init_screen_capture_windows():
                 hdc_mem = gdi32.CreateCompatibleDC(hdc)
                 hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
                 gdi32.SelectObject(hdc_mem, hbitmap)
-                # PrintWindow captures the window even from a different session
-                user32.PrintWindow(hwnd, hdc_mem, 2)  # PW_RENDERFULLCONTENT
+                user32.PrintWindow(hwnd, hdc_mem, 2)
 
                 bmi = BITMAPINFO()
                 bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -492,25 +616,129 @@ def _init_screen_capture_windows():
 
         return None, 0, 0
 
-    return capture_screen
+    return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
 
 
 def _init_screen_capture_linux():
-    """Initialize Linux screen capture via X11."""
+    """Initialize Linux screen capture. Tries mss+av (H.264) first, falls back to JPEG."""
+    has_mss = False
+    has_av = False
+    try:
+        import mss
+        has_mss = True
+    except ImportError:
+        pass
+    try:
+        import av
+        has_av = True
+    except ImportError:
+        pass
+
+    h264_available = has_mss and has_av
+    log.info("Screen capture: mss=%s av=%s h264=%s", has_mss, has_av, h264_available)
+
+    _h264_state = {}
+
+    def capture_init_h264(fps=30, quality_crf=23):
+        """Initialize mss + av H.264 capture session. Returns (width, height) or raises."""
+        import mss
+        import av as av_mod
+        nonlocal _h264_state
+
+        sct = mss.mss()
+        monitor = sct.monitors[0] if sct.monitors else None
+        if not monitor:
+            raise RuntimeError("No monitor found by mss")
+
+        w = monitor['width']
+        h = monitor['height']
+
+        container = av_mod.open('/dev/null', 'w', format='null')
+        vstream = container.add_stream('h264', rate=fps)
+        vstream.width = w
+        vstream.height = h
+        vstream.pix_fmt = 'yuv420p'
+        vstream.options = {
+            'preset': 'ultrafast',
+            'tune': 'zerolatency',
+            'crf': str(quality_crf),
+        }
+
+        _h264_state = {
+            'sct': sct,
+            'monitor': monitor,
+            'container': container,
+            'stream': vstream,
+            'width': w,
+            'height': h,
+            'frame_count': 0,
+            'gop_size': 30,
+        }
+        return w, h
+
+    def capture_frame_h264():
+        """Capture one frame and encode as H.264. Returns (frame_type, bytes) or None."""
+        import numpy as np
+        state = _h264_state
+        if not state:
+            return None
+        try:
+            img = state['sct'].grab(state['monitor'])
+            arr = np.frombuffer(img.raw, dtype=np.uint8).reshape(
+                (img.height, img.width, 4)
+            )
+            import av as av_mod
+            frame = av_mod.VideoFrame.from_ndarray(arr, format='bgra')
+            packets = state['stream'].encode(frame)
+            state['frame_count'] += 1
+            is_keyframe = (state['frame_count'] % state['gop_size'] == 1)
+            result = b''
+            for pkt in packets:
+                result += bytes(pkt)
+            if not result:
+                return None
+            return (0x01 if is_keyframe else 0x02, result)
+        except Exception as e:
+            log.error("H.264 capture error: %s", e)
+            return None
+
+    def capture_flush_h264():
+        state = _h264_state
+        if not state:
+            return []
+        try:
+            packets = state['stream'].encode()
+            return [(0x02, bytes(pkt)) for pkt in packets]
+        except Exception:
+            return []
+
+    def capture_cleanup_h264():
+        nonlocal _h264_state
+        state = _h264_state
+        if state:
+            try:
+                state['container'].close()
+            except Exception:
+                pass
+            try:
+                state['sct'].close()
+            except Exception:
+                pass
+        _h264_state = {}
+
     def capture_screen(quality=55):
+        """Capture screen and return JPEG bytes (legacy fallback)."""
         try:
             import subprocess
             result = subprocess.run(
                 ['xdotool', 'selectdesktop'],
                 capture_output=True, text=True, timeout=2
             )
-            # Use scrot or xdotool + import for capture
             result = subprocess.run(
                 ['import', '-window', 'root', '-resize', '50%', '-quality', str(quality), 'jpg:-'],
                 capture_output=True, timeout=3
             )
             if result.returncode == 0 and result.stdout:
-                # Get screen dimensions
                 dim_result = subprocess.run(
                     ['xdpyinfo'], capture_output=True, text=True, timeout=2
                 )
@@ -524,7 +752,6 @@ def _init_screen_capture_linux():
         except Exception as e:
             log.debug("Linux screen capture failed: %s", e)
 
-        # Try Pillow as fallback
         try:
             from PIL import ImageGrab
             img = ImageGrab.grab()
@@ -536,7 +763,7 @@ def _init_screen_capture_linux():
 
         return None, 0, 0
 
-    return capture_screen
+    return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
 
 
 def _init_input_windows():
@@ -720,19 +947,24 @@ def _init_input_linux():
 capture_screen = None
 send_mouse = None
 send_keyboard = None
+h264_available = False
+capture_init_h264 = None
+capture_frame_h264 = None
+capture_flush_h264 = None
+capture_cleanup_h264 = None
 
 if platform.system() == "Windows":
     try:
-        capture_screen = _init_screen_capture_windows()
+        capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264 = _init_screen_capture_windows()
         send_mouse, send_keyboard = _init_input_windows()
-        log.info("Windows screen capture and input simulation initialized")
+        log.info("Windows screen capture and input simulation initialized (h264=%s)", h264_available)
     except Exception as e:
         log.warning("Failed to init Windows screen capture: %s", e)
 elif platform.system() == "Linux":
     try:
-        capture_screen = _init_screen_capture_linux()
+        capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264 = _init_screen_capture_linux()
         send_mouse, send_keyboard = _init_input_linux()
-        log.info("Linux screen capture and input simulation initialized")
+        log.info("Linux screen capture and input simulation initialized (h264=%s)", h264_available)
     except Exception as e:
         log.warning("Failed to init Linux screen capture: %s", e)
 
@@ -984,9 +1216,83 @@ async def ws_agent_connect(server: str, agent_id: str):
                     # --- Desktop session handling ---
                     elif msg_type == "desktop_start":
                         session_id = data.get("session_id")
-                        log.info("Desktop capture session started: %s", session_id)
-                        if capture_screen:
-                            # Send screen info first
+                        log.info("Desktop capture session started: %s (h264=%s)", session_id, h264_available)
+
+                        # --- Binary WS frame helper ---
+                        async def send_binary_frame(frame_type, payload):
+                            """Send a binary frame: byte0=type, bytes1-4=len(BE), bytes5+=payload."""
+                            header = struct.pack('!BI', frame_type, len(payload))
+                            await ws.send(header + payload)
+
+                        if h264_available and capture_init_h264:
+                            # --- H.264 streaming mode ---
+                            try:
+                                fps = data.get("fps", 30)
+                                crf = data.get("quality", 23)
+                                w, h = capture_init_h264(fps=fps, quality_crf=crf)
+                                log.info("H.264 capture initialized: %dx%d @ %dfps crf=%d", w, h, fps, crf)
+                            except Exception as e:
+                                log.error("H.264 init failed: %s, falling back to JPEG", e)
+                                # Fall through to JPEG path below
+                                h264_available = False
+
+                            if h264_available:
+                                # Send screen info as JSON binary frame (type 0x05)
+                                info_json = json.dumps({
+                                    "type": "desktop_info",
+                                    "session_id": session_id,
+                                    "width": w,
+                                    "height": h,
+                                    "monitors": 1,
+                                    "encoding": "h264",
+                                }).encode('utf-8')
+                                await send_binary_frame(0x05, info_json)
+
+                                desktop_config = {"fps": fps, "running": True, "crf": crf}
+
+                                async def desktop_capture_loop_h264():
+                                    consecutive_errors = 0
+                                    while desktop_config["running"] and consecutive_errors < 5:
+                                        frame_interval = 1.0 / max(desktop_config["fps"], 1)
+                                        try:
+                                            result = capture_frame_h264()
+                                            if result:
+                                                ftype, fbytes = result
+                                                await send_binary_frame(ftype, fbytes)
+                                                consecutive_errors = 0
+                                            else:
+                                                consecutive_errors += 1
+                                        except Exception as e:
+                                            log.error("H.264 capture error: %s", e)
+                                            consecutive_errors += 1
+                                        await asyncio.sleep(frame_interval)
+
+                                    # Flush remaining packets
+                                    for ftype, fbytes in capture_flush_h264():
+                                        try:
+                                            await send_binary_frame(ftype, fbytes)
+                                        except Exception:
+                                            pass
+
+                                    capture_cleanup_h264()
+                                    if consecutive_errors >= 5:
+                                        log.error("H.264 capture failed 5 times, stopping")
+                                    # Send stopped as JSON binary frame
+                                    try:
+                                        stopped_json = json.dumps({
+                                            "type": "desktop_stopped",
+                                            "session_id": session_id,
+                                            "reason": "Capture failed" if consecutive_errors >= 5 else "Stopped",
+                                        }).encode('utf-8')
+                                        await send_binary_frame(0x05, stopped_json)
+                                    except Exception:
+                                        pass
+
+                                capture_task = asyncio.create_task(desktop_capture_loop_h264())
+                                sessions["_desktop_" + session_id] = {"task": capture_task, "config": desktop_config}
+
+                        if not h264_available and capture_screen:
+                            # --- Legacy JPEG mode (fallback) ---
                             try:
                                 _frame, w, h = capture_screen(quality=10)
                                 log.info("Screen probe: %dx%d", w, h)
@@ -1000,11 +1306,12 @@ async def ws_agent_connect(server: str, agent_id: str):
                                     "width": w,
                                     "height": h,
                                     "monitors": 1,
+                                    "encoding": "jpeg",
                                 }))
-                            # Start capture loop in background
+
                             desktop_config = {"quality": 55, "fps": 10, "running": True}
 
-                            async def desktop_capture_loop():
+                            async def desktop_capture_loop_jpeg():
                                 consecutive_errors = 0
                                 while desktop_config["running"] and consecutive_errors < 5:
                                     frame_interval = 1.0 / max(desktop_config["fps"], 1)
@@ -1019,7 +1326,6 @@ async def ws_agent_connect(server: str, agent_id: str):
                                             }))
                                             consecutive_errors = 0
                                         else:
-                                            log.warning("Desktop capture returned empty frame")
                                             consecutive_errors += 1
                                     except Exception as e:
                                         log.error("Desktop capture error: %s", e)
@@ -1036,9 +1342,10 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 except Exception:
                                     pass
 
-                            capture_task = asyncio.create_task(desktop_capture_loop())
+                            capture_task = asyncio.create_task(desktop_capture_loop_jpeg())
                             sessions["_desktop_" + session_id] = {"task": capture_task, "config": desktop_config}
-                        else:
+
+                        if not h264_available and not capture_screen:
                             await ws.send(json.dumps({
                                 "type": "desktop_stopped",
                                 "session_id": session_id,
@@ -1054,6 +1361,12 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 dsess["config"]["running"] = False
                             if dsess.get("task"):
                                 dsess["task"].cancel()
+                            # Cleanup H.264 resources if applicable
+                            if capture_cleanup_h264:
+                                try:
+                                    capture_cleanup_h264()
+                                except Exception:
+                                    pass
                         await ws.send(json.dumps({
                             "type": "desktop_stopped",
                             "session_id": session_id,
@@ -1061,7 +1374,6 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                     elif msg_type == "desktop_settings":
                         session_id = data.get("session_id")
-                        # Find the desktop session config and update it
                         dsess = sessions.get("_desktop_" + session_id)
                         if dsess and dsess.get("config"):
                             if data.get("quality"):
@@ -1117,6 +1429,45 @@ async def ws_agent_connect(server: str, agent_id: str):
                     pass
 
 
+def auto_install_deps():
+    """Auto-install required Python packages if missing."""
+    import subprocess
+    import sys
+
+    required = {
+        'psutil': 'psutil',
+        'websockets': 'websockets>=12.0',
+        'mss': 'mss>=9.0.0',
+        'av': 'av>=12.0.0',
+        'numpy': 'numpy>=1.24.0',
+    }
+    if platform.system() == "Windows":
+        required['winpty'] = 'pywinpty>=2.0.0'
+
+    missing = []
+    for module, package in required.items():
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(package)
+
+    if not missing:
+        return
+
+    log.info("Auto-installing missing packages: %s", ' '.join(missing))
+    try:
+        if platform.system() == "Windows":
+            # Use Start-Process to avoid stderr crash with $ErrorActionPreference = "Stop"
+            cmd = [sys.executable, '-m', 'pip', 'install'] + missing + ['--quiet']
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP).wait()
+        else:
+            subprocess.run([sys.executable, '-m', 'pip', 'install'] + missing + ['--quiet'],
+                         check=True, timeout=120)
+        log.info("Auto-install complete")
+    except Exception as e:
+        log.warning("Auto-install failed (some features may be unavailable): %s", e)
+
+
 def main():
     parser = argparse.ArgumentParser(description="OpenRMM Agent")
     parser.add_argument("--server", required=True, help="RMM server URL (e.g. https://rmm.derfwins.com)")
@@ -1129,6 +1480,9 @@ def main():
     log.info("OpenRMM Agent v%s starting", AGENT_VERSION)
     log.info("Agent ID: %s", agent_id)
     log.info("Server: %s", args.server)
+
+    # Auto-install missing dependencies
+    auto_install_deps()
 
     # Start WebSocket connection in background thread
     import threading
