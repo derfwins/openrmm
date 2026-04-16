@@ -4,14 +4,8 @@ import asyncio
 import uuid
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from jose import JWTError, jwt
-from sqlalchemy import select
 
-from v2.config import settings
-from v2.database import AsyncSessionLocal
-from v2.models.agent import Agent
-from v2.models.user import User
-from v2.routers.ws_state import agent_connections, desktop_sessions
+from v2.routers.ws_state import agent_connections, desktop_sessions, verify_token, lookup_agent_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.7.0"
+AGENT_VERSION = "0.7.1"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -307,8 +307,8 @@ def _init_screen_capture_windows():
     def capture_screen(quality=55):
         """Capture screen and return JPEG bytes."""
         try:
-            from PIL import Image
-            img = Image.grab()
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=quality)
             return buf.getvalue(), img.width, img.height
@@ -850,8 +850,13 @@ async def ws_agent_connect(server: str, agent_id: str):
                         session_id = data.get("session_id")
                         log.info("Desktop capture session started: %s", session_id)
                         if capture_screen:
-                            # Send screen info
-                            _frame, w, h = capture_screen(quality=10)  # quick probe
+                            # Send screen info first
+                            try:
+                                _frame, w, h = capture_screen(quality=10)
+                                log.info("Screen probe: %dx%d", w, h)
+                            except Exception as e:
+                                log.error("Screen probe failed: %s", e)
+                                _frame, w, h = None, 0, 0
                             if w > 0:
                                 await ws.send(json.dumps({
                                     "type": "desktop_info",
@@ -864,23 +869,38 @@ async def ws_agent_connect(server: str, agent_id: str):
                             desktop_config = {"quality": 55, "fps": 10, "running": True}
 
                             async def desktop_capture_loop():
-                                while desktop_config["running"]:
+                                consecutive_errors = 0
+                                while desktop_config["running"] and consecutive_errors < 5:
                                     frame_interval = 1.0 / max(desktop_config["fps"], 1)
                                     try:
                                         frame, w, h = capture_screen(quality=desktop_config["quality"])
-                                        if frame:
+                                        if frame and w > 0:
                                             b64 = base64.b64encode(frame).decode('ascii')
                                             await ws.send(json.dumps({
                                                 "type": "desktop_frame",
                                                 "session_id": session_id,
                                                 "frame": b64,
                                             }))
+                                            consecutive_errors = 0
+                                        else:
+                                            log.warning("Desktop capture returned empty frame")
+                                            consecutive_errors += 1
                                     except Exception as e:
-                                        log.warning("Desktop capture error: %s", e)
+                                        log.error("Desktop capture error: %s", e)
+                                        consecutive_errors += 1
                                     await asyncio.sleep(frame_interval)
+                                if consecutive_errors >= 5:
+                                    log.error("Desktop capture failed 5 times, stopping")
+                                try:
+                                    await ws.send(json.dumps({
+                                        "type": "desktop_stopped",
+                                        "session_id": session_id,
+                                        "reason": "Capture failed",
+                                    }))
+                                except Exception:
+                                    pass
 
                             capture_task = asyncio.create_task(desktop_capture_loop())
-                            # Store config and task ref
                             sessions["_desktop_" + session_id] = {"task": capture_task, "config": desktop_config}
                         else:
                             await ws.send(json.dumps({
