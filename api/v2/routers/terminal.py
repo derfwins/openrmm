@@ -42,7 +42,10 @@ async def verify_token(token: str) -> User | None:
 
 
 async def lookup_agent_id(agent_db_id: str) -> str | None:
-    """Look up agent's UUID by database ID."""
+    """Look up agent's UUID by database ID. If already a UUID, return as-is."""
+    # If it looks like a UUID, return it directly
+    if '-' in agent_db_id and len(agent_db_id) > 20:
+        return agent_db_id
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Agent).where(Agent.id == int(agent_db_id)))
