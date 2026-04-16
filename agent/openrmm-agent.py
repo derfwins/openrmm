@@ -314,12 +314,12 @@ def _init_screen_capture_windows():
         old_winsta = user32.GetProcessWindowStation()
         if user32.SetProcessWindowStation(test_winsta):
             test_desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)  # DESKTOP_ALL_ACCESS
-            if test_desk:
+            if test_desktop:
                 old_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
-                if user32.SetThreadDesktop(test_desk):
+                if user32.SetThreadDesktop(test_desktop):
                     capture_method = "bitblt_interactive"
                     user32.SetThreadDesktop(old_desktop)
-                user32.CloseDesktop(test_desk)
+                user32.CloseDesktop(test_desktop)
             user32.SetProcessWindowStation(old_winsta)
         user32.CloseWindowStation(test_winsta)
 
