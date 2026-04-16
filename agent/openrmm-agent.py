@@ -19,7 +19,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.8.1"
+AGENT_VERSION = "0.8.2"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -1404,6 +1404,20 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 alt=data.get("alt", False),
                                 meta=data.get("meta", False),
                             )
+
+                    elif msg_type == "restart_agent":
+                        log.info("Restart command received, restarting...")
+                        # Restart self
+                        if platform.system() == "Windows":
+                            import subprocess
+                            subprocess.Popen(
+                                [sys.executable] + sys.argv,
+                                cwd=os.path.dirname(os.path.abspath(__file__)),
+                                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                            )
+                        else:
+                            os.execv(sys.executable, [sys.executable] + sys.argv)
+                        sys.exit(0)
 
                     elif msg_type == "resize":
                         session_id = data.get("session_id")

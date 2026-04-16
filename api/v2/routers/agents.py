@@ -364,3 +364,19 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
         pass
 
     return response
+
+@router.post("/agents/{agent_id}/restart/")
+async def restart_agent(agent_id: str):
+    """Send restart command to agent via WebSocket."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    agent_uuid = await lookup_agent_id(agent_id)
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+    try:
+        await agent_ws.send_json({"type": "restart_agent"})
+        return {"status": "ok", "message": "Restart command sent"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send restart: {e}")

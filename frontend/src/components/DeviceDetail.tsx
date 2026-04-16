@@ -136,6 +136,18 @@ const DeviceDetail = () => {
                 🖥️ Remote Desktop
               </button>
             )}
+            {agent.status === 'online' && (
+              <button
+                onClick={async () => {
+                  if (confirm('Restart the agent on this device?')) {
+                    await fetch(`/agents/${id}/restart/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                  }
+                }}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-orange-600 text-white hover:bg-orange-700"
+              >
+                🔄 Restart Agent
+              </button>
+            )}
           </div>
         </div>
       </div>

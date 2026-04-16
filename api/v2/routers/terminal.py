@@ -110,6 +110,8 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
 
                 elif msg_type == "pong":
                     logger.info(f"Pong from agent {agent_id}")
+                elif msg_type == "restart_agent":
+                    logger.warning(f"Agent {agent_id} acknowledges restart")
 
                 elif msg_type == "resize":
                     pass
