@@ -71,6 +71,10 @@ services:
       SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
       DEBUG: "True"
       CORS_ORIGINS: '["http://localhost:5173","http://10.10.0.122:5173","http://10.10.0.122:8000","http://10.10.0.122","http://rmmapp.derfwins.com","https://rmmapp.derfwins.com","http://rmm.derfwins.com","https://rmm.derfwins.com"]'
+      MESH_LOGIN_TOKEN_KEY: ${MESH_LOGIN_TOKEN_KEY}
+      MESH_MESH_ID: 'mesh//JzDMTriXwWx9oaR5sJEoV2RJL9$$6rM@gYi8kYJT703hYQVvXYNgzqxVzoLwtLSh0'
+      MESH_MESH_ID_ENCODED: '6ztR5sKfcvVpnTiYajMJ0ZNFKhURv5YK0eBDwhlxMYpxOdLPldyf5Gh@IqiMZKJctWuh0Isa33Bxr5jNENF6cWb5HOa7vjdH6G5sfsV3d6r7qcNu7Jsx4P@Q3VxLVX6B$$UYSd2aQF3lTaknPDwPbRBSdIZCEBw=='
+      MESH_INVITE_URL: 'https://rmmapp.derfwins.com/agentinvite?c=klMzTUlaYl@RCEBnTCDDbasLsP6Dr7aAmLD$$5Ah5qaaVnHbdEuy68C0SuE7e74sPxsTFHy0hwiSjL3WHCulme@9yuTUZUTmHIzb$$jD2dNFH52Ff1mfsVqNgCgooVx8YvcSNqzYZWV4$$fNqGX31GV9tRPn4wiAryA69KH0zs$$$$JM$$GNPHMS6teC8fa8mfIXAvuzfc2FWu6xtxjg=='
     volumes:
       - ./api/v2:/app/v2
       - ./agent:/app/agent
@@ -147,6 +151,25 @@ services:
     command: celery -A v2.celery beat -l INFO
     restart: unless-stopped
 
+  # MeshCentral Remote Desktop
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:latest
+    container_name: openrmm-meshcentral
+    environment:
+      MESH_HOST: rmmapp.derfwins.com
+      MESH_PORT: "4430"
+      MESH_ALIAS_PORT: "443"
+      MESH_USER: admin
+    volumes:
+      - meshcentral_data:/opt/meshcentral/meshcentral-data
+      - meshcentral_files:/opt/meshcentral/meshcentral-files
+    ports:
+      - "127.0.0.1:4430:4430"
+      - "127.0.0.1:800:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
@@ -165,6 +188,8 @@ volumes:
   postgres_data:
   redis_data:
   nats_data:
+  meshcentral_data:
+  meshcentral_files:
 
 networks:
   default:

@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $Server -or $ClientId -eq 0 -or $SiteId -eq 0) {
-    Write-Host "Usage: .\install.ps1 -Server https://rmm.derfwins.com -ClientId 1 -SiteId 1" -ForegroundColor Yellow
+    Write-Host "Usage: .\install.ps1 -Server https://rmmapp.derfwins.com -ClientId 1 -SiteId 1" -ForegroundColor Yellow
     Write-Host "Get these values from the Install Agent page in OpenRMM" -ForegroundColor Yellow
     exit 1
 }
@@ -89,5 +89,8 @@ Write-Host "=== Agent Installed Successfully! ===" -ForegroundColor Green
 Write-Host "Install dir: $InstallDir"
 Write-Host "Service: Scheduled Task '$TaskName' (runs as SYSTEM on startup)"
 Write-Host "Log: $InstallDir\agent.log"
+Write-Host ""
+Write-Host "The agent will automatically download and install the MeshCentral"
+Write-Host "remote access agent on first startup. No manual steps required."
 Write-Host ""
 Write-Host "To uninstall: Unregister-ScheduledTask -TaskName OpenRMM-Agent; Remove-Item '$InstallDir' -Recurse"

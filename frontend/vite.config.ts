@@ -9,7 +9,10 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     allowedHosts: true,
+    origin: 'https://rmmapp.derfwins.com',
     hmr: {
+      protocol: 'wss',
+      host: 'rmmapp.derfwins.com',
       clientPort: 443,
     },
     proxy: {
@@ -60,6 +63,26 @@ export default defineConfig({
       '/ws': {
         target: 'ws://openrmm-backend:8000',
         ws: true,
+        changeOrigin: true,
+      },
+      '/audit': {
+        target: 'http://openrmm-backend:8000',
+        changeOrigin: true,
+      },
+      '/mesh/api': {
+        target: 'http://openrmm-backend:8000',
+        changeOrigin: true,
+      },
+      '/mesh': {
+        target: 'http://openrmm-meshcentral:4430',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/mesh/, ''),
+      },
+      '/meshws': {
+        target: 'ws://openrmm-meshcentral:4430',
+        ws: true,
+        secure: false,
         changeOrigin: true,
       },
     },

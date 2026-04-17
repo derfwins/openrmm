@@ -8,6 +8,7 @@ import os
 import platform
 import signal
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -19,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.2"
+AGENT_VERSION = "0.9.10"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -1337,6 +1338,44 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 pass
                             sessions.pop(session_id, None)
 
+                    elif msg_type == "run_command":
+                        """Run a command and return output."""
+                        cmd = data.get("command", "")
+                        timeout = data.get("timeout", 30)
+                        session_id = data.get("session_id", "cmd")
+                        log.info("Running command: %s", cmd[:100])
+                        
+                        try:
+                            result = subprocess.run(
+                                cmd,
+                                shell=True,
+                                capture_output=True,
+                                text=True,
+                                timeout=timeout
+                            )
+                            output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nRETURN CODE: {result.returncode}"
+                            await ws.send(json.dumps({
+                                "type": "command_result",
+                                "session_id": session_id,
+                                "success": result.returncode == 0,
+                                "output": output[:10000],  # Limit output size
+                                "return_code": result.returncode
+                            }))
+                        except subprocess.TimeoutExpired:
+                            await ws.send(json.dumps({
+                                "type": "command_result",
+                                "session_id": session_id,
+                                "success": False,
+                                "output": f"TIMEOUT: Command exceeded {timeout} seconds"
+                            }))
+                        except Exception as e:
+                            await ws.send(json.dumps({
+                                "type": "command_result",
+                                "session_id": session_id,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}"
+                            }))
+
                     elif msg_type == "ping":
                         await ws.send(json.dumps({"type": "pong"}))
                         log.debug("Sent pong")
@@ -1547,6 +1586,28 @@ async def ws_agent_connect(server: str, agent_id: str):
                             os.execv(sys.executable, [sys.executable] + sys.argv)
                         sys.exit(0)
 
+                    elif msg_type == "service_action":
+                        svc_action = msg.get("action", "")  # start, stop, restart
+                        svc_name = msg.get("service", "")
+                        if svc_action and svc_name:
+                            log.info(f"Service action: {svc_action} {svc_name}")
+                            try:
+                                import subprocess
+                                if platform.system() == "Windows":
+                                    cmd_map = {"start": ["net", "start", svc_name], "stop": ["net", "stop", svc_name], "restart": ["powershell", "-Command", f"Restart-Service -Name '{svc_name}' -Force"]}
+                                    cmd = cmd_map.get(svc_action)
+                                    if cmd:
+                                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                                        log.info(f"Service {svc_action} {svc_name}: exit={result.returncode}")
+                                else:
+                                    cmd_map = {"start": ["systemctl", "start", svc_name], "stop": ["systemctl", "stop", svc_name], "restart": ["systemctl", "restart", svc_name]}
+                                    cmd = cmd_map.get(svc_action)
+                                    if cmd:
+                                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                                        log.info(f"Service {svc_action} {svc_name}: exit={result.returncode}")
+                            except Exception as e:
+                                log.error(f"Service action failed: {e}")
+
                     elif msg_type == "uninstall_agent":
                         log.info("Uninstall command received, removing agent...")
                         if platform.system() == "Windows":
@@ -1637,6 +1698,133 @@ def auto_install_deps():
         log.warning("Auto-install failed (some features may be unavailable): %s", e)
 
 
+def auto_install_mesh_agent(server_url: str):
+    """Download and install the pre-configured MeshCentral agent.
+    
+    Downloads the meshid-configured agent EXE (with server info baked in),
+    copies it to Program Files, installs as service, and starts it.
+    """
+    if platform.system() == "Windows":
+        mesh_dir = Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'Mesh Agent'
+        mesh_exe = mesh_dir / 'MeshAgent.exe'
+        if mesh_exe.exists() and mesh_dir.exists():
+            log.info("MeshAgent already installed")
+            return True
+    else:
+        if Path('/usr/local/mesh/meshagent').exists() or Path('/opt/mesh/meshagent').exists():
+            log.info("MeshAgent already installed, skipping")
+            return True
+
+    log.info("Downloading pre-configured MeshCentral agent...")
+    try:
+        # Download the pre-configured agent (meshid baked into EXE)
+        download_url = f"{server_url}/mesh/api/download-configured-agent/"
+        req = Request(download_url, headers={"User-Agent": f"OpenRMM-Agent/{AGENT_VERSION}"})
+        resp = urlopen(req, timeout=120)
+        agent_data = resp.read()
+        
+        if platform.system() == "Windows":
+            mesh_dir.mkdir(parents=True, exist_ok=True)
+            agent_exe = mesh_dir / 'MeshAgent.exe'
+            with open(agent_exe, 'wb') as f:
+                f.write(agent_data)
+            log.info("MeshAgent downloaded (%d bytes), installing...", len(agent_data))
+            
+            _install_mesh_service(mesh_dir)
+            _restart_mesh_service()
+            log.info("MeshAgent installed and configured")
+        else:
+            tmp_bin = '/tmp/meshagent_install'
+            with open(tmp_bin, 'wb') as f:
+                f.write(agent_data)
+            os.chmod(tmp_bin, 0o755)
+            log.info("MeshAgent downloaded (%d bytes), installing...", len(agent_data))
+            result = subprocess.run([tmp_bin], capture_output=True, text=True, timeout=300)
+            try:
+                os.remove(tmp_bin)
+            except Exception:
+                pass
+            log.info("MeshAgent installed")
+        return True
+    except Exception as e:
+        log.warning("Failed to install MeshAgent: %s", e)
+        return False
+
+
+def _write_mesh_config(server_url: str, mesh_dir: Path):
+    """Write the meshagent.msh config file pointing to our MeshCentral server.
+    
+    The .msh file needs MeshID (hex), ServerID, MeshName, MeshType, and MeshServer.
+    These values come from the OpenRMM server's mesh configuration.
+    """
+    if not mesh_dir.exists():
+        log.warning("Mesh Agent directory not found: %s", mesh_dir)
+        return
+    
+    # Fetch mesh configuration from the OpenRMM server
+    try:
+        req = Request(
+            f"{server_url}/mesh/api/mesh-config/",
+            headers={"User-Agent": f"OpenRMM-Agent/{AGENT_VERSION}"}
+        )
+        resp = urlopen(req, timeout=30)
+        data = json.loads(resp.read().decode())
+        mesh_id_hex = data.get("mesh_id_hex", "")
+        server_id = data.get("server_id", "")
+        mesh_name = data.get("mesh_name", "Managed Devices")
+        mesh_type = data.get("mesh_type", 2)
+    except Exception as e:
+        log.warning("Failed to fetch mesh config from server: %s", e)
+        return
+    
+    from urllib.parse import urlparse
+    parsed = urlparse(server_url)
+    server_host = parsed.hostname or server_url.replace('https://', '').replace('http://', '').split(':')[0]
+    
+    msh_content = (
+        f"MeshName={mesh_name}\n"
+        f"MeshType={mesh_type}\n"
+        f"MeshID={mesh_id_hex}\n"
+        f"ServerID={server_id}\n"
+        f"MeshServer=wss://{server_host}/meshagents.ashx\n"
+    )
+    
+    msh_path = mesh_dir / 'meshagent.msh'
+    try:
+        with open(msh_path, 'w') as f:
+            f.write(msh_content)
+        log.info("Wrote mesh config: %s", msh_path)
+    except Exception as e:
+        log.warning("Failed to write mesh config: %s", e)
+
+
+def _install_mesh_service(mesh_dir: Path):
+    """Install MeshAgent as a Windows service."""
+    exe = mesh_dir / 'MeshAgent.exe'
+    if not exe.exists():
+        log.warning("MeshAgent.exe not found at %s", exe)
+        return
+    try:
+        # MeshAgent -fullinstall installs as a Windows service
+        result = subprocess.run(
+            [str(exe), '-fullinstall'],
+            capture_output=True, text=True, timeout=60
+        )
+        log.info("MeshAgent service install: rc=%d", result.returncode)
+    except Exception as e:
+        log.warning("Failed to install MeshAgent service: %s", e)
+
+
+def _restart_mesh_service():
+    """Restart the Mesh Agent Windows service."""
+    try:
+        subprocess.run(["net", "stop", "Mesh Agent"], capture_output=True, text=True, timeout=30)
+        subprocess.run(["net", "start", "Mesh Agent"], capture_output=True, text=True, timeout=30)
+        log.info("Mesh Agent service restarted")
+    except Exception as e:
+        log.warning("Failed to restart Mesh Agent service: %s", e)
+
+
 def main():
     parser = argparse.ArgumentParser(description="OpenRMM Agent")
     parser.add_argument("--server", required=True, help="RMM server URL (e.g. https://rmm.derfwins.com)")
@@ -1652,6 +1840,9 @@ def main():
 
     # Auto-install missing dependencies
     auto_install_deps()
+
+    # Auto-install MeshCentral agent
+    auto_install_mesh_agent(args.server)
 
     # Start WebSocket connection in background thread
     import threading

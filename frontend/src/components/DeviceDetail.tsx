@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
+import meshCentral from '../services/meshCentralService'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -13,6 +14,8 @@ const DeviceDetail = () => {
   const [commandRunning, setCommandRunning] = useState(false)
   const [showTerminal, setShowTerminal] = useState(false)
   const [token] = useState(() => localStorage.getItem('token') || '')
+  const [serviceFilter, setServiceFilter] = useState('')
+  const [serviceActionLoading, setServiceActionLoading] = useState<string | null>(null)
 
   useEffect(() => {
     if (id) loadAgent()
@@ -87,6 +90,28 @@ const DeviceDetail = () => {
   const disks = parseJsonSafe(agent.disks_json, [])
   const memory = parseJsonSafe(agent.memory_json, {})
   const users = parseJsonSafe(agent.logged_in_users, [])
+
+  const handleServiceAction = async (action: string, serviceName: string) => {
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} service "${serviceName}"?`)) return
+    setServiceActionLoading(serviceName + action)
+    try {
+      const res = await fetch(`/agents/${id}/service/?action=${action}&service_name=${encodeURIComponent(serviceName)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        // Refresh agent data after a short delay to allow the service to change state
+        setTimeout(() => loadAgent(), 2000)
+      } else {
+        alert('Failed to send service command')
+      }
+    } catch {
+      alert('Failed to send service command')
+    } finally {
+      setServiceActionLoading(null)
+    }
+  }
+
   const services = parseJsonSafe(agent.services_json, [])
   const cpuPct = agent.cpu_percent ?? 0
   const memPct = memory.percent ?? 0
@@ -123,17 +148,22 @@ const DeviceDetail = () => {
               onClick={() => setShowTerminal(!showTerminal)}
               className={`px-4 py-2 text-sm rounded-lg transition-colors ${showTerminal ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
             >
-              💻 {showTerminal ? 'Hide Terminal' : 'Connect'}
+              💻 {showTerminal ? 'Hide Terminal' : 'Terminal'}
             </button>
             {agent.status === 'online' && (
               <button
-                onClick={() => {
-                  const url = `/desktop/${id}?token=${token}`
-                  window.open(url, '_blank', 'width=1280,height=800')
-                }}
+                onClick={() => meshCentral.openDesktop(agent.mesh_device_id || agent.agent_id)}
                 className="px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700"
               >
                 🖥️ Remote Desktop
+              </button>
+            )}
+            {agent.status === 'online' && (
+              <button
+                onClick={() => meshCentral.openFiles(agent.mesh_device_id || agent.agent_id)}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
+              >
+                📁 Files
               </button>
             )}
             {agent.status === 'online' && (
@@ -387,9 +417,10 @@ const DeviceDetail = () => {
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Services ({services.length})</h3>
                 <input
                   type="text"
+                  value={serviceFilter}
+                  onChange={e => setServiceFilter(e.target.value)}
                   placeholder="Filter services..."
                   className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white w-64"
-                  id="service-filter"
                 />
               </div>
               <div className="overflow-x-auto">
@@ -400,10 +431,13 @@ const DeviceDetail = () => {
                       <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Display Name</th>
                       <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Status</th>
                       <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Start Type</th>
+                      <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {services.map((svc: any, i: number) => (
+                    {services
+                      .filter((svc: any) => !serviceFilter || svc.name.toLowerCase().includes(serviceFilter.toLowerCase()) || svc.display_name.toLowerCase().includes(serviceFilter.toLowerCase()))
+                      .map((svc: any, i: number) => (
                       <tr key={i} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
                         <td className="py-1.5 px-3 font-mono text-xs text-gray-700 dark:text-gray-300">{svc.name}</td>
                         <td className="py-1.5 px-3 text-gray-700 dark:text-gray-300">{svc.display_name}</td>
@@ -415,6 +449,29 @@ const DeviceDetail = () => {
                           }`}>{svc.status}</span>
                         </td>
                         <td className="py-1.5 px-3 text-gray-500 dark:text-gray-400 text-xs">{svc.start_type}</td>
+                        <td className="py-1.5 px-3">
+                          <div className="flex gap-1">
+                            {svc.status === 'stopped' && (
+                              <button
+                                onClick={() => handleServiceAction('start', svc.name)}
+                                disabled={serviceActionLoading === svc.name + 'start'}
+                                className="px-2 py-0.5 text-xs rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 disabled:opacity-50"
+                              >▶ Start</button>
+                            )}
+                            {svc.status === 'running' && (
+                              <button
+                                onClick={() => handleServiceAction('stop', svc.name)}
+                                disabled={serviceActionLoading === svc.name + 'stop'}
+                                className="px-2 py-0.5 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50"
+                              >⏹ Stop</button>
+                            )}
+                            <button
+                              onClick={() => handleServiceAction('restart', svc.name)}
+                              disabled={serviceActionLoading === svc.name + 'restart'}
+                              className="px-2 py-0.5 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 disabled:opacity-50"
+                            >🔄 Restart</button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

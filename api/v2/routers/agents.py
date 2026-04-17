@@ -393,6 +393,25 @@ async def restart_agent(agent_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to send restart: {e}")
 
 
+@router.post("/{agent_id}/service/")
+async def service_action(agent_id: str, action: str = Query(...), service_name: str = Query(...)):
+    """Send service control command to agent via WebSocket."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    agent_uuid = await lookup_agent_id(agent_id)
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+    if action not in ("start", "stop", "restart"):
+        raise HTTPException(status_code=400, detail="Action must be start, stop, or restart")
+    try:
+        await agent_ws.send_json({"type": "service_action", "action": action, "service": service_name})
+        return {"status": "ok", "message": f"Service {action} command sent for {service_name}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send service command: {e}")
+
+
 @router.delete("/{agent_id}/")
 async def delete_agent(
     agent_id: str,
@@ -427,3 +446,41 @@ async def delete_agent(
     await db.delete(agent)
     await db.commit()
     return {"status": "ok", "message": "Agent deleted" + (" and uninstall command sent" if uninstall else "")}
+
+
+@router.post("/run-command/")
+async def run_command(
+    command: str = Query(...),
+    agent_id: str = Query(None),
+    timeout: int = Query(60),
+):
+    """Run a command on an agent machine via WebSocket."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    import time
+    
+    agent_uuid = None
+    if agent_id:
+        agent_uuid = await lookup_agent_id(agent_id)
+    else:
+        if agent_connections:
+            agent_uuid = next(iter(agent_connections.keys()))
+    
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found or not connected")
+    
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+    
+    session_id = f"cmd_{int(time.time())}"
+    
+    try:
+        await agent_ws.send_json({
+            "type": "run_command",
+            "command": command,
+            "timeout": timeout,
+            "session_id": session_id,
+        })
+        return {"status": "sent", "session_id": session_id, "command": command[:100]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send command: {e}")

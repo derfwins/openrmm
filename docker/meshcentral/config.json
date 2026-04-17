@@ -1,0 +1,33 @@
+{
+  "settings": {
+    "cert": "rmmapp.derfwins.com",
+    "WANonly": true,
+    "port": 4430,
+    "aliasPort": 443,
+    "redirPort": 800,
+    "mongoDb": null,
+    "neDB": true,
+    "WebRTC": false,
+    "debug": false,
+    "localDiscovery": false,
+    "mqtt": false,
+    "compression": true,
+    "selfUpdate": false
+  },
+  "domains": {
+    "": {
+      "title": "OpenRMM",
+      "title2": "Remote Management",
+      "agentInviteCodes": true,
+      "assistant": true,
+      "userAllowedIP": "",
+      "newAccounts": 0,
+      "meshes": {}
+    }
+  },
+  "peers": {
+    "self": {
+      "cert": "rmmapp.derfwins.com"
+    }
+  }
+}

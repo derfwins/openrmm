@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from v2.config import settings
 from v2.database import async_engine, Base, get_db, AsyncSessionLocal
-from v2.routers import auth, accounts, clients, agents, core, scripts, alerts, terminal, desktop, monitoring, audit
+from v2.routers import auth, accounts, clients, agents, core, scripts, alerts, terminal, desktop, monitoring, audit, mesh
 from sqlalchemy import select
 
 
@@ -76,6 +76,7 @@ app.include_router(terminal.router, tags=["Terminal"])     # /alerts/, etc.
 app.include_router(desktop.router, tags=["Desktop"])
 app.include_router(monitoring.router, tags=["Monitoring"])
 app.include_router(audit.router, tags=["Audit"])
+app.include_router(mesh.router, tags=["MeshCentral"])
 
 
 @app.get("/api/v1/test/")

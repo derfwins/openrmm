@@ -18,6 +18,7 @@ class Agent(Base):
     operating_system = Column(String(255), default="", server_default="")
     plat = Column(String(50), default="", server_default="")  # windows, linux, darwin
     goarch = Column(String(50), default="", server_default="")  # amd64, arm64
+    mesh_node_id = Column(String(255), nullable=True)  # MeshCentral node ID
 
     # Status
     status = Column(String(50), default="offline", server_default="offline")  # online, offline, overdue
