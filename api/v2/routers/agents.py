@@ -322,6 +322,7 @@ class HeartbeatRequest(BaseModel):
     running_processes: int = 0
     cpu_percent: float = 0
     services_json: str = ""
+    mesh_node_id: str = ""
 
 
 @router.post("/heartbeat/")
@@ -350,7 +351,8 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
                    "cpu_model", "cpu_cores", "total_ram", "os_name", "os_version",
                    "public_ip", "local_ip", "logged_in_user", "disks_json",
                    "memory_json", "uptime_seconds", "logged_in_users",
-                   "running_processes", "cpu_percent", "services_json"]:
+                   "running_processes", "cpu_percent", "services_json",
+                   "mesh_node_id"]:
         val = getattr(req, field, None)
         if val is not None:
             setattr(agent, field, val)

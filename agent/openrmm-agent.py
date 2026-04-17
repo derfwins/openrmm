@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.10"
+AGENT_VERSION = "0.9.11"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -79,6 +79,36 @@ def get_public_ip() -> str:
             return urlopen(req, timeout=5).read().decode().strip()
         except Exception:
             continue
+    return ""
+
+
+def get_mesh_node_id() -> str:
+    """Read the MeshCentral node ID from the MeshAgent db file.
+    
+    The MeshAgent stores its node ID in meshagent.db after connecting
+    to MeshCentral. This is the ID that MeshCentral uses to identify
+    the device, which we need for remote desktop/terminal URLs.
+    """
+    if platform.system() == "Windows":
+        db_path = Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'Mesh Agent' / 'MeshAgent.db'
+    else:
+        db_path = Path('/var/Mesh Agent') / 'MeshAgent.db'
+    
+    if not db_path.exists():
+        return ""
+    
+    try:
+        with open(db_path, 'rb') as f:
+            data = f.read()
+        import re
+        # Look for a long base64-like string (the node ID)
+        matches = re.findall(rb'[A-Za-z0-9+/\\$@]{40,}=*', data)
+        if matches:
+            node_id = max(matches, key=len).decode('ascii', errors='ignore')
+            return node_id
+    except Exception as e:
+        log.debug("Could not read mesh node ID: %s", e)
+    
     return ""
 
 
@@ -196,6 +226,9 @@ def get_system_info() -> dict:
 
     except ImportError:
         log.warning("psutil not installed - limited system info")
+
+    # Read MeshCentral node ID from the agent db file
+    info["mesh_node_id"] = get_mesh_node_id()
 
     return info
 

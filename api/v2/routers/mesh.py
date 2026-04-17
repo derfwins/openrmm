@@ -4,9 +4,11 @@ Provides seamless remote access without users knowing MeshCentral exists behind 
 """
 import os
 import logging
-from fastapi import APIRouter, Query
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import APIRouter, Query, Depends
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 import httpx
+
+from v2.auth import get_current_user
 
 router = APIRouter(prefix="/mesh/api")
 logger = logging.getLogger(__name__)
@@ -16,32 +18,26 @@ MESH_SERVER_URL = os.environ.get("MESH_SERVER_URL", "https://rmmapp.derfwins.com
 MESH_INTERNAL_URL = os.environ.get("MESH_INTERNAL_URL", "http://meshcentral:4430")
 MESH_LOGIN_TOKEN = os.environ.get("MESH_LOGIN_TOKEN_KEY", "")
 MESH_MESH_ID = os.environ.get("MESH_MESH_ID", "")
+MESH_LOGIN_KEY = os.environ.get("MESH_LOGIN_KEY", "1a41dc53b3670b84a3e5e7f2ee028fc496cff5e8ad2c5e2ea201e86ce326abe69ae9300ffdc47af65e5589cffbd53460ea1218fa5c90d9a2c868d24dd4b87021c505e3c0e200a2b1082277bfd601a474")
 
 
 @router.get("/download-agent/")
 async def download_agent(
     os_type: str = Query("windows", description="windows, windows32, linux"),
 ):
-    """Download MeshCentral agent installer with server config baked in.
-    
-    Uses the meshid-based download so the agent knows which server/group to connect to.
-    Authenticates to MeshCentral using the admin login token.
-    """
-    # Map OS type to MeshCentral agent ID
+    """Download MeshCentral agent installer with server config baked in."""
     agent_ids = {
-        "windows": 3,       # Windows x64
-        "windows32": 4,     # Windows x86
-        "linux64": 6,       # Linux x64
-        "linux": 5,         # Linux x86 (script installer)
+        "windows": 3,
+        "windows32": 4,
+        "linux64": 6,
+        "linux": 5,
     }
     os_key = os_type.lower()
     agent_id = agent_ids.get(os_key, 3)
     
-    # Build download URL with meshid - this bakes the server URL and group into the agent
     if MESH_MESH_ID and os_key != "linux":
         download_url = f"{MESH_INTERNAL_URL}/meshagents?id={agent_id}&meshid={MESH_MESH_ID}&installflags=0"
     else:
-        # Fallback to generic agent
         download_url = f"{MESH_INTERNAL_URL}/meshagents?id={agent_id}&installflags=0"
     
     headers = {}
@@ -51,16 +47,8 @@ async def download_agent(
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             resp = await client.get(download_url, follow_redirects=True, headers=headers)
-            
-            if resp.status_code == 401 and MESH_MESH_ID:
-                # meshid endpoint failed, try generic with cookie auth
-                logger.warning("meshid download returned 401, trying generic agent")
-                generic_url = f"{MESH_INTERNAL_URL}/meshagents?id={agent_id}&installflags=0"
-                resp = await client.get(generic_url, follow_redirects=True, headers=headers)
-            
             if resp.status_code != 200:
                 raise Exception(f"Agent download failed: {resp.status_code}")
-            
             filename = "meshagent.exe" if os_key != "linux" else "meshinstall.sh"
             return StreamingResponse(
                 iter([resp.content]),
@@ -69,10 +57,16 @@ async def download_agent(
             )
         except Exception as e:
             logger.error(f"Agent download failed: {e}")
-            return JSONResponse(
-                status_code=500,
-                content={"error": f"Failed to download MeshCentral agent: {str(e)}"}
-            )
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.get("/download-configured-agent/")
+async def download_configured_agent():
+    """Download the pre-configured MeshCentral agent with meshid baked in."""
+    agent_path = "/app/agent/meshagent_configured.exe"
+    if not os.path.exists(agent_path):
+        return JSONResponse(status_code=404, content={"error": "Configured agent not found"})
+    return FileResponse(agent_path, media_type="application/octet-stream", filename="MeshAgent.exe")
 
 
 @router.get("/install-command/")
@@ -81,29 +75,13 @@ def get_install_command(
 ):
     """Get the command to install MeshCentral agent via OpenRMM."""
     download_url = f"{MESH_SERVER_URL}/mesh/api/download-agent/?os_type={os_type}"
-    
     if os_type.lower() == "windows":
         return {
             "os_type": "windows",
-            "command": (
-                f'powershell -Command "& {{ '
-                f'Invoke-WebRequest -Uri \\"{download_url}\\" -OutFile \\"$env:TEMP\\MeshAgent.exe\\" -UseBasicParsing; '
-                f'Start-Process -FilePath \\"$env:TEMP\\MeshAgent.exe\\" -ArgumentList \\"/quiet\\" -Wait; '
-                f'Remove-Item \\"$env:TEMP\\MeshAgent.exe\\" -Force'
-                f' }}"'
-            ),
-            "instructions": "Agent will automatically connect to OpenRMM's remote access server.",
+            "command": f'powershell -Command "Invoke-WebRequest -Uri \\"{download_url}\\" -OutFile \\"$env:TEMP\\MeshAgent.exe\\" -UseBasicParsing; Start-Process -FilePath \\"$env:TEMP\\MeshAgent.exe\\" -ArgumentList \\"/quiet\\" -Wait"',
         }
     else:
-        return {
-            "os_type": "linux",
-            "command": (
-                f'curl -sL {download_url} -o /tmp/meshinstall.sh && '
-                f'chmod +x /tmp/meshinstall.sh && '
-                f'sudo /tmp/meshinstall.sh {MESH_SERVER_URL}/mesh/'
-            ),
-            "instructions": "Agent will automatically connect to OpenRMM's remote access server.",
-        }
+        return {"os_type": "linux", "command": f'curl -sL {download_url} | sudo bash'}
 
 
 @router.get("/agent-install-command/")
@@ -116,25 +94,13 @@ def get_agent_install_command(
 
 @router.get("/mesh-config/")
 def get_mesh_config():
-    """Return MeshCentral mesh configuration for agent .msh file.
-    
-    This endpoint provides the MeshID, ServerID, and other values
-    needed by the MeshAgent .msh config file to connect to the
-    correct server and device group.
-    """
-    import json
-    
-    mesh_id_raw = MESH_MESH_ID  # mesh//JzDM... format
+    """Return MeshCentral mesh configuration for agent .msh file."""
+    import base64
+    mesh_id_raw = MESH_MESH_ID
     if not mesh_id_raw:
         return JSONResponse(status_code=500, content={"error": "Mesh meshid not configured"})
-    
-    # Convert meshid to hex format for .msh file
-    # The meshid after "mesh//" is a custom base64 encoding
-    # @ replaces + and $ replaces /
     encoded = mesh_id_raw.replace("mesh//", "")
-    import base64
     std_b64 = encoded.replace("@", "+").replace("$", "/")
-    # Add padding
     padding = 4 - len(std_b64) % 4
     if padding != 4:
         std_b64 += "=" * padding
@@ -143,11 +109,7 @@ def get_mesh_config():
         mesh_id_hex = "0x" + decoded.hex().upper()
     except Exception:
         mesh_id_hex = ""
-    
-    # ServerID comes from MeshCentral's DatabaseIdentifier
-    # This is configured in the .env file or fetched from MeshCentral
     server_id = os.environ.get("MESH_SERVER_ID", "e17f9401175107713c3f378b5dcd90c6063a49f3bc58d2cb95bb1b5d8553c63a65d7cbe38b0d929f099f66fe310edbbe")
-    
     return {
         "mesh_id_hex": mesh_id_hex,
         "server_id": server_id,
@@ -157,41 +119,61 @@ def get_mesh_config():
     }
 
 
-@router.get("/download-configured-agent/")
-async def download_configured_agent():
-    """Download the pre-configured MeshCentral agent with meshid baked in."""
-    agent_path = "/app/agent/meshagent_configured.exe"
-    if not os.path.exists(agent_path):
-        return JSONResponse(status_code=404, content={"error": "Configured agent not found"})
+@router.get("/token/")
+async def get_mesh_token(current_user=Depends(get_current_user)):
+    """Generate a MeshCentral login token for the authenticated OpenRMM user.
     
-    from fastapi.responses import FileResponse
-    return FileResponse(
-        agent_path,
-        media_type="application/octet-stream",
-        filename="MeshAgent.exe",
+    Returns a token that can be used to auto-login to MeshCentral.
+    """
+    if not MESH_LOGIN_KEY:
+        return JSONResponse(status_code=500, content={"error": "MeshCentral login key not configured"})
+    
+    # Use MeshCentral's login token API to create a one-time token
+    # The loginkey allows creating temporary access tokens
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        try:
+            # MeshCentral login token creation endpoint
+            url = f"{MESH_INTERNAL_URL}/logintokens"
+            headers = {"Cookie": f"login={MESH_LOGIN_KEY}"}
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {"token": data.get("token", ""), "url": f"{MESH_SERVER_URL}/mesh/?login={data.get('token', '')}"}
+            # Fallback: use the login key directly as a cookie
+            return {"token": MESH_LOGIN_KEY, "url": f"{MESH_SERVER_URL}/mesh/?login={MESH_LOGIN_KEY}"}
+        except Exception as e:
+            logger.error(f"MeshCentral token generation failed: {e}")
+            # Fallback: return the login key for cookie-based auth
+            return {"token": MESH_LOGIN_KEY, "url": f"{MESH_SERVER_URL}/mesh/?login={MESH_LOGIN_KEY}"}
+
+
+@router.get("/session/")
+async def get_mesh_session(
+    device_id: str = Query(..., description="MeshCentral device node ID"),
+    viewmode: int = Query(12, description="12=desktop, 11=terminal, 13=files"),
+    current_user=Depends(get_current_user),
+):
+    """Get a direct MeshCentral session URL for a specific device.
+    
+    Returns a URL that opens MeshCentral directly to the specified device
+    with the requested view mode (desktop, terminal, or files).
+    """
+    if not MESH_LOGIN_KEY:
+        return JSONResponse(status_code=500, content={"error": "MeshCentral login key not configured"})
+    
+    # Build a direct device URL with auto-login
+    # MeshCentral supports: /mesh/?login=TOKEN&gotodeviceid=NODEID&viewmode=V
+    session_url = (
+        f"{MESH_SERVER_URL}/mesh/"
+        f"?login={MESH_LOGIN_KEY}"
+        f"&gotodeviceid={device_id}"
+        f"&viewmode={viewmode}"
     )
+    
+    return {"url": session_url}
 
 
 @router.get("/sso-token/")
-async def get_sso_token():
-    """Generate a MeshCentral SSO login token for embedding in OpenRMM UI.
-    
-    Returns a URL that auto-logs the user into MeshCentral.
-    """
-    if not MESH_LOGIN_TOKEN:
-        return JSONResponse(status_code=500, content={"error": "MeshCentral login token not configured"})
-    
-    # Use meshctrl to generate a login token
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            # Generate a one-time login token via MeshCentral API
-            # The login token allows iframe embedding without separate login
-            url = f"{MESH_INTERNAL_URL}/logintokens"
-            headers = {"Cookie": f"login={MESH_LOGIN_TOKEN}"}
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
-                return {"url": f"{MESH_SERVER_URL}/mesh/?token={resp.json().get('token', '')}"}
-        except Exception as e:
-            logger.error(f"SSO token generation failed: {e}")
-    
-    return JSONResponse(status_code=500, content={"error": "Failed to generate SSO token"})
+async def get_sso_token(current_user=Depends(get_current_user)):
+    """Generate a MeshCentral SSO login token for iframe embedding."""
+    return await get_mesh_token(current_user)
