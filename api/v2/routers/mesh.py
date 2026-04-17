@@ -71,8 +71,10 @@ def encode_mesh_cookie(key_hex: str, username: str, action: int = 3,
     encrypted = encryptor.update(padded) + encryptor.finalize()
     
     # Base64 with MeshCentral's custom altchars (@ for +, $ for /)
-    result = base64.b64encode(iv + encrypted, altchars=b"@$").decode("utf-8")
-    return result
+    # Then hex-encode since MeshCentral CookieEncoding is set to "hex"
+    result_b64 = base64.b64encode(iv + encrypted, altchars=b"@$")
+    result_hex = result_b64.hex()
+    return result_hex
 
 
 @router.get("/download-agent/")

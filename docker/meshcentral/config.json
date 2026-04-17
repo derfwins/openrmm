@@ -9,6 +9,7 @@
     "SelfUpdate": false,
     "AllowFraming": true,
     "AllowLoginToken": true,
+    "CookieEncoding": "hex",
     "WebRTC": false,
     "sessionKey": "OpenRMM2026MeshSecret"
   },
