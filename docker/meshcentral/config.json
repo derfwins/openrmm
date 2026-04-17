@@ -1,33 +1,26 @@
 {
+  "$schema": "https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json",
   "settings": {
     "cert": "rmmapp.derfwins.com",
-    "WANonly": true,
     "port": 4430,
     "aliasPort": 443,
     "redirPort": 800,
-    "mongoDb": null,
-    "neDB": true,
+    "TLSOffload": true,
+    "SelfUpdate": false,
+    "AllowFraming": true,
+    "AllowLoginToken": true,
     "WebRTC": false,
-    "debug": false,
-    "localDiscovery": false,
-    "mqtt": false,
-    "compression": true,
-    "selfUpdate": false
+    "sessionKey": "OpenRMM2026MeshSecret"
   },
   "domains": {
     "": {
       "title": "OpenRMM",
       "title2": "Remote Management",
+      "minify": true,
       "agentInviteCodes": true,
-      "assistant": true,
-      "userAllowedIP": "",
-      "newAccounts": 0,
-      "meshes": {}
-    }
-  },
-  "peers": {
-    "self": {
-      "cert": "rmmapp.derfwins.com"
+      "NewAccounts": false,
+      "localSessionRecording": true,
+      "certUrl": "rmmapp.derfwins.com"
     }
   }
 }
