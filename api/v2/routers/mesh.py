@@ -3,6 +3,11 @@
 Provides seamless remote access without users knowing MeshCentral exists behind the scenes.
 """
 import os
+import base64
+import hashlib
+import json
+import secrets
+import time
 import logging
 from fastapi import APIRouter, Query, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
@@ -18,7 +23,56 @@ MESH_SERVER_URL = os.environ.get("MESH_SERVER_URL", "https://rmmapp.derfwins.com
 MESH_INTERNAL_URL = os.environ.get("MESH_INTERNAL_URL", "http://meshcentral:4430")
 MESH_LOGIN_TOKEN = os.environ.get("MESH_LOGIN_TOKEN_KEY", "")
 MESH_MESH_ID = os.environ.get("MESH_MESH_ID", "")
-MESH_LOGIN_KEY = os.environ.get("MESH_LOGIN_KEY", "1a41dc53b3670b84a3e5e7f2ee028fc496cff5e8ad2c5e2ea201e86ce326abe69ae9300ffdc47af65e5589cffbd53460ea1218fa5c90d9a2c868d24dd4b87021c505e3c0e200a2b1082277bfd601a474")
+# LoginCookieEncryptionKey from MeshCentral's meshcentral.db
+MESH_COOKIE_KEY = os.environ.get("MESH_COOKIE_KEY", "1a41dc53b3670b84a3e5e7f2ee028fc496cff5e8ad2c5e2ea201e86ce326abe69ae9300ffdc47af65e5589cffbd53460ea1218fa5c90d9a2c868d24dd4b87021c505e3c0e200a2b1082277bfd601a474")
+
+
+def encode_mesh_cookie(key_hex: str, username: str, action: int = 3, 
+                       expire: int = 0, once: str = "", 
+                       viewmode: int = 0, gotodeviceid: str = "") -> str:
+    """Encode a MeshCentral login cookie.
+    
+    MeshCentral uses AES-256-CBC + SHA3-384 to sign and encrypt cookies.
+    The key is hex-encoded: key[0:48] = SHA3-384 signing, key[48:] = AES encryption.
+    Output is base64 with @ replacing + and $ replacing /.
+    """
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding as sym_padding
+    
+    key = bytes.fromhex(key_hex)
+    sign_key = key[0:48]
+    enc_key = key[48:]
+    
+    # Build cookie JSON
+    cookie = {"a": action, "u": username, "time": int(time.time())}
+    if expire:
+        cookie["expire"] = expire
+    if once:
+        cookie["once"] = once
+    if viewmode:
+        cookie["viewmode"] = viewmode
+    if gotodeviceid:
+        cookie["gotodeviceid"] = gotodeviceid
+    
+    msg = json.dumps(cookie, separators=(',', ':')).encode()
+    
+    # SHA3-384 hash of signing key + message
+    h = hashlib.sha3_384()
+    h.update(sign_key)
+    msg = h.digest() + msg
+    
+    # AES-256-CBC encrypt
+    iv = secrets.token_bytes(16)
+    padder = sym_padding.PKCS7(128).padder()
+    padded = padder.update(msg) + padder.finalize()
+    
+    cipher = Cipher(algorithms.AES(enc_key), modes.CBC(iv))
+    encryptor = cipher.encryptor()
+    encrypted = encryptor.update(padded) + encryptor.finalize()
+    
+    # Base64 with MeshCentral's custom altchars (@ for +, $ for /)
+    result = base64.b64encode(iv + encrypted, altchars=b"@$").decode("utf-8")
+    return result
 
 
 @router.get("/download-agent/")
@@ -26,12 +80,7 @@ async def download_agent(
     os_type: str = Query("windows", description="windows, windows32, linux"),
 ):
     """Download MeshCentral agent installer with server config baked in."""
-    agent_ids = {
-        "windows": 3,
-        "windows32": 4,
-        "linux64": 6,
-        "linux": 5,
-    }
+    agent_ids = {"windows": 3, "windows32": 4, "linux64": 6, "linux": 5}
     os_key = os_type.lower()
     agent_id = agent_ids.get(os_key, 3)
     
@@ -76,10 +125,7 @@ def get_install_command(
     """Get the command to install MeshCentral agent via OpenRMM."""
     download_url = f"{MESH_SERVER_URL}/mesh/api/download-agent/?os_type={os_type}"
     if os_type.lower() == "windows":
-        return {
-            "os_type": "windows",
-            "command": f'powershell -Command "Invoke-WebRequest -Uri \\"{download_url}\\" -OutFile \\"$env:TEMP\\MeshAgent.exe\\" -UseBasicParsing; Start-Process -FilePath \\"$env:TEMP\\MeshAgent.exe\\" -ArgumentList \\"/quiet\\" -Wait"',
-        }
+        return {"os_type": "windows", "command": f'powershell -Command "Invoke-WebRequest -Uri \\"{download_url}\\" -OutFile \\"$env:TEMP\\MeshAgent.exe\\" -UseBasicParsing; Start-Process -FilePath \\"$env:TEMP\\MeshAgent.exe\\" -ArgumentList \\"/quiet\\" -Wait"'}
     else:
         return {"os_type": "linux", "command": f'curl -sL {download_url} | sudo bash'}
 
@@ -95,7 +141,6 @@ def get_agent_install_command(
 @router.get("/mesh-config/")
 def get_mesh_config():
     """Return MeshCentral mesh configuration for agent .msh file."""
-    import base64
     mesh_id_raw = MESH_MESH_ID
     if not mesh_id_raw:
         return JSONResponse(status_code=500, content={"error": "Mesh meshid not configured"})
@@ -123,28 +168,23 @@ def get_mesh_config():
 async def get_mesh_token(current_user=Depends(get_current_user)):
     """Generate a MeshCentral login token for the authenticated OpenRMM user.
     
-    Returns a token that can be used to auto-login to MeshCentral.
+    Creates an encrypted MeshCentral cookie that auto-logs the user in.
     """
-    if not MESH_LOGIN_KEY:
-        return JSONResponse(status_code=500, content={"error": "MeshCentral login key not configured"})
-    
-    # Use MeshCentral's login token API to create a one-time token
-    # The loginkey allows creating temporary access tokens
-    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-        try:
-            # MeshCentral login token creation endpoint
-            url = f"{MESH_INTERNAL_URL}/logintokens"
-            headers = {"Cookie": f"login={MESH_LOGIN_KEY}"}
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                return {"token": data.get("token", ""), "url": f"{MESH_SERVER_URL}/mesh/?login={data.get('token', '')}"}
-            # Fallback: use the login key directly as a cookie
-            return {"token": MESH_LOGIN_KEY, "url": f"{MESH_SERVER_URL}/mesh/?login={MESH_LOGIN_KEY}"}
-        except Exception as e:
-            logger.error(f"MeshCentral token generation failed: {e}")
-            # Fallback: return the login key for cookie-based auth
-            return {"token": MESH_LOGIN_KEY, "url": f"{MESH_SERVER_URL}/mesh/?login={MESH_LOGIN_KEY}"}
+    try:
+        cookie = encode_mesh_cookie(
+            MESH_COOKIE_KEY,
+            username="admin",
+            action=3,  # 3 = full login
+            expire=int(time.time()) + 3600,  # 1 hour
+            once=secrets.token_hex(16),  # single-use
+        )
+        return {
+            "token": cookie,
+            "url": f"{MESH_SERVER_URL}/mesh/?login={cookie}",
+        }
+    except Exception as e:
+        logger.error(f"MeshCentral token generation failed: {e}")
+        return JSONResponse(status_code=500, content={"error": f"Failed to generate token: {str(e)}"})
 
 
 @router.get("/session/")
@@ -155,22 +195,24 @@ async def get_mesh_session(
 ):
     """Get a direct MeshCentral session URL for a specific device.
     
-    Returns a URL that opens MeshCentral directly to the specified device
-    with the requested view mode (desktop, terminal, or files).
+    Returns a URL with an encrypted cookie that opens MeshCentral directly
+    to the specified device with the requested view mode.
     """
-    if not MESH_LOGIN_KEY:
-        return JSONResponse(status_code=500, content={"error": "MeshCentral login key not configured"})
-    
-    # Build a direct device URL with auto-login
-    # MeshCentral supports: /mesh/?login=TOKEN&gotodeviceid=NODEID&viewmode=V
-    session_url = (
-        f"{MESH_SERVER_URL}/mesh/"
-        f"?login={MESH_LOGIN_KEY}"
-        f"&gotodeviceid={device_id}"
-        f"&viewmode={viewmode}"
-    )
-    
-    return {"url": session_url}
+    try:
+        cookie = encode_mesh_cookie(
+            MESH_COOKIE_KEY,
+            username="admin",
+            action=3,
+            expire=int(time.time()) + 300,  # 5 minutes for direct link
+            once=secrets.token_hex(16),
+            viewmode=viewmode,
+            gotodeviceid=device_id,
+        )
+        session_url = f"{MESH_SERVER_URL}/mesh/?login={cookie}"
+        return {"url": session_url}
+    except Exception as e:
+        logger.error(f"MeshCentral session URL generation failed: {e}")
+        return JSONResponse(status_code=500, content={"error": f"Failed to generate session: {str(e)}"})
 
 
 @router.get("/sso-token/")
