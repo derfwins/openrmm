@@ -160,7 +160,7 @@ const DeviceDetail = () => {
             )}
             {agent.status === 'online' && (
               <button
-                onClick={() => meshCentral.openFiles(agent.mesh_node_id || agent.agent_id)}}
+                onClick={() => meshCentral.openFiles(agent.mesh_node_id || agent.agent_id)}
                 className="px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
               >
                 📁 Files

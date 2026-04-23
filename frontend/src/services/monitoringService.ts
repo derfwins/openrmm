@@ -7,6 +7,17 @@ import type {
 
 const API = ''
 
+// Auto-logout on 401
+const handleUnauthorized = (res: Response) => {
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = localStorage.getItem('token')
   const res = await fetch(`${API}${path}`, {
@@ -17,6 +28,7 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
       ...opts?.headers,
     },
   })
+  if (handleUnauthorized(res)) throw new Error('Session expired')
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`)
   return res.json()
 }

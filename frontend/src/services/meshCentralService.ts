@@ -1,3 +1,14 @@
+// Auto-logout on 401
+const handleUnauthorized = (res: Response) => {
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
 class MeshCentralService {
   /** Base API path for MeshCentral endpoints */
   private API_BASE = '/mesh/api'
@@ -12,6 +23,7 @@ class MeshCentralService {
     const res = await fetch(`${this.API_BASE}/token/`, {
       headers: { Authorization: `Bearer ${token}` },
     })
+    if (handleUnauthorized(res)) throw new Error('Session expired')
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
       throw new Error(err.detail || 'Failed to get MeshCentral token')
@@ -34,7 +46,8 @@ class MeshCentralService {
         `${this.API_BASE}/session/?device_id=${encodeURIComponent(meshDeviceId)}&viewmode=${viewmode}`,
         { headers: { Authorization: `Bearer ${token}` } },
       )
-      if (!res.ok) {
+      if (handleUnauthorized(res)) throw new Error('Session expired')
+    if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.detail || 'Failed to get MeshCentral session')
       }

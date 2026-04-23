@@ -4,12 +4,24 @@ import type {
   AutomationSchedule,
 } from '../types/automation'
 
+// Auto-logout on 401
+const handleUnauthorized = (res: Response) => {
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
 const BASE = '/automations'
 
 export const automationService = {
   async list(): Promise<AutomationTask[]> {
     try {
       const resp = await fetch(`${BASE}/`, { headers: this._headers() })
+      if (handleUnauthorized(resp)) throw new Error('Session expired')
       if (!resp.ok) throw new Error('Failed to list automations')
       return resp.json()
     } catch {
@@ -20,6 +32,7 @@ export const automationService = {
   async get(id: string): Promise<AutomationTask | null> {
     try {
       const resp = await fetch(`${BASE}/${id}/`, { headers: this._headers() })
+      if (handleUnauthorized(resp)) throw new Error('Session expired')
       if (!resp.ok) return null
       return resp.json()
     } catch {

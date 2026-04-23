@@ -1,6 +1,17 @@
 import type { Report, ReportSchedule, ReportType, ReportDateRange, ReportFilters } from '../types/report'
 import { API_BASE_URL } from '../config'
 
+// Auto-logout on 401
+const handleUnauthorized = (res: Response) => {
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('token')
   const res = await fetch(`${API_BASE_URL}/openrmm${path}`, {
@@ -11,6 +22,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       ...opts.headers,
     },
   })
+  if (handleUnauthorized(res)) throw new Error('Session expired')
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`)
   return res.json()
 }
@@ -36,6 +48,7 @@ export async function downloadReport(reportId: string): Promise<Blob> {
   const res = await fetch(`${API_BASE_URL}/openrmm/reports/${reportId}/download/`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
+  if (handleUnauthorized(res)) throw new Error('Session expired')
   if (!res.ok) throw new Error(`Download failed: ${res.status}`)
   return res.blob()
 }

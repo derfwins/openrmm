@@ -4,7 +4,26 @@ import type { AgentInfo, AgentCommand, AgentEnrollment } from '../types/agent'
 // Get auth token from localStorage
 const getToken = () => localStorage.getItem('token')
 
-// Auto-logout on 401
+// Auto-logout on 401 — clear token and redirect to login
+const handleUnauthorized = (response: Response) => {
+  if (response.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+    return true
+  }
+  return false
+}
+
+// Authenticated fetch wrapper — auto-redirects to login on 401
+const authFetch = async (url: string, opts?: RequestInit): Promise<Response> => {
+  const response = await fetch(url, opts)
+  if (handleUnauthorized(response)) {
+    throw new Error('Session expired — redirecting to login')
+  }
+  return response
+}
+
 
 // Auth header — JWT Bearer token (OpenRMM custom backend)
 const authHeaders = (): Record<string, string> => {
@@ -49,7 +68,7 @@ export const apiService = {
     if (clientId) params.set('client_id', String(clientId))
     if (siteId) params.set('site_id', String(siteId))
     const qs = params.toString() ? `?${params}` : ''
-    const response = await fetch(`${API_BASE_URL}/agents/${qs}`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${qs}`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch devices')
@@ -57,7 +76,7 @@ export const apiService = {
   },
 
   async getDevice(id: string) {
-    const response = await fetch(`${API_BASE_URL}/agents/${id}/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${id}/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch device')
@@ -65,7 +84,7 @@ export const apiService = {
   },
 
   async deleteDevice(id: string, uninstall: boolean = false) {
-    const response = await fetch(`${API_BASE_URL}/agents/${id}/?uninstall=${uninstall}`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${id}/?uninstall=${uninstall}`, {
       method: 'DELETE',
       headers: authHeaders(),
     })
@@ -76,7 +95,7 @@ export const apiService = {
   // Alerts
   async getAlerts(resolved?: boolean) {
     const params = resolved !== undefined ? `?resolved=${resolved}` : ''
-    const response = await fetch(`${API_BASE_URL}/alerts/${params}`, {
+    const response = await authFetch(`${API_BASE_URL}/alerts/${params}`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch alerts')
@@ -84,7 +103,7 @@ export const apiService = {
   },
 
   async resolveAlert(id: number) {
-    const response = await fetch(`${API_BASE_URL}/alerts/${id}/`, {
+    const response = await authFetch(`${API_BASE_URL}/alerts/${id}/`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify({ is_resolved: true }),
@@ -94,7 +113,7 @@ export const apiService = {
   },
 
   async resolveAllAlerts() {
-    const response = await fetch(`${API_BASE_URL}/alerts/resolve_all/`, {
+    const response = await authFetch(`${API_BASE_URL}/alerts/resolve_all/`, {
       method: 'POST',
       headers: authHeaders(),
     })
@@ -104,7 +123,7 @@ export const apiService = {
 
   // Scripts
   async getScripts() {
-    const response = await fetch(`${API_BASE_URL}/scripts/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch scripts')
@@ -112,7 +131,7 @@ export const apiService = {
   },
 
   async createScript(script: any) {
-    const response = await fetch(`${API_BASE_URL}/scripts/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(script),
@@ -122,7 +141,7 @@ export const apiService = {
   },
 
   async updateScript(id: number, script: any) {
-    const response = await fetch(`${API_BASE_URL}/scripts/${id}/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/${id}/`, {
       method: 'PUT',
       headers: authHeaders(),
       body: JSON.stringify(script),
@@ -132,7 +151,7 @@ export const apiService = {
   },
 
   async deleteScript(id: number) {
-    const response = await fetch(`${API_BASE_URL}/scripts/${id}/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/${id}/`, {
       method: 'DELETE',
       headers: authHeaders(),
     })
@@ -141,7 +160,7 @@ export const apiService = {
   },
 
   async runScript(agentId: string, scriptId: string) {
-    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/runscript/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/runscript/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ script: scriptId }),
@@ -152,7 +171,7 @@ export const apiService = {
 
   // Remote commands
   async sendCommand(agentId: string, command: string, shell: string = 'powershell') {
-    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/cmd/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/cmd/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ cmd: command, shell }),
@@ -163,7 +182,7 @@ export const apiService = {
 
   // System info
   async getSystemInfo(agentId: string) {
-    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/sysinfo/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/sysinfo/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch system info')
@@ -172,7 +191,7 @@ export const apiService = {
 
   // Clients / Sites hierarchy
   async getClients() {
-    const response = await fetch(`${API_BASE_URL}/clients/`, {
+    const response = await authFetch(`${API_BASE_URL}/clients/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch clients')
@@ -180,7 +199,7 @@ export const apiService = {
   },
 
   async getSites() {
-    const response = await fetch(`${API_BASE_URL}/clients/sites/`, {
+    const response = await authFetch(`${API_BASE_URL}/clients/sites/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch sites')
@@ -189,7 +208,7 @@ export const apiService = {
 
   // Checks
   async getChecks(_agentId: string) {
-    const response = await fetch(`${API_BASE_URL}/checks/`, {
+    const response = await authFetch(`${API_BASE_URL}/checks/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch checks')
@@ -205,7 +224,7 @@ export const apiService = {
 
   // Core settings
   async getSettings() {
-    const response = await fetch(`${API_BASE_URL}/core/settings/`, {
+    const response = await authFetch(`${API_BASE_URL}/core/settings/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch settings')
@@ -214,7 +233,7 @@ export const apiService = {
 
   // Windows Updates
   async getUpdates(agentId: string) {
-    const response = await fetch(`${API_BASE_URL}/winupdate/${agentId}/`, {
+    const response = await authFetch(`${API_BASE_URL}/winupdate/${agentId}/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch updates')
@@ -223,7 +242,7 @@ export const apiService = {
 
   // Software
   async getSoftware(agentId: string) {
-    const response = await fetch(`${API_BASE_URL}/software/${agentId}/`, {
+    const response = await authFetch(`${API_BASE_URL}/software/${agentId}/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch software')
@@ -232,7 +251,7 @@ export const apiService = {
 
   // Agent Management
   async getAgents(): Promise<AgentInfo[]> {
-    const response = await fetch(`${API_BASE_URL}/agents/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch agents')
@@ -240,7 +259,7 @@ export const apiService = {
   },
 
   async getAgentDetail(id: string): Promise<AgentInfo> {
-    const response = await fetch(`${API_BASE_URL}/agents/${id}/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${id}/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch agent detail')
@@ -248,7 +267,7 @@ export const apiService = {
   },
 
   async sendAgentCommand(agentId: string, command: string, shell: string = 'powershell', timeout: number = 300): Promise<AgentCommand> {
-    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/commands/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/commands/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ command, shell, timeout }),
@@ -258,7 +277,7 @@ export const apiService = {
   },
 
   async getAgentHistory(agentId: string): Promise<AgentCommand[]> {
-    const response = await fetch(`${API_BASE_URL}/agents/${agentId}/history/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/history/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch command history')
@@ -266,12 +285,21 @@ export const apiService = {
   },
 
   async enrollAgent(enrollment: AgentEnrollment): Promise<{ agent_id: string; secret: string }> {
-    const response = await fetch(`${API_BASE_URL}/agents/enroll/`, {
+    const response = await authFetch(`${API_BASE_URL}/agents/enroll/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(enrollment),
     })
     if (!response.ok) throw new Error('Failed to enroll agent')
+    return response.json()
+  },
+
+  async deleteAgent(agentId: string) {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to delete agent')
     return response.json()
   },
 }

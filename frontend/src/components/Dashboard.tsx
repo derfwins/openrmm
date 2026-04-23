@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
+import { IconCheck } from './Icons'
 
 interface DashboardStats {
   totalAgents: number
@@ -171,7 +172,7 @@ const Dashboard = () => {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Agents" value={stats.totalAgents} icon="💻" gradient="from-blue-600 to-indigo-700" link="/devices" />
+        <StatCard title="Total Agents" value={stats.totalAgents} icon="<IconDevices size={18} />" gradient="from-blue-600 to-indigo-700" link="/devices" />
         <StatCard title="Online" value={stats.onlineAgents} icon="🟢" gradient="from-emerald-600 to-green-700" link="/devices?filter=online" />
         <StatCard title="Offline" value={stats.offlineAgents} icon="🔴" gradient="from-red-600 to-rose-700" link="/devices?filter=offline" />
         <StatCard title="Alerts" value={stats.totalAlerts} icon="⚠️" gradient="from-amber-600 to-orange-700" link="/alerts" />
@@ -213,7 +214,7 @@ const Dashboard = () => {
           </div>
           {alerts.length === 0 ? (
             <div className="p-8 text-center">
-              <div className="text-3xl mb-2">✅</div>
+              <div className="text-3xl mb-2"><IconCheck size={18} /></div>
               <p className="text-sm text-gray-400">No unresolved alerts</p>
             </div>
           ) : (

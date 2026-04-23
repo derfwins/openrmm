@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
+import { IconDesktop, IconSearch } from './Icons'
+
 
 const DeviceList = () => {
   const { selectedClient } = useClient()
@@ -22,6 +24,8 @@ const DeviceList = () => {
     }
   }
   const [search, setSearch] = useState('')
+
+
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'hostname' | 'status' | 'last_seen'>('hostname')
@@ -104,7 +108,7 @@ const DeviceList = () => {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center max-w-md animate-[fadeIn_0.5s_ease-out]">
           <div className="mx-auto w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-4 dark:bg-gray-900/50">
-            <div className="text-5xl">🖥️</div>
+            <div className="text-5xl"><IconDesktop size={16} /></div>
             <h2 className="text-lg font-semibold text-white">No devices enrolled yet</h2>
             <p className="text-sm text-gray-400">Install the OpenRMM agent on your devices to start managing them.</p>
             <Link
@@ -141,7 +145,7 @@ const DeviceList = () => {
       <div className="flex flex-wrap gap-3 items-center">
         {/* Search */}
         <div className="relative flex-1 min-w-[200px]">
-          <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+          <span className="absolute left-3 top-2.5 text-gray-400"><IconSearch size={16} /></span>
           <input
             type="text"
             placeholder="Search hostname, IP, site..."
@@ -219,13 +223,13 @@ const DeviceList = () => {
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center">
-                  <div className="text-4xl mb-3">🖥️</div>
+                  <div className="text-4xl mb-3"><IconDesktop size={16} /></div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     {agents.length === 0 ? 'No agents installed yet' : 'No agents match your filters'}
                   </p>
                   {agents.length === 0 && (
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                      Install the Tactical RMM agent on devices to start monitoring
+                      Install the OpenRMM agent on devices to start monitoring
                     </p>
                   )}
                 </td>

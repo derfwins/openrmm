@@ -34,12 +34,14 @@ const TARGET_OPTIONS: { type: AutomationTargets['type']; label: string }[] = [
   { type: 'specific', label: 'Specific Devices' },
 ]
 
+// @ts-expect-error demo data for future use
 const DEMO_HISTORY: AutomationHistory[] = [
   { id: 'h1', taskId: '1', taskName: 'Weekly Patch Cycle', startedAt: '2024-04-14T02:00:00Z', completedAt: '2024-04-14T02:15:00Z', status: 'completed', actions: [{ actionType: 'patch', startedAt: '2024-04-14T02:00:00Z', completedAt: '2024-04-14T02:15:00Z', status: 'completed', output: '14 patches installed' }] },
   { id: 'h2', taskId: '2', taskName: 'High CPU Auto-Reboot', startedAt: '2024-04-13T14:30:00Z', completedAt: '2024-04-13T14:35:00Z', status: 'completed', actions: [{ actionType: 'reboot', startedAt: '2024-04-13T14:30:00Z', completedAt: '2024-04-13T14:35:00Z', status: 'completed', output: 'Device server-01 rebooted' }] },
   { id: 'h3', taskId: '1', taskName: 'Weekly Patch Cycle', startedAt: '2024-04-07T02:00:00Z', completedAt: '2024-04-07T02:20:00Z', status: 'completed', actions: [{ actionType: 'patch', startedAt: '2024-04-07T02:00:00Z', completedAt: '2024-04-07T02:20:00Z', status: 'completed', output: '8 patches installed' }] },
 ]
 
+// @ts-expect-error demo data for future use
 const DEMO_TASKS: AutomationTask[] = [
   {
     id: '1', name: 'Weekly Patch Cycle', description: 'Install approved patches every Saturday at 2 AM', enabled: true, status: 'active',

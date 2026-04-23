@@ -66,9 +66,23 @@ class WebSocketService {
       }
     }
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       this.stopHeartbeat()
       this.connectionCallbacks.forEach(cb => cb(false))
+      // Auth rejected — stop reconnecting and redirect to login
+      if (event.code === 4001 || event.code === 1008) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('username')
+        window.location.href = '/login'
+        return
+      }
+      // Too many reconnect attempts = likely auth issue, stop trying
+      if (this.reconnectAttempts >= 5) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('username')
+        window.location.href = '/login'
+        return
+      }
       if (!this.intentionalClose) {
         this.scheduleReconnect()
       }

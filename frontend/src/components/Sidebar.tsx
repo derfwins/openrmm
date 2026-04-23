@@ -1,6 +1,23 @@
-import { useState } from 'react'
-import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { useState, type ReactNode } from 'react'
+import { useLocation, Link } from 'react-router-dom'
 import { useClient } from '../contexts/ClientContext'
+import {
+  IconDashboard, IconDevices, IconAlerts, IconAudit, IconAutomation,
+  IconSoftware, IconPatches, IconInstall, IconAI, IconReports,
+  IconScripts, IconUsers, IconSettings, IconClients, IconMonitor,
+  IconChevronLeft, IconChevronRight
+} from './Icons'
+
+interface NavItem {
+  icon: ReactNode
+  label: string
+  path: string
+}
+
+interface NavSection {
+  label?: string
+  items: NavItem[]
+}
 
 function ClientSelector({ collapsed }: { collapsed: boolean }) {
   const { clients, selectedClient, selectClient } = useClient()
@@ -15,7 +32,7 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
           className="w-full p-2 rounded-lg bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 text-xs transition-colors"
           title="All Clients"
         >
-          🏢
+          <IconClients size={18} />
         </button>
       </div>
     )
@@ -40,7 +57,6 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
       </button>
       {open && (
         <div className="absolute left-3 right-3 top-full mt-1 bg-gray-900 border border-white/10 rounded-lg shadow-xl z-50 max-h-72 flex flex-col">
-          {/* Search */}
           <div className="p-2 border-b border-white/[0.06]">
             <input
               type="text"
@@ -51,7 +67,6 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
               autoFocus
             />
           </div>
-          {/* List */}
           <div className="overflow-y-auto flex-1">
             <button
               onClick={() => { selectClient(null); setOpen(false); setSearch('') }}
@@ -84,43 +99,40 @@ const Sidebar = () => {
   const location = useLocation()
   const { selectedClient } = useClient()
 
-  // When a client is selected, show client-scoped navigation
-  const clientNav = [
+  const clientNav: NavSection[] = [
     {
       label: selectedClient?.name || 'Client',
       items: [
-        { icon: '📊', label: 'Dashboard', path: '/dashboard' },
-        { icon: '💻', label: 'Devices', path: '/devices' },
-        { icon: '📡', label: 'Monitoring', path: '/monitoring' },
-        { icon: '🔔', label: 'Alerts', path: '/alerts' },
-        { icon: '📜', label: 'Scripts', path: '/scripts' },
-        { icon: '⚡', label: 'Automation', path: '/automation' },
-        { icon: '📦', label: 'Software', path: '/software' },
-        { icon: '🔧', label: 'Patches', path: '/patches' },
-        { icon: '📥', label: 'Install Agent', path: '/install' },
+        { icon: <IconDashboard size={18} />, label: 'Dashboard', path: '/dashboard' },
+        { icon: <IconDevices size={18} />, label: 'Devices', path: '/devices' },
+        { icon: <IconMonitor size={18} />, label: 'Monitoring', path: '/monitoring' },
+        { icon: <IconAlerts size={18} />, label: 'Alerts', path: '/alerts' },
+        { icon: <IconScripts size={18} />, label: 'Scripts', path: '/scripts' },
+        { icon: <IconAutomation size={18} />, label: 'Automation', path: '/automation' },
+        { icon: <IconSoftware size={18} />, label: 'Software', path: '/software' },
+        { icon: <IconPatches size={18} />, label: 'Patches', path: '/patches' },
+        { icon: <IconInstall size={18} />, label: 'Install Agent', path: '/install' },
       ]
     },
   ]
 
-  // Global nav (always shown)
-  const globalNav = [
+  const globalNav: NavSection[] = [
     {
       label: 'System',
       items: [
-        { icon: '🤖', label: 'AI Copilot', path: '/ai' },
-        { icon: '📈', label: 'Reports', path: '/reports' },
-        { icon: '📋', label: 'Audit Log', path: '/audit' },
-        { icon: '👥', label: 'Users', path: '/users' },
-        { icon: '⚙️', label: 'Settings', path: '/settings' },
+        { icon: <IconAI size={18} />, label: 'AI Copilot', path: '/ai' },
+        { icon: <IconReports size={18} />, label: 'Reports', path: '/reports' },
+        { icon: <IconAudit size={18} />, label: 'Audit Log', path: '/audit' },
+        { icon: <IconUsers size={18} />, label: 'Users', path: '/users' },
+        { icon: <IconSettings size={18} />, label: 'Settings', path: '/settings' },
       ]
     },
   ]
 
-  // When no client selected, show clients list + global
-  const noClientNav = [
+  const noClientNav: NavSection[] = [
     {
       items: [
-        { icon: '🏢', label: 'Clients', path: '/clients' },
+        { icon: <IconClients size={18} />, label: 'Clients', path: '/clients' },
       ]
     },
     ...globalNav,
@@ -164,7 +176,7 @@ const Sidebar = () => {
                         : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
                     }`}
                   >
-                    <span className={`text-base ${active ? 'drop-shadow-[0_0_6px_rgba(59,130,246,0.5)]' : ''}`}>
+                    <span className={`shrink-0 ${active ? 'drop-shadow-[0_0_6px_rgba(59,130,246,0.5)]' : ''}`}>
                       {item.icon}
                     </span>
                     {!collapsed && <span>{item.label}</span>}
@@ -176,13 +188,21 @@ const Sidebar = () => {
         ))}
       </nav>
 
-      {/* Collapse toggle */}
-      <div className="p-2.5 border-t border-gray-800/50">
+      {/* User menu + Collapse */}
+      <div className="p-2.5 border-t border-gray-800/50 space-y-1">
+        <div className="flex items-center gap-2 px-3 py-2 text-sm text-gray-500">
+          <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded flex items-center justify-center text-white text-[10px] font-bold shrink-0">
+            {localStorage.getItem('username')?.[0]?.toUpperCase() || 'A'}
+          </div>
+          {!collapsed && (
+            <span className="text-gray-400 truncate text-xs">{localStorage.getItem('username') || 'admin'}</span>
+          )}
+        </div>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-colors text-sm"
         >
-          <span className="text-xs">{collapsed ? '→' : '←'}</span>
+          {collapsed ? <IconChevronRight size={14} /> : <IconChevronLeft size={14} />}
           {!collapsed && <span className="text-xs">Collapse</span>}
         </button>
       </div>
