@@ -1,12 +1,16 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import { useClient } from '../contexts/ClientContext'
 import {
   IconDashboard, IconDevices, IconAlerts, IconAudit, IconAutomation,
   IconSoftware, IconPatches, IconInstall, IconAI, IconReports,
   IconScripts, IconUsers, IconSettings, IconClients, IconMonitor,
-  IconChevronLeft, IconChevronRight
+  IconChevronLeft, IconChevronRight, IconLogout
 } from './Icons'
+
+// Inactivity auto-logout: 1 hour of no activity => redirect to login
+const INACTIVITY_MS = 60 * 60 * 1000 // 1 hour
+const WARN_BEFORE_MS = 60 * 1000 // warn 1 minute before
 
 interface NavItem {
   icon: ReactNode
@@ -96,8 +100,46 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
 
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)
+  const [warnLogout, setWarnLogout] = useState(false)
   const location = useLocation()
   const { selectedClient } = useClient()
+
+  // Inactivity auto-logout
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>
+    let warnId: ReturnType<typeof setTimeout>
+
+    const resetTimer = () => {
+      setWarnLogout(false)
+      clearTimeout(timeoutId)
+      clearTimeout(warnId)
+      // Warn 1 minute before logout
+      warnId = setTimeout(() => setWarnLogout(true), INACTIVITY_MS - WARN_BEFORE_MS)
+      // Logout after full inactivity period
+      timeoutId = setTimeout(() => {
+        localStorage.removeItem('token')
+        localStorage.removeItem('username')
+        window.location.href = '/login'
+      }, INACTIVITY_MS)
+    }
+
+    resetTimer()
+
+    // Reset on user activity
+    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'] as const
+    events.forEach(e => window.addEventListener(e, resetTimer))
+    return () => {
+      clearTimeout(timeoutId)
+      clearTimeout(warnId)
+      events.forEach(e => window.removeEventListener(e, resetTimer))
+    }
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    window.location.href = '/login'
+  }, [])
 
   const clientNav: NavSection[] = [
     {
@@ -150,6 +192,14 @@ const Sidebar = () => {
         {!collapsed && <span className="font-semibold text-white tracking-tight">OpenRMM</span>}
       </div>
 
+      {/* Inactivity warning */}
+      {warnLogout && (
+        <div className="mx-2.5 mt-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-400 flex items-start gap-2">
+          <span>Inactivity logout in 1 min.</span>
+          <button onClick={() => setWarnLogout(false)} className="text-yellow-500 hover:text-yellow-300 ml-auto shrink-0">✕</button>
+        </div>
+      )}
+
       {/* Client Selector */}
       <ClientSelector collapsed={collapsed} />
 
@@ -188,7 +238,7 @@ const Sidebar = () => {
         ))}
       </nav>
 
-      {/* User menu + Collapse */}
+      {/* User menu + Logout + Collapse */}
       <div className="p-2.5 border-t border-gray-800/50 space-y-1">
         <div className="flex items-center gap-2 px-3 py-2 text-sm text-gray-500">
           <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded flex items-center justify-center text-white text-[10px] font-bold shrink-0">
@@ -198,6 +248,14 @@ const Sidebar = () => {
             <span className="text-gray-400 truncate text-xs">{localStorage.getItem('username') || 'admin'}</span>
           )}
         </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm"
+          title="Sign Out"
+        >
+          <IconLogout size={16} />
+          {!collapsed && <span className="text-xs">Sign Out</span>}
+        </button>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-colors text-sm"
