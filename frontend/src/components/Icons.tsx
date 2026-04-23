@@ -80,3 +80,4 @@ export const IconColumns = icon(<><rect x="3" y="3" width="18" height="18" rx="2
 // Pagination
 export const IconFirstPage = icon(<><polyline points="11 19 2 12 11 5"/><line x1="22" y1="5" x2="22" y2="19"/></>)
 export const IconLastPage = icon(<><polyline points="13 17 22 12 13 7"/><polyline points="2 5 2 19"/></>)
+export const IconCritical = icon(<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>)
