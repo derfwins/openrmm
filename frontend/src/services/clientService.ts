@@ -54,8 +54,8 @@ export const createClient = (data: { name: string; site_name?: string }) => api<
 })
 
 // Sites
-export const getSites = (clientId: number) => api<Site[]>(`/clients/${clientId}/sites/`)
-export const createSite = (clientId: number, data: { name: string }) => api<Site>(`/clients/${clientId}/sites/`, {
+export const getSites = (clientId: number) => api<Site[]>(`/sites/?client=${clientId}`)
+export const createSite = (clientId: number, data: { name: string }) => api<Site>('/sites/', {
   method: 'POST',
   body: JSON.stringify({ site: { client: clientId, name: data.name } })
 })
