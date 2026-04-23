@@ -1,5 +1,6 @@
 // Real-time WebSocket service for OpenRMM
 // Auto-reconnects with exponential backoff, heartbeat, message queuing
+// Does NOT auto-logout on WS failure — only on explicit auth rejection
 
 type MessageHandler = (data: unknown) => void
 type ConnectionHandler = (connected: boolean) => void
@@ -14,6 +15,7 @@ interface WSMessage {
 class WebSocketService {
   private ws: WebSocket | null = null
   private reconnectAttempts = 0
+  private maxReconnectAttempts = 10
   private maxReconnectDelay = 30000
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -69,23 +71,21 @@ class WebSocketService {
     this.ws.onclose = (event) => {
       this.stopHeartbeat()
       this.connectionCallbacks.forEach(cb => cb(false))
-      // Auth rejected — stop reconnecting and redirect to login
+
+      // Auth rejected — only logout on explicit auth rejection codes
       if (event.code === 4001 || event.code === 1008) {
         localStorage.removeItem('token')
         localStorage.removeItem('username')
         window.location.href = '/login'
         return
       }
-      // Too many reconnect attempts = likely auth issue, stop trying
-      if (this.reconnectAttempts >= 5) {
-        localStorage.removeItem('token')
-        localStorage.removeItem('username')
-        window.location.href = '/login'
-        return
-      }
-      if (!this.intentionalClose) {
+
+      // Connection failures (network, server down, etc.) — just retry, don't logout
+      if (!this.intentionalClose && this.reconnectAttempts < this.maxReconnectAttempts) {
         this.scheduleReconnect()
       }
+      // If max attempts reached, just stop — don't force logout.
+      // The app works fine over HTTP; WS is a nice-to-have.
     }
 
     this.ws.onerror = () => {
