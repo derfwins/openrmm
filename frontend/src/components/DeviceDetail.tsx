@@ -1,8 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
 import meshCentral from '../services/meshCentralService'
+import {
+  IconWindows, IconLinux, IconApple, IconMonitor, IconTerminal,
+  IconFolder, IconRefresh, IconTrash, IconSearch
+} from './Icons'
+
+const PlatformIcon = ({ plat }: { plat: string }) => {
+  switch (plat) {
+    case 'windows': return <IconWindows size={16} />
+    case 'linux': return <IconLinux size={16} />
+    case 'darwin': return <IconApple size={16} />
+    default: return <IconMonitor size={16} />
+  }
+}
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -79,9 +92,9 @@ const DeviceDetail = () => {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <div className="text-4xl mb-3">🔍</div>
+          <IconSearch size={40} className="mx-auto mb-3 text-gray-400" />
           <p className="text-gray-500 dark:text-gray-400">Agent not found</p>
-          <Link to="/devices" className="text-blue-500 hover:underline text-sm mt-2 inline-block">← Back to devices</Link>
+          <Link to="/devices" className="text-blue-500 hover:underline text-sm mt-2 inline-block">Back to devices</Link>
         </div>
       </div>
     )
@@ -90,6 +103,10 @@ const DeviceDetail = () => {
   const disks = parseJsonSafe(agent.disks_json, [])
   const memory = parseJsonSafe(agent.memory_json, {})
   const users = parseJsonSafe(agent.logged_in_users, [])
+  const services = parseJsonSafe(agent.services_json, [])
+  const cpuPct = agent.cpu_percent ?? 0
+  const memPct = memory.percent ?? 0
+  const meshNodeId = agent.mesh_node_id || ''
 
   const handleServiceAction = async (action: string, serviceName: string) => {
     if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} service "${serviceName}"?`)) return
@@ -100,7 +117,6 @@ const DeviceDetail = () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
-        // Refresh agent data after a short delay to allow the service to change state
         setTimeout(() => loadAgent(), 2000)
       } else {
         alert('Failed to send service command')
@@ -112,9 +128,17 @@ const DeviceDetail = () => {
     }
   }
 
-  const services = parseJsonSafe(agent.services_json, [])
-  const cpuPct = agent.cpu_percent ?? 0
-  const memPct = memory.percent ?? 0
+  const handleRemoteDesktop = () => {
+    meshCentral.openDesktop(meshNodeId || agent.agent_id)
+  }
+
+  const handleRemoteTerminal = () => {
+    meshCentral.openTerminal(meshNodeId || agent.agent_id)
+  }
+
+  const handleRemoteFiles = () => {
+    meshCentral.openFiles(meshNodeId || agent.agent_id)
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -127,13 +151,13 @@ const DeviceDetail = () => {
 
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-4">
             <div className={`w-4 h-4 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">{agent.hostname || 'Unknown'}</h1>
               <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
-                <span>{agent.plat === 'windows' ? '🪟' : agent.plat === 'linux' ? '🐧' : '🍎'} {agent.os_name || agent.plat || 'Unknown'}</span>
+                <span className="flex items-center gap-1"><PlatformIcon plat={agent.plat} /> {agent.os_name || agent.plat || 'Unknown'}</span>
                 <span>·</span>
                 <span className="font-mono">{agent.local_ip || '—'}</span>
                 <span>·</span>
@@ -143,29 +167,38 @@ const DeviceDetail = () => {
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {agent.status === 'online' && (
+              <>
+                <button
+                  onClick={handleRemoteDesktop}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700"
+                  disabled={!meshNodeId && !agent.agent_id}
+                >
+                  <IconMonitor size={16} /> Remote Desktop
+                </button>
+                <button
+                  onClick={handleRemoteTerminal}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-blue-600 text-white hover:bg-blue-700"
+                  disabled={!meshNodeId && !agent.agent_id}
+                >
+                  <IconTerminal size={16} /> Terminal
+                </button>
+                <button
+                  onClick={handleRemoteFiles}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
+                  disabled={!meshNodeId && !agent.agent_id}
+                >
+                  <IconFolder size={16} /> Files
+                </button>
+              </>
+            )}
             <button
               onClick={() => setShowTerminal(!showTerminal)}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${showTerminal ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors ${showTerminal ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
             >
-              💻 {showTerminal ? 'Hide Terminal' : 'Terminal'}
+              <IconTerminal size={16} /> {showTerminal ? 'Hide Shell' : 'Shell'}
             </button>
-            {agent.status === 'online' && (
-              <button
-                onClick={() => meshCentral.openDesktop(agent.mesh_node_id || agent.agent_id)}
-                className="px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700"
-              >
-                🖥️ Remote Desktop
-              </button>
-            )}
-            {agent.status === 'online' && (
-              <button
-                onClick={() => meshCentral.openFiles(agent.mesh_node_id || agent.agent_id)}
-                className="px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
-              >
-                📁 Files
-              </button>
-            )}
             {agent.status === 'online' && (
               <button
                 onClick={async () => {
@@ -173,30 +206,27 @@ const DeviceDetail = () => {
                     await fetch(`/agents/${id}/restart/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
                   }
                 }}
-                className="px-4 py-2 text-sm rounded-lg transition-colors bg-orange-600 text-white hover:bg-orange-700"
+                className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-orange-600 text-white hover:bg-orange-700"
               >
-                🔄 Restart Agent
+                <IconRefresh size={16} /> Restart Agent
               </button>
             )}
             <button
               onClick={async () => {
                 const name = agent.hostname || id
                 if (!confirm(`Delete "${name}" from OpenRMM?`)) return
-                const uninstall = confirm('Also uninstall the agent from the machine? (This will stop the service and remove all files.)')
+                const uninstall = confirm('Also uninstall the agent from the machine?')
                 try {
                   const res = await fetch(`/agents/${id}/?uninstall=${uninstall}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-                  if (res.ok) {
-                    window.location.href = '/devices'
-                  } else {
-                    alert('Failed to delete device')
-                  }
+                  if (res.ok) window.location.href = '/devices'
+                  else alert('Failed to delete device')
                 } catch (e) {
                   alert('Failed to delete device: ' + e)
                 }
               }}
-              className="px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700"
+              className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700"
             >
-              🗑️ Delete
+              <IconTrash size={16} /> Delete
             </button>
           </div>
         </div>
@@ -243,7 +273,7 @@ const DeviceDetail = () => {
           </p>
         </div>
 
-        {/* Disk - show first disk */}
+        {/* Disk */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
           {disks.length > 0 ? (() => {
             const disk = disks[0]
@@ -270,7 +300,7 @@ const DeviceDetail = () => {
         </div>
       </div>
 
-      {/* Additional disks if any */}
+      {/* Additional disks */}
       {disks.length > 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {disks.slice(1).map((disk: any, i: number) => (
@@ -327,7 +357,7 @@ const DeviceDetail = () => {
                   <InfoRow label="Agent Version" value={`v${agent.version || '—'}`} />
                   <InfoRow label="Last Seen" value={agent.last_seen ? new Date(agent.last_seen).toLocaleString() : '—'} />
                   <InfoRow label="Uptime" value={agent.uptime_seconds ? formatUptime(agent.uptime_seconds) : '—'} />
-                  <InfoRow label="Monitoring Type" value={agent.monitoring_type || '—'} />
+                  <InfoRow label="MeshCentral Node" value={meshNodeId || 'Not linked'} />
                 </div>
               </div>
 
@@ -335,11 +365,10 @@ const DeviceDetail = () => {
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Activity</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Services" value={services.length || '—'} icon="🔧" />
-                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon="⚙️" />
-                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon="🔥" />
-                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon="🧠" />
-                  <MiniStat label="Logged-in Users" value={users.length || '—'} icon="👤" />
+                  <MiniStat label="Services" value={services.length || '—'} icon={<IconRefresh size={18} className="text-blue-400" />} />
+                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon={<IconMonitor size={18} className="text-gray-400" />} />
+                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon={<IconMonitor size={18} className="text-yellow-400" />} />
+                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon={<IconMonitor size={18} className="text-green-400" />} />
                 </div>
                 {users.length > 0 && (
                   <div>
@@ -378,7 +407,7 @@ const DeviceDetail = () => {
 
           {activeTab === 'checks' && (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <div className="text-4xl mb-3">✅</div>
+              <IconSearch size={40} className="mx-auto mb-3 text-gray-400" />
               <p className="text-sm">Checks will appear here when configured</p>
             </div>
           )}
@@ -456,20 +485,20 @@ const DeviceDetail = () => {
                                 onClick={() => handleServiceAction('start', svc.name)}
                                 disabled={serviceActionLoading === svc.name + 'start'}
                                 className="px-2 py-0.5 text-xs rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 disabled:opacity-50"
-                              >▶ Start</button>
+                              >Start</button>
                             )}
                             {svc.status === 'running' && (
                               <button
                                 onClick={() => handleServiceAction('stop', svc.name)}
                                 disabled={serviceActionLoading === svc.name + 'stop'}
                                 className="px-2 py-0.5 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50"
-                              >⏹ Stop</button>
+                              >Stop</button>
                             )}
                             <button
                               onClick={() => handleServiceAction('restart', svc.name)}
                               disabled={serviceActionLoading === svc.name + 'restart'}
                               className="px-2 py-0.5 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 disabled:opacity-50"
-                            >🔄 Restart</button>
+                            >Restart</button>
                           </div>
                         </td>
                       </tr>
@@ -482,7 +511,7 @@ const DeviceDetail = () => {
 
           {activeTab === 'events' && (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <div className="text-4xl mb-3">📋</div>
+              <IconMonitor size={40} className="mx-auto mb-3 text-gray-400" />
               <p className="text-sm">Event log will appear here</p>
             </div>
           )}
@@ -499,9 +528,9 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
-const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: string }) => (
+const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: ReactNode }) => (
   <div className="bg-gray-50 dark:bg-gray-750 rounded-lg p-3 flex items-center gap-3">
-    <span className="text-lg">{icon}</span>
+    {icon}
     <div>
       <p className="text-lg font-bold text-gray-900 dark:text-white">{value}</p>
       <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>

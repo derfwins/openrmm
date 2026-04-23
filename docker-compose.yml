@@ -51,48 +51,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
-      REDIS_URL: redis://redis:6379/0
-      REDIS_HOST: redis
-      NATS_URL: nats://nats:4222
-      SECRET_KEY: openrmm-secret-key-change-in-production
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-    volumes:
-      - ./agent:/app/agent:ro
-    networks:
-      - openrmm-network
-    depends_on:
-      - celery-worker
-
-  celery-worker:
-    build: ./api
-    container_name: openrmm-celery-worker
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
-      REDIS_URL: redis://redis:6379/0
-      REDIS_HOST: redis
-      NATS_URL: nats://nats:4222
-      SECRET_KEY: openrmm-secret-key-change-in-production
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
-    volumes:
-      - ./agent:/app/agent:ro
-    networks:
-      - openrmm-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: ["celery", "-A", "v2.celery", "worker", "--loglevel=info"]
-
-  celery-beat:
-    build: ./api
-    container_name: openrmm-celery-beat
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:***@postgres:5432/openrmm
+      REDIS_URL: redis://redis:***@postgres:5432/openrmm
       REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
       NATS_URL: nats://nats:4222
@@ -102,11 +62,25 @@ services:
     networks:
       - openrmm-network
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     command: ["celery", "-A", "v2.celery", "beat", "--loglevel=info"]
+
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:latest
+    container_name: openrmm-meshcentral
+    restart: unless-stopped
+    environment:
+      MESHHOST: rmmapp.derfwins.com
+    networks:
+      - openrmm-network
+    volumes:
+      - ./meshcentral/data:/opt/meshcentral/meshcentral-data
+      - ./meshcentral/config.json:/opt/meshcentral/meshcentral-data/config.json:ro
+      - ./meshcentral/custom.css:/opt/meshcentral/meshcentral-data/custom.css:ro
+      - ./meshcentral/logo.svg:/opt/meshcentral/meshcentral-data/logo.svg:ro
+    depends_on:
+      - backend
 
   nginx:
     image: nginx:alpine
@@ -121,8 +95,9 @@ services:
       - openrmm-network
     depends_on:
       - backend
+      - meshcentral
 
-  # Apache Guacamole - Remote Desktop Gateway
+  # Apache Guacamole - Remote Desktop Gateway (kept for potential future use)
   guacd:
     image: guacamole/guacd:latest
     container_name: openrmm-guacd

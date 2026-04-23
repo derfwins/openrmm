@@ -1,98 +1,99 @@
-// Auto-logout on 401
-const handleUnauthorized = (res: Response) => {
-  if (res.status === 401) {
-    localStorage.removeItem('token')
-    localStorage.removeItem('username')
-    window.location.href = '/login'
-    return true
-  }
-  return false
-}
-
 class MeshCentralService {
   /** Base API path for MeshCentral endpoints */
   private API_BASE = '/mesh/api'
 
   /**
-   * Generate a MeshCentral SSO login token via the OpenRMM backend.
+   * Get a direct session URL for a specific MeshCentral device.
+   * Opens in a new tab for remote desktop, terminal, or files access.
+   *
+   * @param deviceId - The mesh_node_id from the agent record
+   * @param viewmode - 12 = desktop, 3 = terminal, 4 = files
+   * @returns URL that auto-logins to MeshCentral with the specified device view
    */
-  private async getToken(): Promise<string> {
-    const token = localStorage.getItem('token')
-    if (!token) throw new Error('Not authenticated')
+  async getDeviceSession(deviceId: string, viewmode: number = 12): Promise<string | null> {
+    try {
+      const token = localStorage.getItem('token')
+      const params = new URLSearchParams({
+        device_id: deviceId,
+        viewmode: String(viewmode),
+      })
 
-    const res = await fetch(`${this.API_BASE}/token/`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (handleUnauthorized(res)) throw new Error('Session expired')
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Failed to get MeshCentral token')
+      const response = await fetch(`${this.API_BASE}/session/?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        console.error('Failed to get MeshCentral session:', response.status, response.statusText)
+        return null
+      }
+
+      const data = await response.json()
+      return data.url || null
+    } catch (error) {
+      console.error('Error getting MeshCentral session:', error)
+      return null
     }
-    const data = await res.json()
-    return data.token
   }
 
   /**
-   * Get a direct session URL for a specific MeshCentral device.
-   * If no meshDeviceId is provided, opens the MeshCentral dashboard.
+   * Open a remote desktop session in a new browser tab.
    */
-  private async getSessionUrl(meshDeviceId: string | undefined, viewmode: number): Promise<string> {
-    const token = localStorage.getItem('token')
-    if (!token) throw new Error('Not authenticated')
-
-    // If we have a MeshCentral device ID, open directly to that device
-    if (meshDeviceId) {
-      const res = await fetch(
-        `${this.API_BASE}/session/?device_id=${encodeURIComponent(meshDeviceId)}&viewmode=${viewmode}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (handleUnauthorized(res)) throw new Error('Session expired')
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.detail || 'Failed to get MeshCentral session')
-      }
-      const data = await res.json()
-      return data.url
-    }
-
-    // No device linked yet — open MeshCentral dashboard
-    const meshToken = await this.getToken()
-    return `/mesh/?login=${meshToken}`
-  }
-
-  /** Open MeshCentral remote desktop (viewmode=12) */
-  async openDesktop(meshDeviceId?: string): Promise<void> {
-    try {
-      const url = await this.getSessionUrl(meshDeviceId, 12)
-      window.open(url, '_blank', 'width=1280,height=800')
-    } catch (e: any) {
-      console.error('Failed to open MeshCentral desktop:', e)
-      alert('Could not open remote desktop: ' + (e.message || 'Unknown error'))
+  async openDesktop(deviceId: string): Promise<void> {
+    const url = await this.getDeviceSession(deviceId, 12)
+    if (url) {
+      window.open(url, '_blank')
+    } else {
+      alert('Failed to start remote desktop session. Please try again.')
     }
   }
 
-  /** Open MeshCentral terminal (viewmode=11) */
-  async openTerminal(meshDeviceId?: string): Promise<void> {
-    try {
-      const url = await this.getSessionUrl(meshDeviceId, 11)
-      window.open(url, '_blank', 'width=1024,height=768')
-    } catch (e: any) {
-      console.error('Failed to open MeshCentral terminal:', e)
-      alert('Could not open terminal: ' + (e.message || 'Unknown error'))
+  /**
+   * Open a terminal/SSH session in a new browser tab.
+   */
+  async openTerminal(deviceId: string): Promise<void> {
+    const url = await this.getDeviceSession(deviceId, 3)
+    if (url) {
+      window.open(url, '_blank')
+    } else {
+      alert('Failed to start terminal session. Please try again.')
     }
   }
 
-  /** Open MeshCentral file transfer (viewmode=13) */
-  async openFiles(meshDeviceId?: string): Promise<void> {
+  /**
+   * Open a file browser session in a new browser tab.
+   */
+  async openFiles(deviceId: string): Promise<void> {
+    const url = await this.getDeviceSession(deviceId, 4)
+    if (url) {
+      window.open(url, '_blank')
+    } else {
+      alert('Failed to start file browser session. Please try again.')
+    }
+  }
+
+  /**
+   * Get a general SSO token for MeshCentral (opens the full MeshCentral UI).
+   */
+  async getToken(): Promise<string | null> {
     try {
-      const url = await this.getSessionUrl(meshDeviceId, 13)
-      window.open(url, '_blank', 'width=1024,height=768')
-    } catch (e: any) {
-      console.error('Failed to open MeshCentral files:', e)
-      alert('Could not open file transfer: ' + (e.message || 'Unknown error'))
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${this.API_BASE}/token/`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) return null
+
+      const data = await response.json()
+      return data.url || null
+    } catch (error) {
+      console.error('Error getting MeshCentral token:', error)
+      return null
     }
   }
 }
 
-export const meshCentral = new MeshCentralService()
-export default meshCentral
+export default new MeshCentralService()
