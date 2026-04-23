@@ -82,10 +82,13 @@ const Dashboard = () => {
 
         const counts: PlatformCount = { windows: 0, linux: 0, mac: 0, other: 0 }
         for (const a of agentList) {
-          const os = (a.os || a.platform || a.operating_system || '').toLowerCase()
-          if (os.includes('win')) counts.windows++
-          else if (os.includes('lin') || os.includes('ubuntu') || os.includes('debian') || os.includes('centos') || os.includes('fedora')) counts.linux++
-          else if (os.includes('mac') || os.includes('darwin')) counts.mac++
+          // `plat` is the canonical field from the backend (windows/linux/darwin)
+          // Fall back to `operating_system` for detection if `plat` is missing
+          const plat = (a.plat || '').toLowerCase()
+          const os = (a.operating_system || a.os || a.platform || '').toLowerCase()
+          if (plat === 'windows' || os.includes('win')) counts.windows++
+          else if (plat === 'linux' || os.includes('lin') || os.includes('ubuntu') || os.includes('debian') || os.includes('centos') || os.includes('fedora')) counts.linux++
+          else if (plat === 'darwin' || os.includes('mac') || os.includes('darwin')) counts.mac++
           else counts.other++
         }
         setPlatforms(counts)

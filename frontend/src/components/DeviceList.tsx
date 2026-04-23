@@ -2,7 +2,10 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
-import { IconDesktop, IconSearch } from './Icons'
+import {
+  IconDesktop, IconSearch, IconWindows, IconLinux, IconApple,
+  IconOnline, IconOffline, IconRefresh, IconTrash, IconChevronRight,
+} from './Icons'
 
 
 const DeviceList = () => {
@@ -108,7 +111,7 @@ const DeviceList = () => {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center max-w-md animate-[fadeIn_0.5s_ease-out]">
           <div className="mx-auto w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-4 dark:bg-gray-900/50">
-            <div className="text-5xl"><IconDesktop size={16} /></div>
+            <div className="text-5xl text-gray-400"><IconDesktop size={40} /></div>
             <h2 className="text-lg font-semibold text-white">No devices enrolled yet</h2>
             <p className="text-sm text-gray-400">Install the OpenRMM agent on your devices to start managing them.</p>
             <Link
@@ -135,9 +138,9 @@ const DeviceList = () => {
         </div>
         <button
           onClick={loadAgents}
-          className="px-4 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
+          className="px-4 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 text-gray-600 dark:text-gray-300"
         >
-          <span className={loading ? 'animate-spin' : ''}>↻</span> Refresh
+          <IconRefresh size={14} /> Refresh
         </button>
       </div>
 
@@ -161,13 +164,13 @@ const DeviceList = () => {
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`px-3 py-2 text-xs font-medium transition-colors ${
+              className={`px-3 py-2 text-xs font-medium transition-colors flex items-center gap-1 ${
                 statusFilter === s
                   ? 'bg-blue-600 text-white'
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
-              {s === 'all' ? `${agents.length}` : s === 'online' ? `🟢 ${onlineCount}` : `🔴 ${offlineCount}`}
+              {s === 'all' ? agents.length : s === 'online' ? <><IconOnline size={12} /> {onlineCount}</> : <><IconOffline size={12} /> {offlineCount}</>}
             </button>
           ))}
         </div>
@@ -181,7 +184,7 @@ const DeviceList = () => {
           >
             <option value="all">All Platforms</option>
             {platforms.map(p => (
-              <option key={p} value={p}>{p === 'windows' ? '🪟 Windows' : p === 'linux' ? '🐧 Linux' : p === 'darwin' ? '🍎 macOS' : p}</option>
+              <option key={p} value={p}>{p === 'windows' ? 'Windows' : p === 'linux' ? 'Linux' : p === 'darwin' ? 'macOS' : p}</option>
             ))}
           </select>
         )}
@@ -223,7 +226,7 @@ const DeviceList = () => {
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center">
-                  <div className="text-4xl mb-3"><IconDesktop size={16} /></div>
+                  <div className="text-4xl mb-3 text-gray-400"><IconDesktop size={32} /></div>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     {agents.length === 0 ? 'No agents installed yet' : 'No agents match your filters'}
                   </p>
@@ -264,16 +267,16 @@ const DeviceList = () => {
                     <div className="flex items-center justify-end gap-2">
                       <Link
                         to={`/device/${agent.agent_id || agent.id}`}
-                        className="text-xs text-blue-500 hover:text-blue-600 font-medium"
+                        className="text-xs text-blue-500 hover:text-blue-600 font-medium flex items-center gap-1"
                       >
-                        Manage →
+                        Manage <IconChevronRight size={10} />
                       </Link>
                       <button
                         onClick={() => handleDelete(agent)}
                         className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                         title="Delete device"
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        <IconTrash size={14} />
                       </button>
                     </div>
                   </td>
@@ -295,13 +298,10 @@ const DeviceList = () => {
 }
 
 const PlatformIcon = ({ plat }: { plat: string }) => {
-  const icons: Record<string, { icon: string; label: string }> = {
-    windows: { icon: '🪟', label: 'Windows' },
-    linux: { icon: '🐧', label: 'Linux' },
-    darwin: { icon: '🍎', label: 'macOS' },
-  }
-  const info = icons[plat] || { icon: '💻', label: plat }
-  return <span title={info.label}>{info.icon} <span className="text-gray-500 dark:text-gray-400">{info.label}</span></span>
+  if (plat === 'windows') return <span className="flex items-center gap-1.5 text-sm"><IconWindows size={14} className="text-blue-400" /> <span className="text-gray-400">Windows</span></span>
+  if (plat === 'linux') return <span className="flex items-center gap-1.5 text-sm"><IconLinux size={14} className="text-yellow-400" /> <span className="text-gray-400">Linux</span></span>
+  if (plat === 'darwin') return <span className="flex items-center gap-1.5 text-sm"><IconApple size={14} className="text-gray-300" /> <span className="text-gray-400">macOS</span></span>
+  return <span className="flex items-center gap-1.5 text-sm"><IconDesktop size={14} className="text-gray-500" /> <span className="text-gray-400">{plat}</span></span>
 }
 
 const timeAgo = (dateStr: string): string => {
