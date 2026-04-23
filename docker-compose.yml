@@ -1,196 +1,168 @@
-# OpenRMM Docker Compose Configuration
-# Custom FastAPI Backend + React Frontend
-
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: openrmm-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: openrmm
       POSTGRES_USER: openrmm
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      POSTGRES_PASSWORD: openrmm_secret
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init:/docker-entrypoint-initdb.d
-    ports:
-      - "127.0.0.1:5432:5432"
+    networks:
+      - openrmm-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openrmm"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
 
-  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: openrmm-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    networks:
+      - openrmm-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 5
-    restart: unless-stopped
 
-  # NATS Message Queue (for agent communication)
   nats:
     image: nats:2-alpine
     container_name: openrmm-nats
-    command: "-m 8222"
+    restart: unless-stopped
+    networks:
+      - openrmm-network
     ports:
       - "127.0.0.1:4222:4222"
       - "127.0.0.1:8222:8222"
-    volumes:
-      - nats_data:/data
+    command: "-m 8222 -js"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
       retries: 5
-    restart: unless-stopped
 
-  # FastAPI Backend API
   backend:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    build: ./api
     container_name: openrmm-backend
+    restart: unless-stopped
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: openrmm
-      POSTGRES_USER: openrmm
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
-      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
-      DEBUG: "True"
-      CORS_ORIGINS: '["http://localhost:5173","http://10.10.0.122:5173","http://10.10.0.122:8000","http://10.10.0.122","http://rmmapp.derfwins.com","https://rmmapp.derfwins.com","http://rmm.derfwins.com","https://rmm.derfwins.com"]'
-      MESH_LOGIN_TOKEN_KEY: ${MESH_LOGIN_TOKEN_KEY}
-      MESH_MESH_ID: 'mesh//JzDMTriXwWx9oaR5sJEoV2RJL9$$6rM@gYi8kYJT703hYQVvXYNgzqxVzoLwtLSh0'
-      MESH_MESH_ID_ENCODED: '6ztR5sKfcvVpnTiYajMJ0ZNFKhURv5YK0eBDwhlxMYpxOdLPldyf5Gh@IqiMZKJctWuh0Isa33Bxr5jNENF6cWb5HOa7vjdH6G5sfsV3d6r7qcNu7Jsx4P@Q3VxLVX6B$$UYSd2aQF3lTaknPDwPbRBSdIZCEBw=='
-      MESH_INVITE_URL: 'https://rmmapp.derfwins.com/agentinvite?c=klMzTUlaYl@RCEBnTCDDbasLsP6Dr7aAmLD$$5Ah5qaaVnHbdEuy68C0SuE7e74sPxsTFHy0hwiSjL3WHCulme@9yuTUZUTmHIzb$$jD2dNFH52Ff1mfsVqNgCgooVx8YvcSNqzYZWV4$$fNqGX31GV9tRPn4wiAryA69KH0zs$$$$JM$$GNPHMS6teC8fa8mfIXAvuzfc2FWu6xtxjg=='
+      NATS_URL: nats://nats:4222
+      SECRET_KEY: openrmm-secret-key-change-in-production
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     volumes:
-      - ./api/v2:/app/v2
-      - ./agent:/app/agent
-    ports:
-      - "127.0.0.1:8000:8000"
+      - ./agent:/app/agent:ro
+    networks:
+      - openrmm-network
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: uvicorn v2.main:app --host 0.0.0.0 --port 8000 --reload
-    restart: unless-stopped
+      - celery-worker
 
-  # React Frontend
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: openrmm-frontend
-    volumes:
-      - ./frontend:/app
-    ports:
-      - "127.0.0.1:5173:5173"
-    command: npm run dev -- --host
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  # Celery Worker
   celery-worker:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    build: ./api
     container_name: openrmm-celery-worker
+    restart: unless-stopped
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: openrmm
-      POSTGRES_USER: openrmm
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
-      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
+      NATS_URL: nats://nats:4222
+      SECRET_KEY: openrmm-secret-key-change-in-production
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     volumes:
-      - ./api/v2:/app/v2
+      - ./agent:/app/agent:ro
+    networks:
+      - openrmm-network
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    command: celery -A v2.celery worker -l INFO
-    restart: unless-stopped
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "v2.celery", "worker", "--loglevel=info"]
 
-  # Celery Beat Scheduler
   celery-beat:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    build: ./api
     container_name: openrmm-celery-beat
+    restart: unless-stopped
     environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: openrmm
-      POSTGRES_USER: openrmm
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-openrmm_dev_2026}
+      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
-      SECRET_KEY: ${SECRET_KEY:-openrmm_dev_secret_key_2026_change_me}
-    volumes:
-      - ./api/v2:/app/v2
+      NATS_URL: nats://nats:4222
+      SECRET_KEY: openrmm-secret-key-change-in-production
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    networks:
+      - openrmm-network
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    command: celery -A v2.celery beat -l INFO
-    restart: unless-stopped
+      redis:
+        condition: service_healthy
+    command: ["celery", "-A", "v2.celery", "beat", "--loglevel=info"]
 
-  # MeshCentral Remote Desktop
-  meshcentral:
-    image: ghcr.io/ylianst/meshcentral:latest
-    container_name: openrmm-meshcentral
-    environment:
-      MESH_HOST: rmmapp.derfwins.com
-      MESH_PORT: "4430"
-      MESH_ALIAS_PORT: "443"
-      MESH_USER: admin
-    volumes:
-      - meshcentral_data:/opt/meshcentral/meshcentral-data
-      - meshcentral_files:/opt/meshcentral/meshcentral-files
-    ports:
-      - "127.0.0.1:4430:4430"
-      - "127.0.0.1:800:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
     container_name: openrmm-nginx
+    restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - openrmm-network
     depends_on:
       - backend
-      - frontend
+
+  # Apache Guacamole - Remote Desktop Gateway
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: openrmm-guacd
     restart: unless-stopped
+    networks:
+      - openrmm-network
+    volumes:
+      - guacd_drive:/drive
+      - guacd_record:/record
+
+  guacamole:
+    image: guacamole/guacamole:latest
+    container_name: openrmm-guacamole
+    restart: unless-stopped
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: 4822
+      POSTGRES_HOSTNAME: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: guacamole_db
+      POSTGRES_USER: guacamole
+      POSTGRES_PASSWORD: guacamole_secret
+    networks:
+      - openrmm-network
+    depends_on:
+      - guacd
+      - postgres
+    volumes:
+      - guacamole_config:/config
+
+networks:
+  openrmm-network:
+    name: openrmm-network
 
 volumes:
   postgres_data:
-  redis_data:
-  nats_data:
-  meshcentral_data:
-  meshcentral_files:
-
-networks:
-  default:
-    name: openrmm-network
+    driver: local
+  guacd_drive:
+    driver: local
+  guacd_record:
+    driver: local
+  guacamole_config:
+    driver: local
