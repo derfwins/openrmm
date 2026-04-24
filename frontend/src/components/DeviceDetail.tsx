@@ -8,6 +8,9 @@ import { IconMonitor, IconTerminal as IconTerminalSVG, IconFolder, IconRefresh, 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
   const [agent, setAgent] = useState<any>(null)
+
+  // Agent is "active" (reachable) if online or overdue (recently heartbeated)
+  const isActive = agent?.status === 'online' || agent?.status === 'overdue' || agent?.status === 'warning'
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events' | 'services'>('overview')
   const [commandInput, setCommandInput] = useState('')
@@ -230,7 +233,7 @@ const DeviceDetail = () => {
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className={`w-4 h-4 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
+            <div className={`w-4 h-4 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : agent.status === 'overdue' || agent.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">{agent.hostname || 'Unknown'}</h1>
               <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -257,7 +260,7 @@ const DeviceDetail = () => {
               <IconTerminalSVG className="w-4 h-4" />
               {showTerminal ? 'Hide Terminal' : 'Terminal'}
             </button>
-            {agent.status === 'online' && (
+            {isActive && (
               <>
                 <button
                   onClick={handleRemoteDesktop}
@@ -288,7 +291,7 @@ const DeviceDetail = () => {
                 </button>
               </>
             )}
-            {agent.status === 'online' && !hasRustDeskId && (
+            {isActive && !hasRustDeskId && (
               <button
                 onClick={handleInstallRustDesk}
                 disabled={installRustDeskLoading}
@@ -299,7 +302,7 @@ const DeviceDetail = () => {
                 {installRustDeskLoading ? 'Installing...' : 'Install RustDesk'}
               </button>
             )}
-            {agent.status === 'online' && (
+            {isActive && (
               <button
                 onClick={async () => {
                   if (confirm('Restart the agent on this device?')) {
@@ -348,7 +351,7 @@ const DeviceDetail = () => {
         )}
 
         {/* RustDesk status indicator */}
-        {agent.status === 'online' && (
+        {isActive && (
           <div className="mt-3 p-3 rounded-lg text-sm flex items-center gap-2 border ${
             hasRustDeskId
               ? rustdeskStatus?.peer_online

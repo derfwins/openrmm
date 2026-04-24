@@ -13,7 +13,7 @@ export interface Device {
   client: string
 }
 
-export type DeviceStatus = 'online' | 'offline' | 'warning' | 'error'
+export type DeviceStatus = 'online' | 'offline' | 'warning' | 'overdue' | 'error'
 
 export interface Alert {
   id: string

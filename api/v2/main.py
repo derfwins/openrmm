@@ -1,5 +1,7 @@
 """OpenRMM Backend - Main Application"""
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +9,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from v2.config import settings
 from v2.database import async_engine, Base, get_db, AsyncSessionLocal
 from v2.routers import auth, accounts, clients, agents, core, scripts, alerts, terminal, desktop, monitoring, audit, mesh
-from sqlalchemy import select
+from v2.models.agent import Agent
+from sqlalchemy import select, update
+
+# How long before an agent is considered offline (no heartbeat)
+STALE_THRESHOLD_MINUTES = 3
+# How often to run the stale-agent check
+STALE_CHECK_INTERVAL_SECONDS = 60
+
+
+async def _mark_stale_agents_offline():
+    """Background task: periodically mark agents as offline if their heartbeat is overdue."""
+    while True:
+        await asyncio.sleep(STALE_CHECK_INTERVAL_SECONDS)
+        try:
+            async with AsyncSessionLocal() as db:
+                cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+                result = await db.execute(
+                    update(Agent)
+                    .where(Agent.status == "online", Agent.last_heartbeat < cutoff)
+                    .values(status="overdue")
+                )
+                if result.rowcount > 0:
+                    print(f"📉 Marked {result.rowcount} stale agent(s) as overdue")
+                    await db.commit()
+                # Also mark agents that haven't been seen in a long time as offline
+                offline_cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+                result2 = await db.execute(
+                    update(Agent)
+                    .where(Agent.status == "overdue", Agent.last_heartbeat < offline_cutoff)
+                    .values(status="offline")
+                )
+                if result2.rowcount > 0:
+                    print(f"📉 Marked {result2.rowcount} agent(s) as offline")
+                    await db.commit()
+        except Exception as e:
+            print(f"⚠️ Error in stale-agent check: {e}")
 
 
 @asynccontextmanager
@@ -44,7 +81,15 @@ async def lifespan(app: FastAPI):
             print("✅ Created default admin user, roles, and settings")
 
     print(f"🚀 OpenRMM v{settings.APP_VERSION} starting...")
+
+    # Start background task to mark stale agents as offline
+    stale_task = asyncio.create_task(_mark_stale_agents_offline())
+    print("✅ Stale-agent monitor started (checking every 60s)")
+
     yield
+
+    # Shutdown: cancel background task
+    stale_task.cancel()
     print("👋 OpenRMM shutting down...")
 
 

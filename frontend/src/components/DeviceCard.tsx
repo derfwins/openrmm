@@ -5,11 +5,20 @@ interface DeviceCardProps {
 }
 
 const DeviceCard = ({ device }: DeviceCardProps) => {
-  const statusColors = {
+  const statusColors: Record<string, string> = {
     online: 'bg-green-100 text-green-800 border-green-200',
     offline: 'bg-red-100 text-red-800 border-red-200',
     warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+    overdue: 'bg-yellow-100 text-yellow-800 border-yellow-200',
     error: 'bg-red-100 text-red-800 border-red-200',
+  }
+
+  const statusLabels: Record<string, string> = {
+    online: 'Online',
+    offline: 'Offline',
+    warning: 'Overdue',
+    overdue: 'Overdue',
+    error: 'Error',
   }
 
   const platformIcons = {
@@ -29,8 +38,8 @@ const DeviceCard = ({ device }: DeviceCardProps) => {
           </div>
         </div>
 
-        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${statusColors[device.status]}`}>
-          {device.status}
+        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${statusColors[device.status] || statusColors.offline}`}>
+          {statusLabels[device.status] || device.status}
         </span>
       </div>
 

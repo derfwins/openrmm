@@ -59,8 +59,9 @@ const AgentDetail = ({ agentId, onBack }: Props) => {
   const statusColor = (status: string) => {
     switch (status) {
       case 'online': return 'bg-green-500'
-      case 'offline': return 'bg-gray-500'
-      case 'overdue': return 'bg-yellow-500'
+      case 'overdue': 
+      case 'warning': return 'bg-yellow-500'
+      case 'offline': return 'bg-red-500'
       default: return 'bg-red-500'
     }
   }

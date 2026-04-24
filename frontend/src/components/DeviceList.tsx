@@ -26,7 +26,7 @@ const DeviceList = () => {
   const [search, setSearch] = useState('')
 
 
-  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'overdue' | 'offline'>('all')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'hostname' | 'status' | 'last_seen'>('hostname')
 
@@ -67,7 +67,13 @@ const DeviceList = () => {
 
     // Status filter
     if (statusFilter !== 'all') {
-      result = result.filter(a => a.status === statusFilter)
+      if (statusFilter === 'overdue') {
+        result = result.filter(a => a.status === 'overdue' || a.status === 'warning')
+      } else if (statusFilter === 'offline') {
+        result = result.filter(a => a.status === 'offline' || a.status === 'error')
+      } else {
+        result = result.filter(a => a.status === statusFilter)
+      }
     }
 
     // Platform filter
@@ -89,7 +95,8 @@ const DeviceList = () => {
   }, [agents, search, statusFilter, platformFilter, sortBy])
 
   const onlineCount = agents.filter(a => a.status === 'online').length
-  const offlineCount = agents.filter(a => a.status !== 'online').length
+  const overdueCount = agents.filter(a => a.status === 'overdue' || a.status === 'warning').length
+  const offlineCount = agents.filter(a => a.status === 'offline' || a.status === 'error').length
   const platforms = [...new Set(agents.map(a => a.plat).filter(Boolean))]
 
   if (loading) {
@@ -130,7 +137,7 @@ const DeviceList = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Devices</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-            {agents.length} total · {onlineCount} online · {offlineCount} offline
+            {agents.length} total · {onlineCount} online · {overdueCount} overdue · {offlineCount} offline
           </p>
         </div>
         <button
@@ -157,7 +164,7 @@ const DeviceList = () => {
 
         {/* Status Filter */}
         <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          {(['all', 'online', 'offline'] as const).map(s => (
+          {(['all', 'online', 'overdue', 'offline'] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -167,7 +174,7 @@ const DeviceList = () => {
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
-              {s === 'all' ? `${agents.length}` : s === 'online' ? `🟢 ${onlineCount}` : `🔴 ${offlineCount}`}
+              {s === 'all' ? `${agents.length}` : s === 'online' ? `🟢 ${onlineCount}` : s === 'overdue' ? `🟡 ${overdueCount}` : `🔴 ${offlineCount}`}
             </button>
           ))}
         </div>
@@ -238,7 +245,7 @@ const DeviceList = () => {
               filtered.map(agent => (
                 <tr key={agent.agent_id || agent.id} className="table-row-hover hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
                   <td className="px-4 py-3">
-                    <div className={`w-2.5 h-2.5 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
+                    <div className={`w-2.5 h-2.5 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : agent.status === 'overdue' || agent.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
                   </td>
                   <td className="px-4 py-3">
                     <Link
