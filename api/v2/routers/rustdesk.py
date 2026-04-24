@@ -56,14 +56,13 @@ async def create_session(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a one-time connection password for a RustDesk remote session."""
     from v2.models.agent import Agent
 
     rustdesk_peer_id = peer_id
     result = await db.execute(select(Agent).where(Agent.agent_id == peer_id))
     agent = result.scalar_one_or_none()
 
-    if agent and agent.rustdesk_id:
+    if agent:
         rustdesk_peer_id = agent.rustdesk_id
 
     password = secrets.token_hex(4)
@@ -303,10 +302,11 @@ async def get_rustdesk_status(
             except (ValueError, TypeError):
                 pass
 
-        if agent and agent.rustdesk_id:
-            result["installed"] = True
-            result["peer_id"] = agent.rustdesk_id
-            result["has_password"] = bool(getattr(agent, 'rustdesk_password', None))
+        if agent:
+            result["has_password"] = bool(agent.rustdesk_password and agent.rustdesk_password.strip())
+            if agent.rustdesk_id:
+                result["installed"] = True
+                result["peer_id"] = agent.rustdesk_id
 
     # Check hbbs peer database for online status
     try:
