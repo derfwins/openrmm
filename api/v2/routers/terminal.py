@@ -8,115 +8,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import agent_connections, terminal_sessions, desktop_sessions, pending_sessions, verify_token, lookup_agent_id
 from v2.routers.desktop import relay_desktop_frame, relay_desktop_json
-from v2.database import AsyncSessionLocal
-from v2.models.agent import Agent
-from v2.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# ---- RustDesk install auto-link ----
-# Accumulates output from rustdesk install commands and auto-saves peer ID
-_rustdesk_install_state: dict[str, dict] = {}
-# ^ session_id -> {"agent_id": str, "peer_id": str|None, "password": str|None, "output": str}
-
-
-async def _handle_rustdesk_install_output(agent_id: str, session_id: str, output_text: str):
-    """Accumulate output from a RustDesk install command, looking for the peer ID."""
-    if session_id not in _rustdesk_install_state:
-        _rustdesk_install_state[session_id] = {"agent_id": agent_id, "peer_id": None, "password": None, "output": ""}
-    state = _rustdesk_install_state[session_id]
-    state["output"] += output_text
-
-    # Parse RUSTDESK_PEER_ID= from the output
-    import re
-    match = re.search(r"RUSTDESK_PEER_ID[=:]\s*(\S+)", state["output"])
-    if match and not state["peer_id"]:
-        peer_id = match.group(1).strip()
-        state["peer_id"] = peer_id
-        logger.warning(f"🔄 RustDesk install captured peer ID: {peer_id} for agent {agent_id}")
-        # Save to database immediately
-        await _save_rustdesk_peer_id(agent_id, peer_id, state.get("password"))
-
-    # Also parse password from output
-    pw_match = re.search(r"Password:\s*(\S+)", state["output"])
-    if pw_match and not state["password"]:
-        state["password"] = pw_match.group(1).strip()
-
-
-async def _finalize_rustdesk_install(session_id: str):
-    """Called when a RustDesk install command finishes — log result and clean up."""
-    state = _rustdesk_install_state.pop(session_id, None)
-    if not state:
-        return
-    agent_id = state["agent_id"]
-    peer_id = state.get("peer_id")
-    if peer_id:
-        logger.warning(f"✅ RustDesk install complete: agent={agent_id}, peer_id={peer_id}")
-    else:
-        logger.warning(f"⚠️ RustDesk install finished but no peer ID captured for agent={agent_id}")
-
-
-async def _handle_rustdesk_command_result(agent_id: str, session_id: str, data: dict):
-    """Handle command_result from agent — parse peer ID from RustDesk install output."""
-    try:
-        output_text = data.get("output", "")
-        success = data.get("success", False)
-        logger.warning(f"📋 _handle_rustdesk_command_result: session_id={session_id}, success={success}, output_len={len(output_text)}")
-
-        if session_id not in _rustdesk_install_state:
-            _rustdesk_install_state[session_id] = {"agent_id": agent_id, "peer_id": None, "password": None, "output": ""}
-        state = _rustdesk_install_state[session_id]
-        state["output"] += output_text
-
-        # Parse RUSTDESK_PEER_ID= from the output
-        import re
-        match = re.search(r"RUSTDESK_PEER_ID[=:]\s*(\S+)", state["output"])
-        if match and not state["peer_id"]:
-            peer_id = match.group(1).strip()
-            state["peer_id"] = peer_id
-            logger.warning(f"🔄 RustDesk install captured peer ID: {peer_id} for agent {agent_id}")
-            await _save_rustdesk_peer_id(agent_id, peer_id, state.get("password"))
-
-        # Parse password if in output  
-        pw_match = re.search(r"Password:\s*(\S+)", state["output"])
-        if pw_match and not state["password"]:
-            state["password"] = pw_match.group(1).strip()
-
-        # If command finished and we have the password, save it too
-        if state["peer_id"] and state.get("password"):
-            await _save_rustdesk_peer_id(agent_id, state["peer_id"], state["password"])
-
-        # Clean up
-        _rustdesk_install_state.pop(session_id, None)
-
-        if state["peer_id"]:
-            logger.warning(f"✅ RustDesk install complete: agent={agent_id}, peer_id={state['peer_id']}")
-        else:
-            logger.warning(f"⚠️ RustDesk install finished but no peer ID captured for agent={agent_id}. Output: {output_text[:200]}")
-    except Exception as e:
-        logger.error(f"❌ _handle_rustdesk_command_result FAILED: {e}", exc_info=True)
-
-
-async def _save_rustdesk_peer_id(agent_uuid: str, peer_id: str, password: str | None):
-    """Save the captured RustDesk peer ID (and optional password) to the agent DB record."""
-    from sqlalchemy import select
-    try:
-        async with AsyncSessionLocal() as db:
-            # agent_uuid is the UUID from WebSocket, look up by agent_id column
-            result = await db.execute(select(Agent).where(Agent.agent_id == agent_uuid))
-            agent = result.scalar_one_or_none()
-            if agent:
-                agent.rustdesk_id = peer_id
-                if password:
-                    agent.rustdesk_password = password
-                await db.commit()
-                logger.warning(f"💾 Saved RustDesk peer ID {peer_id} to agent {agent.hostname}")
-            else:
-                logger.warning(f"⚠️ Agent {agent_uuid} not found in DB for RustDesk peer ID save")
-    except Exception as e:
-        logger.error(f"Failed to save RustDesk peer ID: {e}", exc_info=True)
-
 
 @router.websocket("/ws/agent/{agent_id}/")
 async def agent_ws(websocket: WebSocket, agent_id: str):
@@ -199,32 +93,15 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                     else:
                         logger.warning(f"RELAY MISS: no browser for session {session_id}, sessions={list(terminal_sessions.keys())}")
 
-                    # Auto-capture RustDesk install results — no terminal needed
-                    if session_id and session_id.startswith("rustdesk_install_"):
-                        output_text = parsed.get("data", "")
-                        await _handle_rustdesk_install_output(agent_id, session_id, output_text)
-
                 elif msg_type == "command_result":
-                    # Agent completed a run_command — relay to browser terminal if open,
-                    # or auto-capture for RustDesk install sessions
+                    # Agent completed a run_command — relay to browser terminal if connected
                     session_id = parsed.get("session_id")
-                    output_text = parsed.get("output", "")
-                    logger.warning(f"📥 command_result: session_id={session_id}, success={parsed.get('success')}, output_len={len(output_text)}")
-
-                    # Relay to browser terminal if one is connected
                     session = terminal_sessions.get(session_id)
                     if session and session.get("browser_ws"):
                         try:
                             await session["browser_ws"].send_json(parsed)
                         except Exception:
                             pass
-
-                    # Auto-capture RustDesk install results
-                    if session_id and session_id.startswith("rustdesk_install_"):
-                        logger.warning(f"🔄 RustDesk install command_result matched, processing...")
-                        await _handle_rustdesk_command_result(agent_id, session_id, parsed)
-                    else:
-                        logger.warning(f"command_result session_id={session_id} did not match rustdesk_install_ prefix")
 
                 elif msg_type == "exit":
                     session_id = parsed.get("session_id")
@@ -238,10 +115,6 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                     terminal_sessions.pop(session_id, None)
                     pending_sessions.pop(session_id, None)
                     logger.warning(f"Terminal session {session_id} exited")
-
-                    # Finalize RustDesk install if this was one
-                    if session_id and session_id.startswith("rustdesk_install_"):
-                        await _finalize_rustdesk_install(session_id)
 
                 elif msg_type == "pong":
                     logger.info(f"Pong from agent {agent_id}")

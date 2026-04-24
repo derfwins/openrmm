@@ -252,15 +252,6 @@ async def push_install_to_agent(
     # Send command to agent via WebSocket
     session_id = f"rustdesk_install_{int(time.time())}"
 
-    # Register session state so we can auto-link the peer ID when output arrives
-    from v2.routers.terminal import _rustdesk_install_state
-    _rustdesk_install_state[session_id] = {
-        "agent_id": agent_uuid or agent_id,
-        "peer_id": None,
-        "password": password,
-        "output": "",
-    }
-
     try:
         await agent_ws.send_json({
             "type": "run_command",
@@ -270,6 +261,9 @@ async def push_install_to_agent(
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send command: {e}")
+
+    # Note: The agent will auto-report its RustDesk peer ID and password
+    # via heartbeat after installation. No need to parse command output here.
 
     return {
         "status": "sent",

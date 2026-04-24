@@ -325,6 +325,8 @@ class HeartbeatRequest(BaseModel):
     cpu_percent: float = 0
     services_json: str = ""
     mesh_node_id: str = ""
+    rustdesk_id: str = ""
+    rustdesk_password: str = ""
 
 
 @router.post("/heartbeat/")
@@ -374,6 +376,17 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
     mesh_val = getattr(req, "mesh_node_id", None)
     if mesh_val and "@" in mesh_val and "$" in mesh_val:
         agent.mesh_node_id = mesh_val
+
+    # Only update RustDesk fields if agent provides a non-empty peer ID
+    # (prevents overwriting correct DB value with empty string from older agents)
+    if req.rustdesk_id:
+        # Don't overwrite a manually-set password with empty string
+        # but DO overwrite if agent reports a different peer ID (reinstall case)
+        if agent.rustdesk_id != req.rustdesk_id:
+            agent.rustdesk_id = req.rustdesk_id
+            logger.info(f"RustDesk peer ID updated via heartbeat: {req.rustdesk_id} for agent {agent.hostname}")
+        if req.rustdesk_password:
+            agent.rustdesk_password = req.rustdesk_password
 
     await db.commit()
 
