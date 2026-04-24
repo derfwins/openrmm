@@ -18,7 +18,6 @@ class Agent(Base):
     operating_system = Column(String(255), default="", server_default="")
     plat = Column(String(50), default="", server_default="")  # windows, linux, darwin
     goarch = Column(String(50), default="", server_default="")  # amd64, arm64
-    mesh_node_id = Column(String(255), nullable=True)  # MeshCentral node ID
 
     # Status
     status = Column(String(50), default="offline", server_default="offline")  # online, offline, overdue
@@ -52,6 +51,9 @@ class Agent(Base):
     running_processes = Column(Integer, default=0, server_default="0")
     cpu_percent = Column(Float, default=0, server_default="0")
     services_json = Column(Text, default="", server_default="")  # JSON list of services
+    mesh_node_id = Column(String(255), default="", server_default="")  # Legacy - do not use
+    rustdesk_id = Column(String(255), default="", server_default="")  # RustDesk peer ID
+    rustdesk_password = Column(String(255), default="", server_default="")  # RustDesk permanent password for unattended access
 
     site = relationship("Site", back_populates="agents")
     checks = relationship("Check", back_populates="agent", cascade="all, delete-orphan")

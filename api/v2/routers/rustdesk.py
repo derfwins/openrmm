@@ -8,6 +8,7 @@ import os
 import secrets
 import logging
 import sqlite3
+import string
 
 from fastapi import APIRouter, Query, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -168,11 +169,10 @@ async def push_install_to_agent(
     if not agent_uuid:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # Get agent platform
+    # Get agent platform and stored password
     result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
-        # Try by numeric ID
         try:
             result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
             agent = result.scalar_one_or_none()
@@ -202,6 +202,11 @@ async def push_install_to_agent(
     except Exception:
         pass
 
+    # Use stored password or generate one for unattended access
+    password = getattr(agent, 'rustdesk_password', None) or ''.join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(12)
+    )
+
     # Generate silent install command based on OS
     if os_type == "windows":
         command = (
@@ -214,20 +219,22 @@ async def push_install_to_agent(
             f'& $rd --config-server {server}; '
             f'& $rd --relay-server {relay}; '
             f'& $rd --key {server_key}; '
+            f'& $rd --password {password}; '
             f'$peerId = & $rd --get-id; '
             f'Write-Host "RUSTDESK_PEER_ID=$peerId"; '
-            f'Write-Host "RustDesk installed successfully. Peer ID: $peerId"'
+            f'Write-Host "RustDesk installed. Peer ID: $peerId, Password: {password}"'
         )
     elif os_type == "linux":
         command = (
             f'curl -sL https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb -o /tmp/rustdesk.deb && '
             f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y && '
             f'rustdesk --config-server {server} && '
-            f'rustdesk --relay-server {relay} && '
+            f'rustdeck --relay-server {relay} && '
             f'rustdesk --key {server_key} && '
+            f'rustdesk --password {password} && '
             f'PEER_ID=$(rustdesk --get-id) && '
             f'echo "RUSTDESK_PEER_ID=$PEER_ID" && '
-            f'echo "RustDesk installed successfully. Peer ID: $PEER_ID"'
+            f'echo "RustDesk installed. Peer ID: $PEER_ID, Password: {password}"'
         )
     else:  # macos
         command = (
@@ -235,6 +242,7 @@ async def push_install_to_agent(
             f'rustdesk --config-server {server} && '
             f'rustdesk --relay-server {relay} && '
             f'rustdesk --key {server_key} && '
+            f'rustdesk --password {password} && '
             f'PEER_ID=$(rustdesk --get-id) && '
             f'echo "RUSTDESK_PEER_ID=$PEER_ID"'
         )
@@ -258,8 +266,72 @@ async def push_install_to_agent(
         "os_type": os_type,
         "agent_id": agent_id,
         "hostname": agent.hostname,
+        "password": password,
         "command_preview": command[:200],
     }
+
+
+@router.get("/status/")
+async def get_rustdesk_status(
+    agent_id: str = Query(None, description="OpenRMM agent ID to check"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if a device's RustDesk peer is registered and online."""
+    from v2.models.agent import Agent
+
+    result = {
+        "installed": False,
+        "peer_id": None,
+        "peer_online": False,
+        "peer_info": None,
+        "has_password": False,
+    }
+
+    # Look up agent and its rustdesk_id
+    if agent_id:
+        agent = None
+        try:
+            result_q = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+            agent = result_q.scalar_one_or_none()
+        except Exception:
+            pass
+        if not agent:
+            try:
+                result_q = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+                agent = result_q.scalar_one_or_none()
+            except (ValueError, TypeError):
+                pass
+
+        if agent and agent.rustdesk_id:
+            result["installed"] = True
+            result["peer_id"] = agent.rustdesk_id
+            result["has_password"] = bool(getattr(agent, 'rustdesk_password', None))
+
+    # Check hbbs peer database for online status
+    try:
+        db_path = os.path.join(RUSTDESK_DATA_DIR, "db_v2.sqlite3")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT id, info, status FROM peer")
+                all_peers = cursor.fetchall()
+                for peer in all_peers:
+                    peer_id = peer[0]
+                    peer_info = peer[1] if len(peer) > 1 else ""
+                    peer_status = peer[2] if len(peer) > 2 else ""
+                    if result["peer_id"] and peer_id == result["peer_id"]:
+                        result["peer_online"] = True
+                        result["peer_info"] = peer_info
+                        break
+            except sqlite3.OperationalError:
+                logger.warning("Could not query peer table in RustDesk DB")
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to check RustDesk peer status: {e}")
+
+    return result
 
 
 @router.get("/peers/")

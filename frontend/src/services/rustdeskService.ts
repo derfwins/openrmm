@@ -94,6 +94,89 @@ class RustDeskService {
     }
     return res.json()
   }
+
+  /**
+   * Push RustDesk install command to an agent.
+   * Sends a POST request to install RustDesk on the remote device.
+   */
+  async pushInstall(agentId: string): Promise<any> {
+    const token = localStorage.getItem('token')
+    if (!token) throw new Error('Not authenticated')
+
+    const res = await fetch(`${this.API_BASE}/install-push/?agent_id=${encodeURIComponent(agentId)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Failed to push RustDesk install')
+    }
+    return res.json()
+  }
+
+  /**
+   * Link a RustDesk peer ID and optional password to an agent.
+   */
+  async linkPeerId(agentId: string, rustdeskId: string, password?: string): Promise<any> {
+    const token = localStorage.getItem('token')
+    if (!token) throw new Error('Not authenticated')
+
+    let url = `/agents/${encodeURIComponent(agentId)}/rustdesk-id/?rustdesk_id=${encodeURIComponent(rustdeskId)}`
+    if (password) {
+      url += `&rustdesk_password=${encodeURIComponent(password)}`
+    }
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Failed to link RustDesk peer ID')
+    }
+    return res.json()
+  }
+
+  /**
+   * Set or update the permanent password for RustDesk unattended access.
+   */
+  async setPassword(agentId: string, password: string): Promise<any> {
+    const token = localStorage.getItem('token')
+    if (!token) throw new Error('Not authenticated')
+
+    const res = await fetch(`/agents/${encodeURIComponent(agentId)}/rustdesk-password/`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Failed to set RustDesk password')
+    }
+    return res.json()
+  }
+
+  /**
+   * Check if RustDesk is installed and the peer is online.
+   */
+  async getStatus(agentId: string): Promise<{
+    installed: boolean
+    peer_id: string | null
+    peer_online: boolean
+    peer_info: any | null
+    has_password: boolean
+  }> {
+    const token = localStorage.getItem('token')
+    if (!token) throw new Error('Not authenticated')
+
+    const res = await fetch(`${this.API_BASE}/status/?agent_id=${encodeURIComponent(agentId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Failed to check RustDesk status')
+    }
+    return res.json()
+  }
 }
 
 export const rustDesk = new RustDeskService()

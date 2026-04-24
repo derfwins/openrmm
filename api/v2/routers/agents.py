@@ -550,10 +550,11 @@ async def update_agent(
 async def update_rustdesk_id(
     agent_id: str,
     rustdesk_id: str = Query(..., description="RustDesk peer ID to link"),
+    rustdesk_password: Optional[str] = Query(None, description="Permanent password for unattended access"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Link a RustDesk peer ID to an OpenRMM agent."""
+    """Link a RustDesk peer ID (and optional password) to an OpenRMM agent."""
     result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
@@ -566,5 +567,32 @@ async def update_rustdesk_id(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     agent.rustdesk_id = rustdesk_id
+    if rustdesk_password is not None:
+        agent.rustdesk_password = rustdesk_password
     await db.commit()
     return {"status": "ok", "agent_id": agent_id, "rustdesk_id": rustdesk_id}
+
+
+@router.patch("/{agent_id}/rustdesk-password/")
+async def update_rustdesk_password(
+    agent_id: str,
+    password_data: dict,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or update the permanent RustDesk password for unattended access."""
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+            agent = result.scalar_one_or_none()
+        except (ValueError, TypeError):
+            pass
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    password = password_data.get("password", "")
+    agent.rustdesk_password = password
+    await db.commit()
+    return {"status": "ok", "agent_id": agent_id, "rustdesk_password": "updated"}

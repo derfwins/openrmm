@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
 import rustDesk from '../services/rustdeskService'
-import { IconMonitor, IconTerminal as IconTerminalSVG, IconFolder, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconInstall } from './Icons'
+import { IconMonitor, IconTerminal as IconTerminalSVG, IconFolder, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconInstall, IconLock } from './Icons'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -21,12 +21,30 @@ const DeviceDetail = () => {
   const [remoteError, setRemoteError] = useState<string | null>(null)
   const [installRustDeskLoading, setInstallRustDeskLoading] = useState(false)
   const [linkRustDeskId, setLinkRustDeskId] = useState('')
+  const [rustdeskStatus, setRustdeskStatus] = useState<{ installed: boolean; peer_id: string | null; peer_online: boolean; peer_info: any | null; has_password: boolean } | null>(null)
+  const [rustdeskPassword, setRustdeskPassword] = useState('')
+  const [rustdeskPasswordSaving, setRustdeskPasswordSaving] = useState(false)
 
   useEffect(() => {
     if (id) loadAgent()
     const interval = setInterval(() => { if (id) loadAgent() }, 30000)
     return () => clearInterval(interval)
   }, [id])
+
+  // Fetch RustDesk status when agent loads or rustdesk_id changes
+  const loadRustDeskStatus = async () => {
+    if (!id) return
+    try {
+      const status = await rustDesk.getStatus(id)
+      setRustdeskStatus(status)
+    } catch {
+      setRustdeskStatus(null)
+    }
+  }
+
+  useEffect(() => {
+    if (agent) loadRustDeskStatus()
+  }, [agent?.rustdesk_id])
 
   const loadAgent = async () => {
     try {
@@ -132,6 +150,21 @@ const DeviceDetail = () => {
       await loadAgent()
     } catch (e: any) {
       alert(`Failed to link RustDesk peer ID: ${e.message || 'Unknown error'}`)
+    }
+  }
+
+  const handleSetPassword = async () => {
+    if (!agent || !rustdeskPassword.trim()) return
+    setRustdeskPasswordSaving(true)
+    try {
+      await rustDesk.setPassword(agent.agent_id, rustdeskPassword.trim())
+      alert('RustDesk password set successfully! This password will be used for unattended remote access.')
+      setRustdeskPassword('')
+      loadRustDeskStatus() // Refresh to show has_password
+    } catch (e: any) {
+      alert(`Failed to set RustDesk password: ${e.message || 'Unknown error'}`)
+    } finally {
+      setRustdeskPasswordSaving(false)
     }
   }
 
@@ -242,7 +275,7 @@ const DeviceDetail = () => {
                   title={hasRustDeskId ? 'Open Terminal via RustDesk' : 'Open RustDesk Dashboard (device not linked yet)'}
                 >
                   <IconTerminalSVG className="w-4 h-4" />
-                  {remoteLoading === 'terminal' ? 'Connecting...' : 'Terminal (Mesh)'}
+                  {remoteLoading === 'terminal' ? 'Connecting...' : 'Terminal'}
                 </button>
                 <button
                   onClick={handleRemoteFiles}
@@ -315,30 +348,88 @@ const DeviceDetail = () => {
         )}
 
         {/* RustDesk status indicator */}
-        {!hasRustDeskId && agent.status === 'online' && (
-          <div className="mt-3 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm text-yellow-700 dark:text-yellow-300 flex items-center gap-2">
-            <IconInfo className="w-4 h-4 flex-shrink-0" />
-            <span>
-              Remote access requires the RustDesk agent. 
-              <a href="/install" className="underline ml-1">Install it on this device</a> to enable Remote Desktop, Terminal, and Files.
-            </span>
-            <div className="ml-auto flex items-center gap-2">
+        {agent.status === 'online' && (
+          <div className="mt-3 p-3 rounded-lg text-sm flex items-center gap-2 border ${
+            hasRustDeskId
+              ? rustdeskStatus?.peer_online
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
+                : 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
+              : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300'
+          }">
+            {hasRustDeskId ? (
+              rustdeskStatus?.peer_online ? (
+                <>
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 flex-shrink-0" />
+                  <span className="font-medium">RustDesk Connected</span>
+                  <span className="opacity-75">— Peer <span className="font-mono">{agent.rustdesk_id}</span> is online and ready for remote access</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0" />
+                  <span className="font-medium">RustDesk Linked</span>
+                  <span className="opacity-75">— Peer <span className="font-mono">{agent.rustdesk_id}</span> registered but currently offline</span>
+                </>
+              )
+            ) : (
+              <>
+                <IconInfo className="w-4 h-4 flex-shrink-0" />
+                <span>
+                  <span className="font-medium">RustDesk not installed</span>
+                  <span className="opacity-75"> — Push the install command or link a peer ID to enable remote access</span>
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={linkRustDeskId}
+                    onChange={e => setLinkRustDeskId(e.target.value)}
+                    placeholder="Peer ID"
+                    className="px-2 py-1 text-xs font-mono bg-white dark:bg-gray-900 border border-yellow-300 dark:border-yellow-700 rounded focus:ring-2 focus:ring-amber-500 dark:text-white w-32"
+                    onKeyDown={e => e.key === 'Enter' && handleLinkRustDesk()}
+                  />
+                  <button
+                    onClick={handleLinkRustDesk}
+                    disabled={!linkRustDeskId.trim()}
+                    className="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                  >
+                    Link
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* RustDesk password management */}
+        {hasRustDeskId && (
+          <div className="mt-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                <IconLock className="w-4 h-4" /> RustDesk Unattended Access
+              </span>
+              {rustdeskStatus?.has_password && (
+                <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded">Password Set</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
               <input
-                type="text"
-                value={linkRustDeskId}
-                onChange={e => setLinkRustDeskId(e.target.value)}
-                placeholder="RustDesk ID"
-                className="px-2 py-1 text-xs font-mono bg-white dark:bg-gray-900 border border-yellow-300 dark:border-yellow-700 rounded focus:ring-2 focus:ring-amber-500 dark:text-white w-32"
-                onKeyDown={e => e.key === 'Enter' && handleLinkRustDesk()}
+                type="password"
+                value={rustdeskPassword}
+                onChange={e => setRustdeskPassword(e.target.value)}
+                placeholder={rustdeskStatus?.has_password ? 'Update password...' : 'Set permanent password...'}
+                className="px-2.5 py-1.5 text-xs font-mono bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-indigo-500 dark:text-white flex-1 max-w-xs"
+                onKeyDown={e => e.key === 'Enter' && handleSetPassword()}
               />
               <button
-                onClick={handleLinkRustDesk}
-                disabled={!linkRustDeskId.trim()}
-                className="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                onClick={handleSetPassword}
+                disabled={!rustdeskPassword.trim() || rustdeskPasswordSaving}
+                className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 transition-colors"
               >
-                Link
+                {rustdeskPasswordSaving ? 'Saving...' : (rustdeskStatus?.has_password ? 'Update' : 'Set Password')}
               </button>
             </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Set a permanent password for unattended remote access to this device.
+            </p>
           </div>
         )}
       </div>
@@ -469,7 +560,13 @@ const DeviceDetail = () => {
                   <InfoRow label="Last Seen" value={agent.last_seen ? new Date(agent.last_seen).toLocaleString() : '—'} />
                   <InfoRow label="Uptime" value={agent.uptime_seconds ? formatUptime(agent.uptime_seconds) : '—'} />
                   <InfoRow label="Monitoring Type" value={agent.monitoring_type || '—'} />
-                  <InfoRow label="RustDesk Node" value={agent.rustdesk_id || 'Not linked'} />
+                  <InfoRow label="RustDesk" value={
+            hasRustDeskId
+              ? rustdeskStatus?.peer_online
+                ? `${agent.rustdesk_id} — Online`
+                : `${agent.rustdesk_id} — Offline`
+              : 'Not linked'
+          } />
                 </div>
               </div>
 
