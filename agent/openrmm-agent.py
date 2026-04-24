@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.11"
+AGENT_VERSION = "0.9.13"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -86,8 +86,8 @@ def get_mesh_node_id() -> str:
     """Read the MeshCentral node ID from the MeshAgent db file.
     
     The MeshAgent stores its node ID in meshagent.db after connecting
-    to MeshCentral. This is the ID that MeshCentral uses to identify
-    the device, which we need for remote desktop/terminal URLs.
+    to MeshCentral. We look for the specific pattern that matches
+    a MeshCentral node ID (contains @ and $ characters).
     """
     if platform.system() == "Windows":
         db_path = Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'Mesh Agent' / 'MeshAgent.db'
@@ -101,15 +101,85 @@ def get_mesh_node_id() -> str:
         with open(db_path, 'rb') as f:
             data = f.read()
         import re
-        # Look for a long base64-like string (the node ID)
-        matches = re.findall(rb'[A-Za-z0-9+/\\$@]{40,}=*', data)
+        # MeshCentral node IDs contain @ and $ characters (base64 with altchars)
+        # They look like: ILrVGWEP5qA1gXST6HU5kZ@Kp8eyiCqXG1vPhpWsmZhoEdIhVZvLtS9KRHgmab$I
+        matches = re.findall(rb'[A-Za-z0-9+/]{20,}[@$][A-Za-z0-9+/@$]{10,}', data)
         if matches:
-            node_id = max(matches, key=len).decode('ascii', errors='ignore')
-            return node_id
+            # Return the match that contains both @ and $
+            for m in matches:
+                decoded = m.decode('ascii', errors='ignore')
+                if '@' in decoded and '$' in decoded:
+                    return decoded
+            # Fallback: return longest match
+            return max(matches, key=len).decode('ascii', errors='ignore')
     except Exception as e:
         log.debug("Could not read mesh node ID: %s", e)
     
     return ""
+
+
+def get_rustdesk_info() -> dict:
+    """Detect RustDesk installation and return peer ID and password.
+    
+    Runs `rustdesk --get-id` and `rustdesk --get-password` to find
+    the installed RustDesk's peer ID and permanent password. Returns
+    empty strings if RustDesk is not installed or not running.
+    """
+    result = {"rustdesk_id": "", "rustdesk_password": ""}
+    
+    # Find rustdesk binary based on OS
+    if platform.system() == "Windows":
+        rd_path = Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'RustDesk' / 'rustdesk.exe'
+        if not rd_path.exists():
+            # Also check 32-bit Program Files on 64-bit Windows
+            rd_path = Path(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)')) / 'RustDesk' / 'rustdesk.exe'
+        if not rd_path.exists():
+            # Try PATH
+            rd_path = "rustdesk.exe"
+    elif platform.system() == "Darwin":
+        rd_path = Path("/Applications/RustDesk.app/Contents/MacOS/RustDesk")
+        if not rd_path.exists():
+            rd_path = "rustdesk"
+    else:  # Linux
+        rd_path = Path("/usr/bin/rustdesk")
+        if not rd_path.exists():
+            rd_path = Path("/usr/local/bin/rustdesk")
+        if not rd_path.exists():
+            rd_path = "rustdesk"
+    
+    try:
+        cmd = [str(rd_path), "--get-id"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        peer_id = proc.stdout.strip()
+        if peer_id and proc.returncode == 0:
+            result["rustdesk_id"] = peer_id
+            log.info("RustDesk peer ID: %s", peer_id)
+        else:
+            log.debug("RustDesk --get-id returned no output (rc=%d)", proc.returncode)
+    except FileNotFoundError:
+        log.debug("RustDesk not found at %s", rd_path)
+        return result
+    except subprocess.TimeoutExpired:
+        log.debug("RustDesk --get-id timed out")
+        return result
+    except Exception as e:
+        log.debug("RustDesk --get-id error: %s", e)
+        return result
+    
+    # Only check password if we found a peer ID (RustDesk is installed and configured)
+    try:
+        cmd = [str(rd_path), "--get-password"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        password = proc.stdout.strip()
+        if password and proc.returncode == 0:
+            result["rustdesk_password"] = password
+            log.info("RustDesk password retrieved (len=%d)", len(password))
+        else:
+            log.debug("RustDesk --get-password returned no output")
+    except Exception as e:
+        log.debug("RustDesk --get-password error: %s", e)
+    
+    return result
 
 
 def get_system_info() -> dict:
@@ -229,6 +299,11 @@ def get_system_info() -> dict:
 
     # Read MeshCentral node ID from the agent db file
     info["mesh_node_id"] = get_mesh_node_id()
+
+    # Detect RustDesk installation (peer ID + password)
+    rustdesk_info = get_rustdesk_info()
+    info["rustdesk_id"] = rustdesk_info["rustdesk_id"]
+    info["rustdesk_password"] = rustdesk_info["rustdesk_password"]
 
     return info
 
