@@ -27,4 +27,4 @@ redis_data/
 nats_data/
 
 # Logs
-*.log
+*.log*.bak

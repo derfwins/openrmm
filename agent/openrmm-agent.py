@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.13"
+AGENT_VERSION = "0.9.15"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -129,12 +129,22 @@ def get_rustdesk_info() -> dict:
     
     # Find rustdesk binary based on OS
     if platform.system() == "Windows":
-        rd_path = Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'RustDesk' / 'rustdesk.exe'
-        if not rd_path.exists():
-            # Also check 32-bit Program Files on 64-bit Windows
-            rd_path = Path(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)')) / 'RustDesk' / 'rustdesk.exe'
-        if not rd_path.exists():
-            # Try PATH
+        # Common install locations (checked in order)
+        rd_candidates = [
+            Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'RustDesk' / 'rustdesk.exe',
+            Path(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)')) / 'RustDesk' / 'rustdesk.exe',
+            # When installed as SYSTEM service, RustDesk goes here:
+            Path(os.environ.get('SystemRoot', 'C:\\Windows')) / 'system32' / 'config' / 'systemprofile' / 'AppData' / 'Local' / 'RustDesk' / 'rustdesk.exe',
+            # Per-user install:
+            Path(os.environ.get('LOCALAPPDATA', '')) / 'RustDesk' / 'rustdesk.exe',
+        ]
+        rd_path = None
+        for candidate in rd_candidates:
+            if candidate.exists():
+                rd_path = candidate
+                break
+        if rd_path is None:
+            # Try PATH as last resort
             rd_path = "rustdesk.exe"
     elif platform.system() == "Darwin":
         rd_path = Path("/Applications/RustDesk.app/Contents/MacOS/RustDesk")
@@ -1447,20 +1457,27 @@ async def ws_agent_connect(server: str, agent_id: str):
                             sessions.pop(session_id, None)
 
                     elif msg_type == "run_command":
-                        """Run a command and return output."""
+                        """Run a command and return output.
+
+                        Uses asyncio.to_thread() to avoid blocking the
+                        WebSocket event loop while the subprocess runs.
+                        """
                         cmd = data.get("command", "")
                         timeout = data.get("timeout", 30)
                         session_id = data.get("session_id", "cmd")
                         log.info("Running command: %s", cmd[:100])
                         
-                        try:
-                            result = subprocess.run(
+                        def _run_cmd():
+                            return subprocess.run(
                                 cmd,
                                 shell=True,
                                 capture_output=True,
                                 text=True,
                                 timeout=timeout
                             )
+                        
+                        try:
+                            result = await asyncio.to_thread(_run_cmd)
                             output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nRETURN CODE: {result.returncode}"
                             await ws.send(json.dumps({
                                 "type": "command_result",
@@ -1477,6 +1494,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 "output": f"TIMEOUT: Command exceeded {timeout} seconds"
                             }))
                         except Exception as e:
+                            log.error("run_command error: %s", e, exc_info=True)
                             await ws.send(json.dumps({
                                 "type": "command_result",
                                 "session_id": session_id,

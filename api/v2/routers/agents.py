@@ -1,5 +1,6 @@
 """Agents endpoints"""
 from datetime import datetime, timezone
+import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select, func
@@ -12,6 +13,8 @@ from v2.models.user import User
 from v2.models.agent import Agent, Check
 from v2.models.client import Site
 from v2.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents")
 

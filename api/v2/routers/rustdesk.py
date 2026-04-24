@@ -100,38 +100,42 @@ async def get_install_command(
         command = (
             f'# Install RustDesk Agent for OpenRMM\n'
             f'# Run as Administrator in PowerShell\n\n'
+            f'[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n'
             f'$InstallDir = "C:\\Program Files\\RustDesk"\n'
             f'New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null\n\n'
             f'Write-Host "Downloading RustDesk..." -ForegroundColor Cyan\n'
-            f'Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.exe" '
+            f'Invoke-WebRequest -Uri "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe" '
             f'-OutFile "$env:TEMP\\rustdesk-setup.exe" -UseBasicParsing\n\n'
             f'Write-Host "Installing RustDesk..." -ForegroundColor Cyan\n'
             f'Start-Process -FilePath "$env:TEMP\\rustdesk-setup.exe" '
             f'-ArgumentList "/S" -Wait\n\n'
             f'Write-Host "Configuring server..." -ForegroundColor Cyan\n'
-            f'$rustdeskPath = "C:\\Program Files\\RustDesk\\rustdesk.exe"\n'
-            f'& $rustdeskPath --config-server {server}\n'
-            f'& $rustdeskPath --relay-server {relay}\n'
-            f'& $rustdeskPath --key {server_key}\n'
-            f'$peerId = & $rustdeskPath --get-id\n'
+            f'$rd = Get-Command rustdesk.exe -ErrorAction SilentlyContinue | Select-Object -First 1; '
+            f'if (-not $rd) {{ $rd = "C:\\Program Files\\RustDesk\\rustdesk.exe" }}; '
+            f'if (-not (Test-Path $rd)) {{ $rd = "$env:LOCALAPPDATA\\RustDesk\\rustdesk.exe" }}\n'
+            f'& $rd --config-server {server}\n'
+            f'& $rd --relay-server {relay}\n'
+            f'& $rd --key {server_key}\n'
+            f'$peerId = & $rd --get-id\n'
             f'Write-Host "RustDesk Peer ID: $peerId" -ForegroundColor Green\n'
             f'Write-Host "Register this ID in OpenRMM to enable remote access." -ForegroundColor Yellow\n'
         )
 
     elif os_type.lower() == "linux":
         command = (
-            f'#!/bin/bash\n'
-            f'# Install RustDesk Agent for OpenRMM\n\n'
-            f'echo "Downloading RustDesk..."\n'
-            f'curl -sL https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb -o /tmp/rustdesk.deb\n'
+            '#!/bin/bash\n'
+            '# Install RustDesk Agent for OpenRMM\n\n'
+            'echo "Downloading RustDesk..."\n'
+            f'curl -sL https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb -o /tmp/rustdesk.deb\n'
+            'echo "Installing..."\n'
             f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y\n\n'
-            f'echo "Configuring server..."\n'
+            'echo "Configuring server..."\n'
             f'rustdesk --config-server {server}\n'
             f'rustdesk --relay-server {relay}\n'
             f'rustdesk --key {server_key}\n'
-            f'PEER_ID=$(rustdesk --get-id)\n'
-            f'echo "RustDesk Peer ID: $PEER_ID"\n'
-            f'echo "Register this ID in OpenRMM to enable remote access."\n'
+            'PEER_ID=$(rustdesk --get-id 2>/dev/null)\n'
+            'echo "RustDesk Peer ID: $PEER_ID"\n'
+            'echo "Register this ID in OpenRMM to enable remote access."\n'
         )
 
     else:  # macos
@@ -207,36 +211,147 @@ async def push_install_to_agent(
     )
 
     # Generate silent install command based on OS
-    # On Windows, the agent uses subprocess.run(shell=True) which runs via cmd.exe,
-    # so we must wrap PowerShell commands with powershell -Command
+    # Uses a two-step approach for Windows: write PS script to temp file, then execute it.
+    # This avoids cmd.exe command line length limits and quoting nightmares.
     if os_type == "windows":
-        ps_command = (
-            f'$tmpFile = "$env:TEMP\\rustdesk-setup.exe"; '
-            f'Write-Host "Downloading RustDesk..."; '
-            f'Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.exe" -OutFile $tmpFile -UseBasicParsing; '
-            f'Write-Host "Installing RustDesk silently..."; '
-            f'Start-Process -FilePath $tmpFile -ArgumentList "/S" -Wait; '
-            f'$rd = "C:\\Program Files\\RustDesk\\rustdesk.exe"; '
-            f'& $rd --config-server {server}; '
-            f'& $rd --relay-server {relay}; '
-            f'& $rd --key {server_key}; '
-            f'& $rd --password {password}; '
-            f'$peerId = & $rd --get-id; '
-            f'Write-Host "RUSTDESK_PEER_ID=$peerId"; '
-            f'Write-Host "RustDesk installed. Peer ID: $peerId, Password: {password}"'
-        )
-        command = f'powershell -NoProfile -Command "{ps_command}"'
+        ps_script = f"""
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ErrorActionPreference = 'Stop'
+$server = '{server}'
+$relay = '{relay}'
+$key = '{server_key}'
+$password = '{password}'
+
+function Log($msg) {{ Write-Host "[RUSTDESK-INSTALL] $msg" }}
+
+function Find-RustDesk {{
+    $paths = @(
+        'C:\\Program Files\\RustDesk\\rustdesk.exe',
+        'C:\\Program Files (x86)\\RustDesk\\rustdesk.exe',
+        "$env:LOCALAPPDATA\\RustDesk\\rustdesk.exe",
+        "$env:ProgramFiles\\RustDesk\\rustdesk.exe"
+    )
+    foreach ($p in $paths) {{ if (Test-Path $p) {{ return $p }} }}
+    $found = Get-Command rustdesk.exe -ErrorAction SilentlyContinue
+    if ($found) {{ return $found.Source }}
+    $search = Get-ChildItem 'C:\\Program Files' -Filter 'rustdesk.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($search) {{ return $search.FullName }}
+    $search2 = Get-ChildItem 'C:\\ProgramData' -Filter 'rustdesk.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($search2) {{ return $search2.FullName }}
+    return $null
+}}
+
+Log '=== RustDesk Install Starting ==='
+$rd = Find-RustDesk
+if ($rd) {{
+    Log "RustDesk found at: $rd - checking service..."
+    $svc = Get-Service -Name 'RustDesk' -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {{ Log 'RustDesk service already running' }}
+    else {{ Log 'Starting RustDesk service...'; Start-Process $rd -ArgumentList '--service' -WindowStyle Hidden; Start-Sleep -Seconds 5 }}
+}} else {{
+    Log 'RustDesk not found, downloading installer...'
+    $tmpFile = "$env:TEMP\\rustdesk-setup.exe"
+    try {{
+        Invoke-WebRequest -Uri 'https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe' -OutFile $tmpFile -UseBasicParsing
+        Log "Downloaded ($(Get-Item $tmpFile).Length bytes)"
+    }} catch {{
+        Log "ERROR: Download failed: $($_.Exception.Message)"; exit 1
+    }}
+    Log 'Installing RustDesk silently...'
+    try {{
+        $proc = Start-Process -FilePath $tmpFile -ArgumentList '/S' -Wait -PassThru
+        Log "Installer exit code: $($proc.ExitCode)"
+    }} catch {{
+        Log "ERROR: Install failed: $($_.Exception.Message)"; exit 1
+    }}
+    Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    $rd = Find-RustDesk
+    if ($rd) {{
+        Log "RustDesk installed at: $rd"
+        Start-Process $rd -ArgumentList '--service' -WindowStyle Hidden; Start-Sleep -Seconds 8
+    }} else {{
+        Log 'ERROR: RustDesk binary not found after install - trying PATH'
+        $rd = 'rustdesk.exe'
+    }}
+}}
+
+Log 'Configuring RustDesk with server/relay/key/password...'
+try {{
+    Log 'Setting server...'; & $rd --config-server $server 2>&1 | ForEach-Object {{ Log "  $_" }}
+    Log 'Setting relay...'; & $rd --relay-server $relay 2>&1 | ForEach-Object {{ Log "  $_" }}
+    Log 'Setting key...'; & $rd --key $key 2>&1 | ForEach-Object {{ Log "  key: set" }}
+    Log 'Setting password...'; & $rd --password $password 2>&1 | ForEach-Object {{ Log "  password: set" }}
+}} catch {{
+    Log "WARNING: Config error (may need service restart): $($_.Exception.Message)"
+}}
+
+Log 'Restarting RustDesk service...'
+Stop-Process -Name 'rustdesk' -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Process $rd -ArgumentList '--service' -WindowStyle Hidden
+Start-Sleep -Seconds 5
+
+Log 'Getting peer ID...'
+try {{
+    $peerId = (& $rd --get-id 2>&1).Trim()
+    if ($peerId -match '^\\d{{6,}}$') {{
+        Log "RUSTDESK_PEER_ID=$peerId"; Log "RustDesk complete. Peer ID: $peerId"
+    }} else {{
+        Log "Got unexpected peer ID: '$peerId'"
+    }}
+}} catch {{
+    Log "Could not get peer ID: $($_.Exception.Message)"
+}}
+Log '=== RustDesk Install Finished ==='
+"""
+        # Write PS script to temp file and execute it — avoids cmd.exe line length limits
+        import base64
+        # Encode the script as Base64 UTF-16LE for -EncodedCommand
+        ps_bytes = ps_script.strip().encode('utf-16-le')
+        encoded = base64.b64encode(ps_bytes).decode('ascii')
+        # But -EncodedCommand can be too long for cmd.exe.
+        # Instead: write script to a temp .ps1 file, then execute it.
+        # Use PowerShell to write the file and run it in a single short command.
+        # First encode the script content for the Set-Content step.
+        script_b64 = base64.b64encode(ps_script.strip().encode('utf-8')).decode('ascii')
+        # Split into chunks to stay under cmd.exe's ~8191 char limit
+        chunk_size = 4000
+        chunks = [script_b64[i:i+chunk_size] for i in range(0, len(script_b64), chunk_size)]
+        # Build a short command that decodes and writes the script to a temp file, then runs it
+        setup_lines = [
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+            f"$b64 = '{chunks[0]}'",
+        ]
+        for chunk in chunks[1:]:
+            setup_lines.append(f"$b64 += '{chunk}'")
+        setup_lines.extend([
+            "$script = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))",
+            "$script | Set-Content -Path $env:TEMP\\openrmm-rustdesk-install.ps1 -Encoding UTF8",
+            "powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\\openrmm-rustdesk-install.ps1",
+            "Remove-Item $env:TEMP\\openrmm-rustdesk-install.ps1 -Force -ErrorAction SilentlyContinue",
+        ])
+        # Join with ; for a single-line PowerShell command
+        command = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{";".join(setup_lines)}"'
     elif os_type == "linux":
         command = (
-            f'curl -sL https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb -o /tmp/rustdesk.deb && '
-            f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y && '
-            f'rustdesk --config-server {server} && '
-            f'rustdesk --relay-server {relay} && '
-            f'rustdesk --key {server_key} && '
-            f'rustdesk --password {password} && '
-            f'PEER_ID=$(rustdesk --get-id) && '
-            f'echo "RUSTDESK_PEER_ID=$PEER_ID" && '
-            f'echo "RustDesk installed. Peer ID: $PEER_ID, Password: {password}"'
+            'set -e; '
+            'RD="rustdesk"; '
+            f'echo "[RUSTDESK-INSTALL] Downloading RustDesk..."; '
+            f'curl -sL https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb -o /tmp/rustdesk.deb; '
+            f'echo "[RUSTDESK-INSTALL] Installing..."; '
+            f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y; '
+            f'echo "[RUSTDESK-INSTALL] Configuring server..."; '
+            f'$RD --config-server {server}; '
+            f'$RD --relay-server {relay}; '
+            f'$RD --key {server_key}; '
+            f'$RD --password {password}; '
+            f'echo "[RUSTDESK-INSTALL] Starting service..."; '
+            f'sudo systemctl enable rustdesk 2>/dev/null; sudo systemctl start rustdesk 2>/dev/null || true; '
+            f'sleep 3; '
+            f'PEER_ID=$($RD --get-id 2>/dev/null); '
+            f'echo "[RUSTDESK-INSTALL] RUSTDESK_PEER_ID=$PEER_ID"; '
+            f'echo "[RUSTDESK-INSTALL] Done"'
         )
     else:  # macos
         command = (
@@ -373,9 +488,9 @@ async def download_agent(
 ):
     """Redirect to the latest RustDesk client download."""
     downloads = {
-        "windows": "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.exe",
-        "linux": "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb",
-        "macos": "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9.dmg",
+        "windows": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe",
+        "linux": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb",
+        "macos": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6.dmg",
     }
     url = downloads.get(os_type.lower(), downloads["windows"])
     return RedirectResponse(url=url)

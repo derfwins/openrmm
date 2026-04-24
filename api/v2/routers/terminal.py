@@ -96,6 +96,14 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                 elif msg_type == "command_result":
                     # Agent completed a run_command — relay to browser terminal if connected
                     session_id = parsed.get("session_id")
+                    output = parsed.get("output", "")
+                    success = parsed.get("success", None)
+                    return_code = parsed.get("return_code", None)
+                    # Always log command results for debugging
+                    logger.warning(f"CMD_RESULT session={session_id} success={success} rc={return_code} output_len={len(output)}")
+                    if output:
+                        # Log output for visibility
+                        logger.warning(f"CMD_OUTPUT: {output[:2000]}")
                     session = terminal_sessions.get(session_id)
                     if session and session.get("browser_ws"):
                         try:
