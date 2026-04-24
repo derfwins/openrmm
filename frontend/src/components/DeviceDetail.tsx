@@ -134,7 +134,7 @@ const DeviceDetail = () => {
     setRemoteError(null)
     try {
       await rustDesk.pushInstall(agent.agent_id)
-      alert(`RustDesk install command sent successfully! The RustDesk peer ID will appear in the command output once the installation completes. Check the agent's command output for the peer ID.`)
+      alert(`RustDesk install command sent! The agent will download and install RustDesk. The peer ID will be automatically linked to this device once installation completes — just refresh the page in a minute.`)
     } catch (e: any) {
       alert(`Failed to push RustDesk install: ${e.message || 'Unknown error'}`)
     } finally {

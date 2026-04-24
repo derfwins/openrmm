@@ -207,8 +207,10 @@ async def push_install_to_agent(
     )
 
     # Generate silent install command based on OS
+    # On Windows, the agent uses subprocess.run(shell=True) which runs via cmd.exe,
+    # so we must wrap PowerShell commands with powershell -Command
     if os_type == "windows":
-        command = (
+        ps_command = (
             f'$tmpFile = "$env:TEMP\\rustdesk-setup.exe"; '
             f'Write-Host "Downloading RustDesk..."; '
             f'Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.exe" -OutFile $tmpFile -UseBasicParsing; '
@@ -223,12 +225,13 @@ async def push_install_to_agent(
             f'Write-Host "RUSTDESK_PEER_ID=$peerId"; '
             f'Write-Host "RustDesk installed. Peer ID: $peerId, Password: {password}"'
         )
+        command = f'powershell -NoProfile -Command "{ps_command}"'
     elif os_type == "linux":
         command = (
             f'curl -sL https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-1.3.9-x86_64.deb -o /tmp/rustdesk.deb && '
             f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y && '
             f'rustdesk --config-server {server} && '
-            f'rustdeck --relay-server {relay} && '
+            f'rustdesk --relay-server {relay} && '
             f'rustdesk --key {server_key} && '
             f'rustdesk --password {password} && '
             f'PEER_ID=$(rustdesk --get-id) && '
@@ -249,11 +252,20 @@ async def push_install_to_agent(
     # Send command to agent via WebSocket
     session_id = f"rustdesk_install_{int(time.time())}"
 
+    # Register session state so we can auto-link the peer ID when output arrives
+    from v2.routers.terminal import _rustdesk_install_state
+    _rustdesk_install_state[session_id] = {
+        "agent_id": agent_uuid or agent_id,
+        "peer_id": None,
+        "password": password,
+        "output": "",
+    }
+
     try:
         await agent_ws.send_json({
             "type": "run_command",
             "command": command,
-            "timeout": 300,
+            "timeout": 600,  # 10 minutes - RustDesk download+install takes time
             "session_id": session_id,
         })
     except Exception as e:
