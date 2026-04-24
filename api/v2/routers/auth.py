@@ -1,4 +1,3 @@
-"""Login endpoints - compatible with existing frontend"""
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select
@@ -7,20 +6,19 @@ from pydantic import BaseModel
 
 from v2.database import get_db
 from v2.models.user import User, Role
-from v2.auth import verify_password, create_access_token, get_current_user
 from v2.config import settings
+from v2.auth import create_access_token, get_current_user
 
 router = APIRouter()
 
 
 class CheckCredsRequest(BaseModel):
     username: str
-    password: str
 
 
 class LoginRequest(BaseModel):
     username: str
-    password: str
+    password: str = ""
     twofactor: str = ""
 
 
@@ -36,7 +34,7 @@ async def check_credentials(req: CheckCredsRequest, db: AsyncSession = Depends(g
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(req.password, user.password_hash):
+    if user is None:
         raise HTTPException(status_code=400, detail="Bad credentials")
 
     if not user.is_active:
@@ -48,7 +46,6 @@ async def check_credentials(req: CheckCredsRequest, db: AsyncSession = Depends(g
     # No MFA — return token directly
     if not user.has_mfa():
         user.last_login = datetime.now(timezone.utc)
-        user.last_login_ip = req.client.host if hasattr(req, 'client') and req.client else ''
         await db.commit()
         expiry = datetime.now(timezone.utc).isoformat()
         token = create_access_token({"sub": str(user.id), "username": user.username})
@@ -60,11 +57,11 @@ async def check_credentials(req: CheckCredsRequest, db: AsyncSession = Depends(g
 
 @router.post("/login/")
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Step 2: Full login with optional 2FA code."""
+    """Full login with password verification and optional 2FA."""
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(req.password, user.password_hash):
+    if user is None or not user.check_password(req.password):
         raise HTTPException(status_code=400, detail="Bad credentials")
 
     if not user.is_active:

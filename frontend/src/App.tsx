@@ -74,33 +74,29 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
   if (!AuthContext.isAuthenticated()) return <Navigate to="/login" />
 
   return (
-    <ClientProvider>
-      <WebSocketProvider>
-        <div className="flex h-screen bg-gray-900 text-gray-100">
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0">
-            <header className="h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-5 shrink-0">
-              <div className="flex items-center gap-3">
-                <Breadcrumbs />
-              </div>
-              <div className="flex items-center gap-3">
-                <NotificationCenter />
-                <button
-                  onClick={() => setDarkMode(!darkMode)}
-                  className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
-                  title={darkMode ? 'Light mode' : 'Dark mode'}
-                >
-                  {darkMode ? <IconSun size={16} /> : <IconMoon size={16} />}
-                </button>
-              </div>
-            </header>
-            <main className="flex-1 overflow-auto">
-              {children}
-            </main>
+    <div className="flex h-screen bg-gray-900 text-gray-100">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-5 shrink-0">
+          <div className="flex items-center gap-3">
+            <Breadcrumbs />
           </div>
-        </div>
-      </WebSocketProvider>
-    </ClientProvider>
+          <div className="flex items-center gap-3">
+            <NotificationCenter />
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
+              title={darkMode ? 'Light mode' : 'Dark mode'}
+            >
+              {darkMode ? <IconSun size={16} /> : <IconMoon size={16} />}
+            </button>
+          </div>
+        </header>
+        <main className="flex-1 overflow-auto">
+          {children}
+        </main>
+      </div>
+    </div>
   )
 }
 
@@ -134,29 +130,33 @@ function DesktopPage() {
 function App() {
   return (
     <BrowserRouter>
-      <ErrorBoundary>
-        <Routes>
-          <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} />
-          <Route path="/desktop/:id" element={<DesktopPage />} />
-          <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/devices" element={<AppLayout><DeviceList /></AppLayout>} />
-          <Route path="/device/:id" element={<AppLayout><DeviceDetail /></AppLayout>} />
-          <Route path="/scripts" element={<AppLayout><ScriptLibrary /></AppLayout>} />
-          <Route path="/alerts" element={<AppLayout><AlertPanel /></AppLayout>} />
-          <Route path="/software" element={<AppLayout><SoftwareManager /></AppLayout>} />
-          <Route path="/patches" element={<AppLayout><PatchManager /></AppLayout>} />
-          <Route path="/automation" element={<AppLayout><AutomationBuilder /></AppLayout>} />
-          <Route path="/reports" element={<AppLayout><Reports /></AppLayout>} />
-          <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
-          <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
-          <Route path="/audit" element={<AppLayout><AuditLog /></AppLayout>} />
-          <Route path="/install" element={<AppLayout><InstallAgent /></AppLayout>} />
-          <Route path="/ai" element={<AppLayout><AICopilot /></AppLayout>} />
-          <Route path="/users" element={<AppLayout><UserManagement /></AppLayout>} />
-          <Route path="/" element={<Navigate to="/dashboard" />} />
-          <Route path="*" element={<Navigate to="/dashboard" />} />
-        </Routes>
-      </ErrorBoundary>
+      <ClientProvider>
+        <WebSocketProvider>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/login" element={AuthContext.isAuthenticated() ? <Navigate to="/dashboard" /> : <Login />} />
+              <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
+              <Route path="/devices" element={<AppLayout><DeviceList /></AppLayout>} />
+              <Route path="/device/:id" element={<AppLayout><DeviceDetail /></AppLayout>} />
+              <Route path="/desktop/:id" element={<DesktopPage />} />
+              <Route path="/scripts" element={<AppLayout><ScriptLibrary /></AppLayout>} />
+              <Route path="/alerts" element={<AppLayout><AlertPanel /></AppLayout>} />
+              <Route path="/software" element={<AppLayout><SoftwareManager /></AppLayout>} />
+              <Route path="/patches" element={<AppLayout><PatchManager /></AppLayout>} />
+              <Route path="/automation" element={<AppLayout><AutomationBuilder /></AppLayout>} />
+              <Route path="/reports" element={<AppLayout><Reports /></AppLayout>} />
+              <Route path="/settings" element={<AppLayout><Settings /></AppLayout>} />
+              <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
+              <Route path="/audit" element={<AppLayout><AuditLog /></AppLayout>} />
+              <Route path="/install" element={<AppLayout><InstallAgent /></AppLayout>} />
+              <Route path="/ai" element={<AppLayout><AICopilot /></AppLayout>} />
+              <Route path="/users" element={<AppLayout><UserManagement /></AppLayout>} />
+              <Route path="/" element={<Navigate to="/dashboard" />} />
+              <Route path="*" element={<Navigate to="/dashboard" />} />
+            </Routes>
+          </ErrorBoundary>
+        </WebSocketProvider>
+      </ClientProvider>
     </BrowserRouter>
   )
 }

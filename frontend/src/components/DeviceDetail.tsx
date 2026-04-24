@@ -1,21 +1,9 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
-import meshCentral from '../services/meshCentralService'
-import {
-  IconWindows, IconLinux, IconApple, IconMonitor, IconTerminal,
-  IconFolder, IconRefresh, IconTrash, IconSearch
-} from './Icons'
-
-const PlatformIcon = ({ plat }: { plat: string }) => {
-  switch (plat) {
-    case 'windows': return <IconWindows size={16} />
-    case 'linux': return <IconLinux size={16} />
-    case 'darwin': return <IconApple size={16} />
-    default: return <IconMonitor size={16} />
-  }
-}
+import rustDesk from '../services/rustdeskService'
+import { IconMonitor, IconTerminal as IconTerminalSVG, IconFolder, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconInstall } from './Icons'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -29,6 +17,10 @@ const DeviceDetail = () => {
   const [token] = useState(() => localStorage.getItem('token') || '')
   const [serviceFilter, setServiceFilter] = useState('')
   const [serviceActionLoading, setServiceActionLoading] = useState<string | null>(null)
+  const [remoteLoading, setRemoteLoading] = useState<string | null>(null)
+  const [remoteError, setRemoteError] = useState<string | null>(null)
+  const [installRustDeskLoading, setInstallRustDeskLoading] = useState(false)
+  const [linkRustDeskId, setLinkRustDeskId] = useState('')
 
   useEffect(() => {
     if (id) loadAgent()
@@ -80,6 +72,69 @@ const DeviceDetail = () => {
     try { return JSON.parse(str) } catch { return fallback }
   }
 
+  const handleRemoteDesktop = async () => {
+    setRemoteLoading('desktop')
+    setRemoteError(null)
+    try {
+      await rustDesk.openDesktop(agent.rustdesk_id || undefined, agent.agent_id)
+    } catch (e: any) {
+      setRemoteError(e.message || 'Failed to open remote desktop')
+    } finally {
+      setRemoteLoading(null)
+    }
+  }
+
+  const handleRemoteTerminal = async () => {
+    setRemoteLoading('terminal')
+    setRemoteError(null)
+    try {
+      await rustDesk.openTerminal(agent.rustdesk_id || undefined, agent.agent_id)
+    } catch (e: any) {
+      setRemoteError(e.message || 'Failed to open terminal')
+    } finally {
+      setRemoteLoading(null)
+    }
+  }
+
+  const handleRemoteFiles = async () => {
+    setRemoteLoading('files')
+    setRemoteError(null)
+    try {
+      await rustDesk.openFiles(agent.rustdesk_id || undefined, agent.agent_id)
+    } catch (e: any) {
+      setRemoteError(e.message || 'Failed to open file transfer')
+    } finally {
+      setRemoteLoading(null)
+    }
+  }
+
+  const handleInstallRustDesk = async () => {
+    setInstallRustDeskLoading(true)
+    setRemoteError(null)
+    try {
+      await rustDesk.pushInstall(agent.agent_id)
+      alert(`RustDesk install command sent successfully! The RustDesk peer ID will appear in the command output once the installation completes. Check the agent's command output for the peer ID.`)
+    } catch (e: any) {
+      alert(`Failed to push RustDesk install: ${e.message || 'Unknown error'}`)
+    } finally {
+      setInstallRustDeskLoading(false)
+    }
+  }
+
+  const handleLinkRustDesk = async () => {
+    if (!linkRustDeskId.trim()) {
+      alert('Please enter a RustDesk peer ID')
+      return
+    }
+    try {
+      await rustDesk.linkPeerId(agent.agent_id, linkRustDeskId.trim())
+      setLinkRustDeskId('')
+      await loadAgent()
+    } catch (e: any) {
+      alert(`Failed to link RustDesk peer ID: ${e.message || 'Unknown error'}`)
+    }
+  }
+
   if (loading && !agent) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -92,9 +147,9 @@ const DeviceDetail = () => {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <IconSearch size={40} className="mx-auto mb-3 text-gray-400" />
+          <IconSearch className="w-12 h-12 mx-auto mb-3 text-gray-400" />
           <p className="text-gray-500 dark:text-gray-400">Agent not found</p>
-          <Link to="/devices" className="text-blue-500 hover:underline text-sm mt-2 inline-block">Back to devices</Link>
+          <Link to="/devices" className="text-blue-500 hover:underline text-sm mt-2 inline-block">← Back to devices</Link>
         </div>
       </div>
     )
@@ -103,10 +158,7 @@ const DeviceDetail = () => {
   const disks = parseJsonSafe(agent.disks_json, [])
   const memory = parseJsonSafe(agent.memory_json, {})
   const users = parseJsonSafe(agent.logged_in_users, [])
-  const services = parseJsonSafe(agent.services_json, [])
-  const cpuPct = agent.cpu_percent ?? 0
-  const memPct = memory.percent ?? 0
-  const meshNodeId = agent.mesh_node_id || ''
+  const hasRustDeskId = Boolean(agent.rustdesk_id)
 
   const handleServiceAction = async (action: string, serviceName: string) => {
     if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} service "${serviceName}"?`)) return
@@ -128,36 +180,33 @@ const DeviceDetail = () => {
     }
   }
 
-  const handleRemoteDesktop = () => {
-    meshCentral.openDesktop(meshNodeId || agent.agent_id)
-  }
-
-  const handleRemoteTerminal = () => {
-    meshCentral.openTerminal(meshNodeId || agent.agent_id)
-  }
-
-  const handleRemoteFiles = () => {
-    meshCentral.openFiles(meshNodeId || agent.agent_id)
-  }
+  const services = parseJsonSafe(agent.services_json, [])
+  const cpuPct = agent.cpu_percent ?? 0
+  const memPct = memory.percent ?? 0
 
   return (
     <div className="p-6 space-y-4">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
         <Link to="/devices" className="hover:text-blue-500">Devices</Link>
-        <span>/</span>
+        <IconChevronRight className="w-4 h-4" />
         <span className="text-gray-900 dark:text-white font-medium">{agent.hostname || id}</span>
       </div>
 
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
-        <div className="flex items-start justify-between flex-wrap gap-3">
+        <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
             <div className={`w-4 h-4 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : 'bg-gray-400'}`} />
             <div>
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">{agent.hostname || 'Unknown'}</h1>
               <div className="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
-                <span className="flex items-center gap-1"><PlatformIcon plat={agent.plat} /> {agent.os_name || agent.plat || 'Unknown'}</span>
+                <span className="flex items-center gap-1">
+                  {agent.plat === 'windows' ? <IconWindows className="w-4 h-4" /> :
+                   agent.plat === 'linux' ? <IconLinux className="w-4 h-4" /> :
+                   <IconApple className="w-4 h-4" />}
+                  {agent.os_name || agent.plat || 'Unknown'}
+                </span>
                 <span>·</span>
                 <span className="font-mono">{agent.local_ip || '—'}</span>
                 <span>·</span>
@@ -167,38 +216,56 @@ const DeviceDetail = () => {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => setShowTerminal(!showTerminal)}
+              className={`px-4 py-2 text-sm rounded-lg transition-colors flex items-center gap-2 ${showTerminal ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+            >
+              <IconTerminalSVG className="w-4 h-4" />
+              {showTerminal ? 'Hide Terminal' : 'Terminal'}
+            </button>
             {agent.status === 'online' && (
               <>
                 <button
                   onClick={handleRemoteDesktop}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700"
-                  disabled={!meshNodeId && !agent.agent_id}
+                  disabled={remoteLoading === 'desktop'}
+                  className="px-4 py-2 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                  title={hasRustDeskId ? 'Open Remote Desktop via RustDesk' : 'Open RustDesk Dashboard (device not linked yet)'}
                 >
-                  <IconMonitor size={16} /> Remote Desktop
+                  <IconMonitor className="w-4 h-4" />
+                  {remoteLoading === 'desktop' ? 'Connecting...' : 'Remote Desktop'}
                 </button>
                 <button
                   onClick={handleRemoteTerminal}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-blue-600 text-white hover:bg-blue-700"
-                  disabled={!meshNodeId && !agent.agent_id}
+                  disabled={remoteLoading === 'terminal'}
+                  className="px-4 py-2 text-sm rounded-lg transition-colors bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  title={hasRustDeskId ? 'Open Terminal via RustDesk' : 'Open RustDesk Dashboard (device not linked yet)'}
                 >
-                  <IconTerminal size={16} /> Terminal
+                  <IconTerminalSVG className="w-4 h-4" />
+                  {remoteLoading === 'terminal' ? 'Connecting...' : 'Terminal (Mesh)'}
                 </button>
                 <button
                   onClick={handleRemoteFiles}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700"
-                  disabled={!meshNodeId && !agent.agent_id}
+                  disabled={remoteLoading === 'files'}
+                  className="px-4 py-2 text-sm rounded-lg transition-colors bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  title={hasRustDeskId ? 'Open File Transfer via RustDesk' : 'Open RustDesk Dashboard (device not linked yet)'}
                 >
-                  <IconFolder size={16} /> Files
+                  <IconFolder className="w-4 h-4" />
+                  {remoteLoading === 'files' ? 'Connecting...' : 'Files'}
                 </button>
               </>
             )}
-            <button
-              onClick={() => setShowTerminal(!showTerminal)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors ${showTerminal ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
-            >
-              <IconTerminal size={16} /> {showTerminal ? 'Hide Shell' : 'Shell'}
-            </button>
+            {agent.status === 'online' && !hasRustDeskId && (
+              <button
+                onClick={handleInstallRustDesk}
+                disabled={installRustDeskLoading}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
+                title="Push RustDesk install command to this device"
+              >
+                <IconInstall className="w-4 h-4" />
+                {installRustDeskLoading ? 'Installing...' : 'Install RustDesk'}
+              </button>
+            )}
             {agent.status === 'online' && (
               <button
                 onClick={async () => {
@@ -206,30 +273,74 @@ const DeviceDetail = () => {
                     await fetch(`/agents/${id}/restart/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
                   }
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-orange-600 text-white hover:bg-orange-700"
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-orange-600 text-white hover:bg-orange-700 flex items-center gap-2"
               >
-                <IconRefresh size={16} /> Restart Agent
+                <IconRefresh className="w-4 h-4" />
+                Restart Agent
               </button>
             )}
             <button
               onClick={async () => {
                 const name = agent.hostname || id
                 if (!confirm(`Delete "${name}" from OpenRMM?`)) return
-                const uninstall = confirm('Also uninstall the agent from the machine?')
+                const uninstall = confirm('Also uninstall the agent from the machine? (This will stop the service and remove all files.)')
                 try {
                   const res = await fetch(`/agents/${id}/?uninstall=${uninstall}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-                  if (res.ok) window.location.href = '/devices'
-                  else alert('Failed to delete device')
+                  if (res.ok) {
+                    window.location.href = '/devices'
+                  } else {
+                    alert('Failed to delete device')
+                  }
                 } catch (e) {
                   alert('Failed to delete device: ' + e)
                 }
               }}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700"
+              className="px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700 flex items-center gap-2"
             >
-              <IconTrash size={16} /> Delete
+              <IconTrash className="w-4 h-4" />
+              Delete
             </button>
           </div>
         </div>
+
+        {/* Remote access error */}
+        {remoteError && (
+          <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300 flex items-center gap-2">
+            <IconInfo className="w-4 h-4 flex-shrink-0" />
+            <span>{remoteError}</span>
+            {!hasRustDeskId && (
+              <span className="text-xs opacity-75">(No RustDesk node linked — install the RustDesk agent on this device first)</span>
+            )}
+          </div>
+        )}
+
+        {/* RustDesk status indicator */}
+        {!hasRustDeskId && agent.status === 'online' && (
+          <div className="mt-3 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm text-yellow-700 dark:text-yellow-300 flex items-center gap-2">
+            <IconInfo className="w-4 h-4 flex-shrink-0" />
+            <span>
+              Remote access requires the RustDesk agent. 
+              <a href="/install" className="underline ml-1">Install it on this device</a> to enable Remote Desktop, Terminal, and Files.
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <input
+                type="text"
+                value={linkRustDeskId}
+                onChange={e => setLinkRustDeskId(e.target.value)}
+                placeholder="RustDesk ID"
+                className="px-2 py-1 text-xs font-mono bg-white dark:bg-gray-900 border border-yellow-300 dark:border-yellow-700 rounded focus:ring-2 focus:ring-amber-500 dark:text-white w-32"
+                onKeyDown={e => e.key === 'Enter' && handleLinkRustDesk()}
+              />
+              <button
+                onClick={handleLinkRustDesk}
+                disabled={!linkRustDeskId.trim()}
+                className="px-2 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 transition-colors"
+              >
+                Link
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Terminal Panel */}
@@ -273,7 +384,7 @@ const DeviceDetail = () => {
           </p>
         </div>
 
-        {/* Disk */}
+        {/* Disk - show first disk */}
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
           {disks.length > 0 ? (() => {
             const disk = disks[0]
@@ -300,7 +411,7 @@ const DeviceDetail = () => {
         </div>
       </div>
 
-      {/* Additional disks */}
+      {/* Additional disks if any */}
       {disks.length > 1 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {disks.slice(1).map((disk: any, i: number) => (
@@ -357,7 +468,8 @@ const DeviceDetail = () => {
                   <InfoRow label="Agent Version" value={`v${agent.version || '—'}`} />
                   <InfoRow label="Last Seen" value={agent.last_seen ? new Date(agent.last_seen).toLocaleString() : '—'} />
                   <InfoRow label="Uptime" value={agent.uptime_seconds ? formatUptime(agent.uptime_seconds) : '—'} />
-                  <InfoRow label="MeshCentral Node" value={meshNodeId || 'Not linked'} />
+                  <InfoRow label="Monitoring Type" value={agent.monitoring_type || '—'} />
+                  <InfoRow label="RustDesk Node" value={agent.rustdesk_id || 'Not linked'} />
                 </div>
               </div>
 
@@ -365,10 +477,11 @@ const DeviceDetail = () => {
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Activity</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Services" value={services.length || '—'} icon={<IconRefresh size={18} className="text-blue-400" />} />
-                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon={<IconMonitor size={18} className="text-gray-400" />} />
-                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon={<IconMonitor size={18} className="text-yellow-400" />} />
-                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon={<IconMonitor size={18} className="text-green-400" />} />
+                  <MiniStat label="Services" value={services.length || '—'} icon="wrench" />
+                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon="cog" />
+                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon="cpu" />
+                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon="ram" />
+                  <MiniStat label="Logged-in Users" value={users.length || '—'} icon="user" />
                 </div>
                 {users.length > 0 && (
                   <div>
@@ -407,7 +520,7 @@ const DeviceDetail = () => {
 
           {activeTab === 'checks' && (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <IconSearch size={40} className="mx-auto mb-3 text-gray-400" />
+              <IconInfo className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
               <p className="text-sm">Checks will appear here when configured</p>
             </div>
           )}
@@ -485,20 +598,20 @@ const DeviceDetail = () => {
                                 onClick={() => handleServiceAction('start', svc.name)}
                                 disabled={serviceActionLoading === svc.name + 'start'}
                                 className="px-2 py-0.5 text-xs rounded bg-green-600/20 text-green-400 hover:bg-green-600/30 disabled:opacity-50"
-                              >Start</button>
+                              >▶ Start</button>
                             )}
                             {svc.status === 'running' && (
                               <button
                                 onClick={() => handleServiceAction('stop', svc.name)}
                                 disabled={serviceActionLoading === svc.name + 'stop'}
                                 className="px-2 py-0.5 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50"
-                              >Stop</button>
+                              >⏹ Stop</button>
                             )}
                             <button
                               onClick={() => handleServiceAction('restart', svc.name)}
                               disabled={serviceActionLoading === svc.name + 'restart'}
                               className="px-2 py-0.5 text-xs rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 disabled:opacity-50"
-                            >Restart</button>
+                            >↻ Restart</button>
                           </div>
                         </td>
                       </tr>
@@ -511,7 +624,7 @@ const DeviceDetail = () => {
 
           {activeTab === 'events' && (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-              <IconMonitor size={40} className="mx-auto mb-3 text-gray-400" />
+              <IconInfo className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
               <p className="text-sm">Event log will appear here</p>
             </div>
           )}
@@ -528,9 +641,15 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
-const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: ReactNode }) => (
+const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: string }) => (
   <div className="bg-gray-50 dark:bg-gray-750 rounded-lg p-3 flex items-center gap-3">
-    {icon}
+    <div className="text-lg">
+      {icon === 'wrench' && '🔧'}
+      {icon === 'cog' && '⚙️'}
+      {icon === 'cpu' && '🔥'}
+      {icon === 'ram' && '🧠'}
+      {icon === 'user' && '👤'}
+    </div>
     <div>
       <p className="text-lg font-bold text-gray-900 dark:text-white">{value}</p>
       <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>

@@ -33,17 +33,14 @@ services:
     image: nats:2-alpine
     container_name: openrmm-nats
     restart: unless-stopped
+    command: "-m 8222 -js"
     networks:
       - openrmm-network
-    ports:
-      - "127.0.0.1:4222:4222"
-      - "127.0.0.1:8222:8222"
-    command: "-m 8222 -js"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
-      interval: 5s
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
       timeout: 3s
-      retries: 5
+      retries: 3
 
   backend:
     build: ./api
@@ -51,36 +48,97 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
-      REDIS_URL: redis://redis:***@postgres:5432/openrmm
-      REDIS_URL: redis://redis:***@postgres:5432/openrmm
       REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
       NATS_URL: nats://nats:4222
       SECRET_KEY: openrmm-secret-key-change-in-production
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      RUSTDESK_SERVER: rustdesk.derfwins.com
+      RUSTDESK_DATA_DIR: /rustdesk_data
+    volumes:
+      - ./agent:/app/agent:ro
+      - rustdesk_data:/rustdesk_data:ro
     networks:
       - openrmm-network
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "v2.celery", "beat", "--loglevel=info"]
 
-  meshcentral:
-    image: ghcr.io/ylianst/meshcentral:latest
-    container_name: openrmm-meshcentral
+  celery-worker:
+    build: ./api
+    container_name: openrmm-celery-worker
     restart: unless-stopped
     environment:
-      MESHHOST: rmmapp.derfwins.com
+      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+      SECRET_KEY: openrmm-secret-key-change-in-production
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      RUSTDESK_SERVER: rustdesk.derfwins.com
+    command: ["celery", "-A", "v2.celery", "worker", "--loglevel=info"]
+    networks:
+      - openrmm-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build: ./api
+    container_name: openrmm-celery-beat
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://openrmm:openrmm_secret@postgres:5432/openrmm
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+      SECRET_KEY: openrmm-secret-key-change-in-production
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    command: ["celery", "-A", "v2.celery", "beat", "--loglevel=info"]
+    networks:
+      - openrmm-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  hbbs:
+    image: rustdesk/rustdesk-server:latest
+    container_name: openrmm-hbbs
+    restart: unless-stopped
+    command: hbbs
     networks:
       - openrmm-network
     volumes:
-      - ./meshcentral/data:/opt/meshcentral/meshcentral-data
-      - ./meshcentral/config.json:/opt/meshcentral/meshcentral-data/config.json:ro
-      - ./meshcentral/custom.css:/opt/meshcentral/meshcentral-data/custom.css:ro
-      - ./meshcentral/logo.svg:/opt/meshcentral/meshcentral-data/logo.svg:ro
+      - rustdesk_data:/root
+    ports:
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21118:21118"
     depends_on:
-      - backend
+      - hbbr
+
+  hbbr:
+    image: rustdesk/rustdesk-server:latest
+    container_name: openrmm-hbbr
+    restart: unless-stopped
+    command: hbbr
+    networks:
+      - openrmm-network
+    volumes:
+      - rustdesk_data:/root
+    ports:
+      - "21117:21117"
+      - "21119:21119"
 
   nginx:
     image: nginx:alpine
@@ -88,6 +146,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -95,38 +154,8 @@ services:
       - openrmm-network
     depends_on:
       - backend
-      - meshcentral
-
-  # Apache Guacamole - Remote Desktop Gateway (kept for potential future use)
-  guacd:
-    image: guacamole/guacd:latest
-    container_name: openrmm-guacd
-    restart: unless-stopped
-    networks:
-      - openrmm-network
-    volumes:
-      - guacd_drive:/drive
-      - guacd_record:/record
-
-  guacamole:
-    image: guacamole/guacamole:latest
-    container_name: openrmm-guacamole
-    restart: unless-stopped
-    environment:
-      GUACD_HOSTNAME: guacd
-      GUACD_PORT: 4822
-      POSTGRES_HOSTNAME: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DATABASE: guacamole_db
-      POSTGRES_USER: guacamole
-      POSTGRES_PASSWORD: guacamole_secret
-    networks:
-      - openrmm-network
-    depends_on:
-      - guacd
-      - postgres
-    volumes:
-      - guacamole_config:/config
+      - hbbs
+      - hbbr
 
 networks:
   openrmm-network:
@@ -135,9 +164,5 @@ networks:
 volumes:
   postgres_data:
     driver: local
-  guacd_drive:
-    driver: local
-  guacd_record:
-    driver: local
-  guacamole_config:
+  rustdesk_data:
     driver: local

@@ -1,4 +1,3 @@
-"""Authentication - JWT tokens + password hashing"""
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
@@ -15,12 +14,18 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 
-def hash_password(password: str) -> str:
+def verify_password(plain: str, hashed: str) -> bool:
+    """Verify a plain password against a bcrypt hash."""
+    return pwd_context.verify(plain, hashed)
+
+
+def get_password_hash(password: str) -> str:
+    """Hash a password using bcrypt."""
     return pwd_context.hash(password)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+# Alias for backward compatibility
+hash_password = get_password_hash
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

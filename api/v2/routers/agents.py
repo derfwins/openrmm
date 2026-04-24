@@ -199,7 +199,7 @@ async def list_agents(
         # Get all site IDs for this client
         site_result = await db.execute(select(Site.id).where(Site.client_id == client_id))
         site_ids = [row[0] for row in site_result.all()]
-        stmt = stmt.where(Agent.site_id.in_(site_ids))
+        stmt = stmt.where((Agent.site_id.in_(site_ids)) | (Agent.site_id.is_(None)))
     result = await db.execute(stmt)
     agents = result.scalars().all()
     return [
@@ -214,6 +214,7 @@ async def list_agents(
             "total_ram": a.total_ram, "os_name": a.os_name,
             "os_version": a.os_version, "public_ip": a.public_ip,
             "local_ip": a.local_ip, "logged_in_user": a.logged_in_user,
+        "mesh_node_id": a.mesh_node_id,
             "disks_json": a.disks_json, "memory_json": a.memory_json,
             "uptime_seconds": a.uptime_seconds, "logged_in_users": a.logged_in_users,
             "running_processes": a.running_processes, "cpu_percent": a.cpu_percent,
@@ -253,6 +254,7 @@ async def get_agent(
         "total_ram": agent.total_ram, "os_name": agent.os_name,
         "os_version": agent.os_version, "public_ip": agent.public_ip,
         "local_ip": agent.local_ip, "logged_in_user": agent.logged_in_user,
+        "mesh_node_id": agent.mesh_node_id,
         "disks_json": agent.disks_json, "memory_json": agent.memory_json,
         "uptime_seconds": agent.uptime_seconds, "logged_in_users": agent.logged_in_users,
         "running_processes": agent.running_processes, "cpu_percent": agent.cpu_percent,
@@ -332,14 +334,25 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
     agent = result.scalar_one_or_none()
 
     if not agent:
-        # Auto-register new agent
-        agent = Agent(
-            agent_id=req.agent_id,
-            hostname=req.hostname or req.agent_id,
-            status="online",
-            first_seen=datetime.now(timezone.utc),
-        )
-        db.add(agent)
+        # Check for existing agent with same hostname (prevent duplicates)
+        hostname = req.hostname or req.agent_id
+        host_result = await db.execute(select(Agent).where(Agent.hostname == hostname))
+        existing = host_result.scalar_one_or_none()
+        if existing:
+            # Same machine re-registered with new agent_id — update the existing record
+            logger.info(f"Agent {req.agent_id} matches existing hostname '{hostname}' (existing agent_id={existing.agent_id}), updating")
+            existing.agent_id = req.agent_id
+            existing.status = "online"
+            agent = existing
+        else:
+            # Auto-register new agent
+            agent = Agent(
+                agent_id=req.agent_id,
+                hostname=hostname,
+                status="online",
+                first_seen=datetime.now(timezone.utc),
+            )
+            db.add(agent)
     else:
         agent.status = "online"
 
@@ -351,11 +364,16 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
                    "cpu_model", "cpu_cores", "total_ram", "os_name", "os_version",
                    "public_ip", "local_ip", "logged_in_user", "disks_json",
                    "memory_json", "uptime_seconds", "logged_in_users",
-                   "running_processes", "cpu_percent", "services_json",
-                   "mesh_node_id"]:
+                   "running_processes", "cpu_percent", "services_json"]:
         val = getattr(req, field, None)
-        if val is not None:
+        if val is not None and val != "":
             setattr(agent, field, val)
+
+    # Only update mesh_node_id if agent provides a non-empty value
+    # (prevents overwriting correct DB value with empty string from older agents)
+    mesh_val = getattr(req, "mesh_node_id", None)
+    if mesh_val and "@" in mesh_val and "$" in mesh_val:
+        agent.mesh_node_id = mesh_val
 
     await db.commit()
 
@@ -486,3 +504,67 @@ async def run_command(
         return {"status": "sent", "session_id": session_id, "command": command[:100]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send command: {e}")
+
+
+class AgentUpdate(BaseModel):
+    site_id: Optional[int] = None
+    description: Optional[str] = None
+    is_maintenance: Optional[bool] = None
+    monitoring_type: Optional[str] = None
+    rustdesk_id: Optional[str] = None
+
+
+@router.patch("/{agent_id}/")
+async def update_agent(
+    agent_id: int,
+    update: AgentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update agent properties (site assignment, description, etc.)."""
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Update fields if provided
+    if update.site_id is not None:
+        agent.site_id = update.site_id
+    if update.description is not None:
+        agent.description = update.description
+    if update.is_maintenance is not None:
+        agent.is_maintenance = update.is_maintenance
+    if update.monitoring_type is not None:
+        agent.monitoring_type = update.monitoring_type
+    if update.rustdesk_id is not None:
+        agent.rustdesk_id = update.rustdesk_id
+    
+    await db.commit()
+    await db.refresh(agent)
+    
+    return {"id": agent.id, "hostname": agent.hostname, "site_id": agent.site_id, "status": agent.status}
+
+
+@router.patch("/{agent_id}/rustdesk-id/")
+async def update_rustdesk_id(
+    agent_id: str,
+    rustdesk_id: str = Query(..., description="RustDesk peer ID to link"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a RustDesk peer ID to an OpenRMM agent."""
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+            agent = result.scalar_one_or_none()
+        except (ValueError, TypeError):
+            pass
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    agent.rustdesk_id = rustdesk_id
+    await db.commit()
+    return {"status": "ok", "agent_id": agent_id, "rustdesk_id": rustdesk_id}
