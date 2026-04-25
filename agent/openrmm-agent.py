@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.19"
+AGENT_VERSION = "0.9.20"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -1783,7 +1783,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                             header = struct.pack('!BI', frame_type, len(payload))
                             await ws.send(header + payload)
 
-                        if capture_init_h264 is not None:
+                        if capture_init_h264 is not None and use_h264:
                             # --- H.264 streaming mode ---
                             try:
                                 fps = data.get("fps", 30)
