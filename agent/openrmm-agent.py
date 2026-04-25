@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.15"
+AGENT_VERSION = "0.9.16"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -41,6 +41,21 @@ log = logging.getLogger("openrmm-agent")
 # State
 running = True
 backoff = 1
+
+
+def normalize_server_url(server: str) -> str:
+    """Normalize the server URL to ensure it has a scheme and no trailing slash.
+    
+    Handles common mistakes:
+      - Missing scheme (e.g. "rmm.example.com" → "https://rmm.example.com")
+      - Trailing slash removed
+      - Preserves explicit http:// if specified
+    """
+    server = server.strip()
+    if not server.startswith("http://") and not server.startswith("https://"):
+        # Default to https if no scheme provided
+        server = "https://" + server
+    return server.rstrip("/")
 
 
 def signal_handler(sig, frame):
@@ -119,75 +134,162 @@ def get_mesh_node_id() -> str:
 
 
 def get_rustdesk_info() -> dict:
-    """Detect RustDesk installation and return peer ID and password.
+    """Detect RustDesk installation and return peer ID, password, and server config.
     
-    Runs `rustdesk --get-id` and `rustdesk --get-password` to find
-    the installed RustDesk's peer ID and permanent password. Returns
-    empty strings if RustDesk is not installed or not running.
+    Strategy (ordered by reliability):
+    1. CLI commands (--get-id, --get-password) — parse output for pure-numeric lines
+    2. Config file scanning — search ALL user profiles on Windows
+    3. Return whatever we found
     """
-    result = {"rustdesk_id": "", "rustdesk_password": ""}
+    result = {"rustdesk_id": "", "rustdesk_password": "", "rustdesk_server": "", "rustdesk_relay_server": ""}
     
-    # Find rustdesk binary based on OS
+    # --- Find RustDesk binary ---
+    rd_path = None
     if platform.system() == "Windows":
-        # Common install locations (checked in order)
         rd_candidates = [
             Path(os.environ.get('ProgramFiles', 'C:\\Program Files')) / 'RustDesk' / 'rustdesk.exe',
             Path(os.environ.get('ProgramFiles(x86)', 'C:\\Program Files (x86)')) / 'RustDesk' / 'rustdesk.exe',
-            # When installed as SYSTEM service, RustDesk goes here:
-            Path(os.environ.get('SystemRoot', 'C:\\Windows')) / 'system32' / 'config' / 'systemprofile' / 'AppData' / 'Local' / 'RustDesk' / 'rustdesk.exe',
-            # Per-user install:
-            Path(os.environ.get('LOCALAPPDATA', '')) / 'RustDesk' / 'rustdesk.exe',
         ]
-        rd_path = None
         for candidate in rd_candidates:
             if candidate.exists():
                 rd_path = candidate
                 break
         if rd_path is None:
-            # Try PATH as last resort
             rd_path = "rustdesk.exe"
     elif platform.system() == "Darwin":
         rd_path = Path("/Applications/RustDesk.app/Contents/MacOS/RustDesk")
         if not rd_path.exists():
             rd_path = "rustdesk"
-    else:  # Linux
+    else:
         rd_path = Path("/usr/bin/rustdesk")
         if not rd_path.exists():
             rd_path = Path("/usr/local/bin/rustdesk")
         if not rd_path.exists():
             rd_path = "rustdesk"
     
+    # --- Try CLI: --get-id ---
+    # On Windows, --get-id may output debug lines before the actual ID.
+    # We scan all output lines looking for a pure-numeric line (the peer ID).
     try:
-        cmd = [str(rd_path), "--get-id"]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        peer_id = proc.stdout.strip()
-        if peer_id and proc.returncode == 0:
-            result["rustdesk_id"] = peer_id
-            log.info("RustDesk peer ID: %s", peer_id)
-        else:
-            log.debug("RustDesk --get-id returned no output (rc=%d)", proc.returncode)
+        proc = subprocess.run([str(rd_path), "--get-id"], capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0 or proc.stdout.strip():
+            for line in proc.stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit() and len(line) >= 9:  # RustDesk peer IDs are 9+ digits
+                    result["rustdesk_id"] = line
+                    log.info("RustDesk peer ID from CLI: %s", line)
+                    break
+            if not result["rustdesk_id"]:
+                log.debug("RustDesk --get-id output had no pure-numeric line: %s", proc.stdout[:200])
     except FileNotFoundError:
         log.debug("RustDesk not found at %s", rd_path)
-        return result
     except subprocess.TimeoutExpired:
         log.debug("RustDesk --get-id timed out")
-        return result
     except Exception as e:
         log.debug("RustDesk --get-id error: %s", e)
-        return result
     
-    # Only check password if we found a peer ID (RustDesk is installed and configured)
-    try:
-        cmd = [str(rd_path), "--get-password"]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        password = proc.stdout.strip()
-        if password and proc.returncode == 0:
-            result["rustdesk_password"] = password
-            log.info("RustDesk password retrieved (len=%d)", len(password))
-        else:
-            log.debug("RustDesk --get-password returned no output")
-    except Exception as e:
-        log.debug("RustDesk --get-password error: %s", e)
+    # --- Try CLI: --get-password (only if we got a peer ID) ---
+    if result["rustdesk_id"]:
+        try:
+            proc = subprocess.run([str(rd_path), "--get-password"], capture_output=True, text=True, timeout=10)
+            if proc.returncode == 0:
+                password = proc.stdout.strip()
+                # Only accept short plain-text passwords (not encrypted blobs starting with "00")
+                if password and len(password) < 100 and not password.startswith("00"):
+                    result["rustdesk_password"] = password
+                    log.info("RustDesk password retrieved (len=%d)", len(password))
+                elif len(password) >= 100:
+                    log.debug("RustDesk --get-password returned encrypted blob (len=%d), skipping", len(password))
+        except Exception as e:
+            log.debug("RustDesk --get-password error: %s", e)
+    
+    # --- Fallback: Read config files (for service/remote contexts where CLI fails) ---
+    if not result["rustdesk_id"] and platform.system() == "Windows":
+        config_dirs = []
+        appdata = os.environ.get('APPDATA', '')
+        if appdata:
+            config_dirs.append(Path(appdata) / 'RustDesk' / 'config')
+        systemroot = os.environ.get('SystemRoot', 'C:\\Windows')
+        config_dirs.append(Path(systemroot) / 'system32' / 'config' / 'systemprofile' / 'AppData' / 'Roaming' / 'RustDesk' / 'config')
+        config_dirs.append(Path(systemroot) / 'system32' / 'config' / 'systemprofile' / 'AppData' / 'Local' / 'RustDesk' / 'config')
+        localappdata = os.environ.get('LOCALAPPDATA', '')
+        if localappdata:
+            config_dirs.append(Path(localappdata) / 'RustDesk' / 'config')
+        # Scan ALL user profiles (for when agent runs as SYSTEM but RustDesk runs as a user)
+        users_dir = Path('C:\\Users')
+        if users_dir.exists():
+            for user_dir in users_dir.iterdir():
+                if user_dir.is_dir() and user_dir.name not in ('Public', 'Default', 'Default User', 'All Users'):
+                    candidate = user_dir / 'AppData' / 'Roaming' / 'RustDesk' / 'config'
+                    if candidate not in config_dirs:
+                        config_dirs.append(candidate)
+        
+        for config_dir in config_dirs:
+            # Try RustDesk.toml (v1 format with enc_id)
+            toml_path = config_dir / 'RustDesk.toml'
+            if toml_path.exists():
+                try:
+                    content = toml_path.read_text(encoding='utf-8', errors='ignore')
+                    enc_id_val = ""
+                    password_val = ""
+                    for line in content.split('\n'):
+                        line = line.strip()
+                        if line.startswith('enc_id'):
+                            parts = line.split('=', 1)
+                            if len(parts) == 2:
+                                val = parts[1].strip().strip("'\"")
+                                if val:
+                                    enc_id_val = val
+                        if line.startswith('password') and not line.startswith('password_hash'):
+                            parts = line.split('=', 1)
+                            if len(parts) == 2:
+                                val = parts[1].strip().strip("'\"")
+                                if val and len(val) < 100:
+                                    password_val = val
+                    if enc_id_val:
+                        result["rustdesk_id"] = f"enc:{enc_id_val}"
+                        log.info("RustDesk enc_id from config %s: %s", config_dir, enc_id_val[:20])
+                    if password_val and not result.get("rustdesk_password"):
+                        result["rustdesk_password"] = password_val
+                    if result["rustdesk_id"]:
+                        log.info("RustDesk info from config: %s", config_dir)
+                        break
+                except Exception as e:
+                    log.debug("Error reading RustDesk config %s: %s", toml_path, e)
+    
+    # --- Read server config from RustDesk2.toml if found ---
+    if platform.system() == "Windows":
+        config_dirs2 = list(config_dirs) if 'config_dirs' in dir() else []
+        if not config_dirs2:
+            config_dirs2 = [Path(os.environ.get('APPDATA', '')) / 'RustDesk' / 'config']
+            users_dir = Path('C:\\Users')
+            if users_dir.exists():
+                for user_dir in users_dir.iterdir():
+                    if user_dir.is_dir() and user_dir.name not in ('Public', 'Default', 'Default User', 'All Users'):
+                        config_dirs2.append(user_dir / 'AppData' / 'Roaming' / 'RustDesk' / 'config')
+    else:
+        config_dirs2 = [
+            Path.home() / '.config/rustdesk',
+        ]
+    
+    for config_dir in config_dirs2:
+        toml2_path = config_dir / 'RustDesk2.toml'
+        if toml2_path.exists():
+            try:
+                content = toml2_path.read_text(encoding='utf-8', errors='ignore')
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line.startswith('rendezvous_server'):
+                        val = line.split('=', 1)[1].strip().strip("'\"")
+                        if val:
+                            result["rustdesk_server"] = val
+                    elif line.startswith('relay_server'):
+                        val = line.split('=', 1)[1].strip().strip("'\"")
+                        if val:
+                            result["rustdesk_relay_server"] = val
+                break
+            except Exception as e:
+                log.debug("Error reading RustDesk2 config %s: %s", toml2_path, e)
     
     return result
 
@@ -310,21 +412,31 @@ def get_system_info() -> dict:
     # Read MeshCentral node ID from the agent db file
     info["mesh_node_id"] = get_mesh_node_id()
 
-    # Detect RustDesk installation (peer ID + password)
+    # Detect RustDesk installation (peer ID + password + server config)
     rustdesk_info = get_rustdesk_info()
     info["rustdesk_id"] = rustdesk_info["rustdesk_id"]
     info["rustdesk_password"] = rustdesk_info["rustdesk_password"]
+    info["rustdesk_server"] = rustdesk_info["rustdesk_server"]
+    info["rustdesk_relay_server"] = rustdesk_info["rustdesk_relay_server"]
 
     return info
 
 
-def heartbeat(server: str, agent_id: str, info: dict) -> dict | None:
+def heartbeat(server: str, agent_id: str, info: dict, client_id: int = 0, site_id: int = 0, monitoring_type: str = "server") -> dict | None:
     """Send heartbeat, return response dict or None on failure."""
+    server = normalize_server_url(server)
     payload = {"agent_id": agent_id, **info}
-    url = f"{server.rstrip('/')}/agents/heartbeat/"
+    # Include site affiliation so the server can auto-assign new agents
+    if client_id:
+        payload["client_id"] = client_id
+    if site_id:
+        payload["site_id"] = site_id
+    if monitoring_type:
+        payload["monitoring_type"] = monitoring_type
+    url = f"{server}/agents/heartbeat/"
     try:
         data = json.dumps(payload).encode()
-        req = Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": "OpenRMM-Agent/0.2.0"})
+        req = Request(url, data=data, headers={"Content-Type": "application/json", "User-Agent": f"OpenRMM-Agent/{AGENT_VERSION}"})
         resp = urlopen(req, timeout=10)
         result = json.loads(resp.read())
         log.info("Heartbeat OK: %s", result.get("status"))

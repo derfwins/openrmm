@@ -44,7 +44,8 @@ class RustDeskService {
       // Open RustDesk client via rustdesk:// protocol handler
       const serverUrl = data.server_url || window.location.hostname
       const password = data.password || ''
-      const url = `rustdesk://${peerId}@${serverUrl}?password=${password}`
+      const key = data.key || ''
+      const url = `rustdesk://${peerId}@${serverUrl}?password=${password}&key=${encodeURIComponent(key)}`
       window.open(url, '_blank')
       return url
     } catch (e: any) {

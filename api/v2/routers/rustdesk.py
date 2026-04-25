@@ -73,7 +73,8 @@ async def create_session(
         "relay_server": RUSTDESK_RELAY_SERVER,
         "password": password,
         "server_url": RUSTDESK_SERVER,
-        "client_url": f"rustdesk://{rustdesk_peer_id}@{RUSTDESK_SERVER}?password={password}",
+        "key": RUSTDESK_PUBLIC_KEY,
+        "client_url": f"rustdesk://{rustdesk_peer_id}@{RUSTDESK_SERVER}?password={password}&key={RUSTDESK_PUBLIC_KEY}",
     }
 
 
