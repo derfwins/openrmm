@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.18"
+AGENT_VERSION = "0.9.19"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -821,10 +821,13 @@ def _init_screen_capture_windows():
                 log.error("Invalid screen dimensions: %dx%d", width, height)
                 return None, 0, 0
 
-            # Get the screen DC
-            hdc_screen = user32.GetDC(0)
+            # Get the screen DC via GetDesktopWindow + GetWindowDC
+            # GetDC(0) fails in Session 0 (SYSTEM) even after desktop switch,
+            # but GetWindowDC(GetDesktopWindow()) works correctly.
+            hwnd_desktop = user32.GetDesktopWindow()
+            hdc_screen = user32.GetWindowDC(hwnd_desktop)
             if not hdc_screen:
-                log.error("GetDC(0) failed")
+                log.error("GetWindowDC(GetDesktopWindow) failed")
                 return None, 0, 0
 
             try:
@@ -916,7 +919,7 @@ def _init_screen_capture_windows():
                     return header + pixel_buf.raw, width, height
 
             finally:
-                user32.ReleaseDC(0, hdc_screen)
+                user32.ReleaseDC(hwnd_desktop, hdc_screen)
 
         except Exception as e:
             log.error("capture_screen error: %s", e, exc_info=True)
