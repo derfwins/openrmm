@@ -1392,7 +1392,7 @@ def _get_clipboard_linux():
     return None
 
 
-def handle_binary_input_frame(data: bytes):
+def handle_binary_input_frame(data: bytes, sessions: dict = None):
     """Process a binary input frame from the browser (mouse/keyboard/clipboard/settings).
     
     Frame format: byte 0 = frame type, bytes 1-4 = payload length (big endian), bytes 5+ = payload.
@@ -1497,6 +1497,15 @@ def handle_binary_input_frame(data: bytes):
             try:
                 settings = json.loads(payload.decode('utf-8'))
                 log.info("Desktop settings update: %s", settings)
+                # Apply settings to active desktop session
+                if sessions is not None:
+                    for key, sess in sessions.items():
+                        if key.startswith("_desktop_") and sess.get("config"):
+                            if "quality" in settings:
+                                sess["config"]["quality"] = settings["quality"]
+                            if "fps" in settings:
+                                sess["config"]["fps"] = settings["fps"]
+                            break  # only one desktop session at a time
             except Exception as e:
                 log.warning("Failed to parse settings frame: %s", e)
 
@@ -1575,7 +1584,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                     # Handle both text (JSON) and binary frames
                     if isinstance(message, bytes):
                         # Binary input frame from server (mouse/keyboard/clipboard/settings)
-                        handle_binary_input_frame(message)
+                        handle_binary_input_frame(message, sessions)
                         continue
                     data = json.loads(message)
                     msg_type = data.get("type")

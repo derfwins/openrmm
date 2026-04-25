@@ -156,12 +156,9 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
                 agent_ws = agent_connections.get(agent_uuid)
                 if agent_ws:
                     try:
-                        # Prepend session_id header so agent knows which session
-                        sid_bytes = session_id.encode("utf-8")
-                        sid_header = struct.pack("!I", len(sid_bytes)) + sid_bytes
-                        msg = sid_header + raw
-                        logger.warning(f"Desktop WS: relaying binary to agent, total_len={len(msg)}, raw_type={type(raw).__name__}")
-                        await agent_ws.send_bytes(msg)
+                        # Send raw binary frame directly — agent handle_binary_input_frame()
+                        # expects the 5-byte header format with NO session_id prefix
+                        await agent_ws.send_bytes(raw)
                     except Exception as e:
                         logger.error(f"Desktop WS: failed to relay binary to agent: {e}", exc_info=True)
                         break

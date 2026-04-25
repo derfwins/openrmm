@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import type { Client, Site } from '../services/clientService'
 import { getClients } from '../services/clientService'
 
@@ -20,17 +20,26 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const [selectedSite, setSelectedSite] = useState<Site | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Refs so load() can read current selection without capturing stale closures
+  const selectedClientRef = useRef(selectedClient)
+  const selectedSiteRef = useRef(selectedSite)
+  selectedClientRef.current = selectedClient
+  selectedSiteRef.current = selectedSite
+
   const load = useCallback(async () => {
+    setLoading(true)
     try {
       const data = await getClients()
       setClients(data)
-      // Preserve selection if client still exists
-      if (selectedClient) {
-        const still = data.find(c => c.id === selectedClient.id)
+      // Preserve selection if client still exists (reading from refs)
+      const currentClient = selectedClientRef.current
+      const currentSite = selectedSiteRef.current
+      if (currentClient) {
+        const still = data.find(c => c.id === currentClient.id)
         if (still) {
           setSelectedClient(still)
-          if (selectedSite) {
-            const s = still.sites?.find(s => s.id === selectedSite.id)
+          if (currentSite) {
+            const s = still.sites?.find(s => s.id === currentSite.id)
             if (s) setSelectedSite(s)
           }
         } else {
@@ -42,7 +51,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       console.error('Failed to load clients:', e)
     }
     setLoading(false)
-  }, [selectedClient?.id, selectedSite?.id])
+  }, [])
 
   useEffect(() => {
     load()
