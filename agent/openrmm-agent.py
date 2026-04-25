@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.20"
+AGENT_VERSION = "0.9.21"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -816,6 +816,7 @@ def _init_screen_capture_windows():
             # Get screen dimensions
             width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
             height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+            log.info("capture_screen: dimensions=%dx%d", width, height)
 
             if width <= 0 or height <= 0:
                 log.error("Invalid screen dimensions: %dx%d", width, height)
@@ -826,6 +827,7 @@ def _init_screen_capture_windows():
             # but GetWindowDC(GetDesktopWindow()) works correctly.
             hwnd_desktop = user32.GetDesktopWindow()
             hdc_screen = user32.GetWindowDC(hwnd_desktop)
+            log.info("capture_screen: hwnd_desktop=%s hdc_screen=%s", hwnd_desktop, hdc_screen)
             if not hdc_screen:
                 log.error("GetWindowDC(GetDesktopWindow) failed")
                 return None, 0, 0
@@ -833,11 +835,13 @@ def _init_screen_capture_windows():
             try:
                 # Create compatible DC and bitmap
                 hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+                log.info("capture_screen: hdc_mem=%s", hdc_mem)
                 if not hdc_mem:
                     log.error("CreateCompatibleDC failed")
                     return None, 0, 0
 
                 hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
+                log.info("capture_screen: hbitmap=%s", hbitmap)
                 if not hbitmap:
                     log.error("CreateCompatibleBitmap failed")
                     gdi32.DeleteDC(hdc_mem)
@@ -848,6 +852,7 @@ def _init_screen_capture_windows():
 
                 # BitBlt from screen to our bitmap
                 result = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, 0, 0, SRCCOPY)
+                log.info("capture_screen: BitBlt result=%s", result)
                 if not result:
                     log.error("BitBlt failed (may be in screensaver/locked state)")
                     gdi32.SelectObject(hdc_mem, old_bitmap)
