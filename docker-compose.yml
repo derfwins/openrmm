@@ -9,6 +9,7 @@ services:
       POSTGRES_PASSWORD: openrmm_secret
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
       - openrmm-network
     healthcheck:
@@ -54,11 +55,8 @@ services:
       SECRET_KEY: openrmm-secret-key-change-in-production
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
-      RUSTDESK_SERVER: rustdesk.derfwins.com
-      RUSTDESK_DATA_DIR: /rustdesk_data
-    volumes:
-      - ./agent:/app/agent:ro
-      - rustdesk_data:/rustdesk_data:ro
+      DEBUG: "False"
+    command: ["uvicorn", "v2.main:app", "--host", "0.0.0.0", "--port", "8000"]
     networks:
       - openrmm-network
     depends_on:
@@ -79,7 +77,7 @@ services:
       SECRET_KEY: openrmm-secret-key-change-in-production
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
-      RUSTDESK_SERVER: rustdesk.derfwins.com
+      DEBUG: "False"
     command: ["celery", "-A", "v2.celery", "worker", "--loglevel=info"]
     networks:
       - openrmm-network
@@ -101,6 +99,7 @@ services:
       SECRET_KEY: openrmm-secret-key-change-in-production
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DEBUG: "False"
     command: ["celery", "-A", "v2.celery", "beat", "--loglevel=info"]
     networks:
       - openrmm-network
@@ -109,36 +108,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  hbbs:
-    image: rustdesk/rustdesk-server:latest
-    container_name: openrmm-hbbs
-    restart: unless-stopped
-    command: hbbs
-    networks:
-      - openrmm-network
-    volumes:
-      - rustdesk_data:/root
-    ports:
-      - "21115:21115"
-      - "21116:21116"
-      - "21116:21116/udp"
-      - "21118:21118"
-    depends_on:
-      - hbbr
-
-  hbbr:
-    image: rustdesk/rustdesk-server:latest
-    container_name: openrmm-hbbr
-    restart: unless-stopped
-    command: hbbr
-    networks:
-      - openrmm-network
-    volumes:
-      - rustdesk_data:/root
-    ports:
-      - "21117:21117"
-      - "21119:21119"
 
   nginx:
     image: nginx:alpine
@@ -154,8 +123,6 @@ services:
       - openrmm-network
     depends_on:
       - backend
-      - hbbs
-      - hbbr
 
 networks:
   openrmm-network:
@@ -163,6 +130,4 @@ networks:
 
 volumes:
   postgres_data:
-    driver: local
-  rustdesk_data:
     driver: local
