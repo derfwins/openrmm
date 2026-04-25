@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # RustDesk configuration from environment
 RUSTDESK_SERVER = os.environ.get("RUSTDESK_SERVER", "rustdesk.derfwins.com")
-RUSTDESK_RELAY_SERVER = os.environ.get("RUSTDESK_RELAY_SERVER", "rustdesk-relay.derfwins.com")
+RUSTDESK_RELAY_SERVER = os.environ.get("RUSTDESK_RELAY_SERVER", "rustdesk.derfwins.com")
 # Path to hbbs data inside Docker
 RUSTDESK_DATA_DIR = os.environ.get("RUSTDESK_DATA_DIR", "/rustdesk_data")
 RUSTDESK_PUBLIC_KEY = "lioe8YzcsJlDYHs9sMLtOgwS0ZjrDLyiYt2JE6LGEGw="
