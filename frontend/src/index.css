@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Tailwind v4: Use class-based dark mode instead of media query */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Tailwind v4: scan component files for class usage */
 @source "../components/**/*.tsx";
 @source "../contexts/**/*.tsx";

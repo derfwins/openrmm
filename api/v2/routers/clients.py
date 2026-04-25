@@ -58,6 +58,8 @@ async def create_client(req: ClientCreate, user: User = Depends(get_current_user
         site = Site(name=site_name, client_id=client.id)
         db.add(site)
 
+    from v2.audit import log_action
+    await log_action(db, username=user.username, action="create", resource_type="client", resource_id=str(client.id), description=f"Created client '{client_name}'")
     await db.commit()
     await db.refresh(client)
     return {"id": client.id, "name": client.name}

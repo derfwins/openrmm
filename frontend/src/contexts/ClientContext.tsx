@@ -44,7 +44,11 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setLoading(false)
   }, [selectedClient?.id, selectedSite?.id])
 
-  useEffect(() => { load(); const iv = setInterval(load, 60000); return () => clearInterval(iv) }, [load])
+  useEffect(() => {
+    load()
+    const iv = setInterval(load, 30000)
+    return () => clearInterval(iv)
+  }, [load])
 
   const selectClient = useCallback((client: Client | null) => {
     setSelectedClient(client)

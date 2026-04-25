@@ -2036,6 +2036,22 @@ async def ws_agent_connect(server: str, agent_id: str):
                             os.execv(sys.executable, [sys.executable] + sys.argv)
                         sys.exit(0)
 
+                    elif msg_type == "reboot_device":
+                        log.info("Reboot device command received")
+                        if platform.system() == "Windows":
+                            import subprocess
+                            subprocess.Popen(["shutdown", "/r", "/t", "5", "/c", "OpenRMM: Remote reboot"])
+                        else:
+                            subprocess.run(["sudo", "reboot"], capture_output=True)
+
+                    elif msg_type == "shutdown_device":
+                        log.info("Shutdown device command received")
+                        if platform.system() == "Windows":
+                            import subprocess
+                            subprocess.Popen(["shutdown", "/s", "/t", "5", "/c", "OpenRMM: Remote shutdown"])
+                        else:
+                            subprocess.run(["sudo", "shutdown", "-h", "now"], capture_output=True)
+
                     elif msg_type == "service_action":
                         svc_action = msg.get("action", "")  # start, stop, restart
                         svc_name = msg.get("service", "")

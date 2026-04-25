@@ -400,9 +400,10 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
     return response
 
 @router.post("/{agent_id}/restart/")
-async def restart_agent(agent_id: str):
+async def restart_agent(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Send restart command to agent via WebSocket."""
     from v2.routers.ws_state import agent_connections, lookup_agent_id
+    from v2.audit import log_action
     agent_uuid = await lookup_agent_id(agent_id)
     if not agent_uuid:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -411,9 +412,51 @@ async def restart_agent(agent_id: str):
         raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
     try:
         await agent_ws.send_json({"type": "restart_agent"})
+        await log_action(db, username=user.username, action="restart", resource_type="agent", resource_id=agent_id, description=f"Restarted agent {agent_id}")
+        await db.commit()
         return {"status": "ok", "message": "Restart command sent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send restart: {e}")
+
+
+@router.post("/{agent_id}/reboot/")
+async def reboot_device(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Send reboot command to device via agent WebSocket."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    from v2.audit import log_action
+    agent_uuid = await lookup_agent_id(agent_id)
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+    try:
+        await agent_ws.send_json({"type": "reboot_device"})
+        await log_action(db, username=user.username, action="reboot", resource_type="agent", resource_id=agent_id, description=f"Rebooted device {agent_id}")
+        await db.commit()
+        return {"status": "ok", "message": "Reboot command sent"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send reboot: {e}")
+
+
+@router.post("/{agent_id}/shutdown/")
+async def shutdown_device(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Send shutdown command to device via agent WebSocket."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    from v2.audit import log_action
+    agent_uuid = await lookup_agent_id(agent_id)
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+    try:
+        await agent_ws.send_json({"type": "shutdown_device"})
+        await log_action(db, username=user.username, action="shutdown", resource_type="agent", resource_id=agent_id, description=f"Shut down device {agent_id}")
+        await db.commit()
+        return {"status": "ok", "message": "Shutdown command sent"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send shutdown: {e}")
 
 
 @router.post("/{agent_id}/service/")

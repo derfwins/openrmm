@@ -41,6 +41,26 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
   })
   const [_currentUsername, setCurrentUsername] = useState(AuthContext.getUsername())
 
+  // Inactivity auto-logout (1 hour)
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>
+    const resetTimer = () => {
+      clearTimeout(timeout)
+      timeout = setTimeout(() => {
+        localStorage.removeItem('token')
+        localStorage.removeItem('username')
+        window.location.href = '/login'
+      }, 60 * 60 * 1000) // 1 hour
+    }
+    const events = ['mousedown', 'keydown', 'mousemove', 'touchstart']
+    events.forEach(e => window.addEventListener(e, resetTimer))
+    resetTimer()
+    return () => {
+      clearTimeout(timeout)
+      events.forEach(e => window.removeEventListener(e, resetTimer))
+    }
+  }, [])
+
   useEffect(() => {
     localStorage.setItem('darkMode', JSON.stringify(darkMode))
     document.documentElement.classList.toggle('dark', darkMode)
@@ -74,10 +94,10 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
   if (!AuthContext.isAuthenticated()) return <Navigate to="/login" />
 
   return (
-    <div className="flex h-screen bg-gray-900 text-gray-100">
+    <div className={`flex h-screen ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-5 shrink-0">
+        <header className={`h-14 ${darkMode ? 'bg-gray-900 border-b border-gray-800' : 'bg-white border-b border-gray-200'} flex items-center justify-between px-5 shrink-0`}>
           <div className="flex items-center gap-3">
             <Breadcrumbs />
           </div>
@@ -85,7 +105,7 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
             <NotificationCenter />
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
+              className={`p-1.5 rounded-lg transition-colors ${darkMode ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-200' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'}`}
               title={darkMode ? 'Light mode' : 'Dark mode'}
             >
               {darkMode ? <IconSun size={16} /> : <IconMoon size={16} />}

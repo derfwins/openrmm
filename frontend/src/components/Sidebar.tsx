@@ -5,7 +5,7 @@ import {
   IconDashboard, IconDevices, IconAlerts, IconAudit, IconAutomation,
   IconSoftware, IconPatches, IconInstall, IconAI, IconReports,
   IconScripts, IconUsers, IconSettings, IconClients, IconMonitor,
-  IconChevronLeft, IconChevronRight
+  IconChevronLeft, IconChevronRight, IconLogout
 } from './Icons'
 
 interface NavItem {
@@ -198,6 +198,14 @@ const Sidebar = () => {
             <span className="text-gray-400 truncate text-xs">{localStorage.getItem('username') || 'admin'}</span>
           )}
         </div>
+        <button
+          onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('username'); window.location.href = '/login' }}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-900/20 transition-colors text-sm"
+          title="Log out"
+        >
+          <IconLogout className="w-4 h-4" />
+          {!collapsed && <span className="text-xs">Log out</span>}
+        </button>
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 transition-colors text-sm"

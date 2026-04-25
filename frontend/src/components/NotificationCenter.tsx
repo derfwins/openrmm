@@ -82,10 +82,10 @@ const NotificationCenter = ({ children }: Props) => {
   }
 
   return (
-    <>
+    <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="relative p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
+        className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-gray-200"
         title="Notifications"
       >
         🔔
@@ -161,7 +161,7 @@ const NotificationCenter = ({ children }: Props) => {
         </div>
       )}
       {children}
-    </>
+    </div>
   )
 }
 

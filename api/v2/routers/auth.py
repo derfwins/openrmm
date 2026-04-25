@@ -81,6 +81,9 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     # Update last login
     user.last_login = datetime.now(timezone.utc)
+    # Audit log
+    from v2.audit import log_action
+    await log_action(db, username=req.username, action="login", resource_type="user", description=f"User {req.username} logged in")
     await db.commit()
 
     expiry = datetime.now(timezone.utc).isoformat()

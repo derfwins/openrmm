@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
-import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo } from './Icons'
+import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconPower } from './Icons'
 import RemoteDesktop from './RemoteDesktop'
 
 const DeviceDetail = () => {
@@ -190,6 +190,34 @@ const DeviceDetail = () => {
               >
                 <IconRefresh className="w-4 h-4" />
                 Restart Agent
+              </button>
+            )}
+            {isActive && (
+              <button
+                onClick={async () => {
+                  if (confirm('Reboot this device? The machine will restart in 5 seconds.')) {
+                    await fetch(`/agents/${id}/reboot/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                  }
+                }}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-red-600 text-white hover:bg-red-700 flex items-center gap-2"
+                title="Reboot the device"
+              >
+                <IconPower className="w-4 h-4" />
+                Reboot
+              </button>
+            )}
+            {isActive && (
+              <button
+                onClick={async () => {
+                  if (confirm('Shut down this device? The machine will power off in 5 seconds.')) {
+                    await fetch(`/agents/${id}/shutdown/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+                  }
+                }}
+                className="px-4 py-2 text-sm rounded-lg transition-colors bg-gray-800 dark:bg-gray-700 text-red-400 hover:bg-gray-700 dark:hover:bg-gray-600 flex items-center gap-2"
+                title="Shut down the device"
+              >
+                <IconPower className="w-4 h-4" />
+                Shut Down
               </button>
             )}
             <button
