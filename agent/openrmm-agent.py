@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.21"
+AGENT_VERSION = "0.9.24"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -478,7 +478,7 @@ def auto_update(server: str, current_version: str, latest_version: str) -> None:
                 cwd=os.path.dirname(os.path.abspath(__file__)),
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
-            sys.exit(0)
+            sys.exit(1)  # Non-zero exit so scheduled task restart policy kicks in
         else:
             os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
@@ -756,181 +756,229 @@ def _init_screen_capture_windows():
                     pass
         _h264_state = {}
 
-    # --- Direct BitBlt capture that works when running as SYSTEM ---
-    # Switches to interactive desktop (WinSta0\Default) before capturing.
-    # No helper process, no mss, no numpy, no pywin32 needed.
-    _desktop_switched = False
-    _saved_winsta = None
-    _saved_desktop = None
+    
+    # --- Subprocess-based screen capture for Windows SYSTEM (Session 0) ---
+    # BitBlt fails inside the agent process when running as SYSTEM in Session 0,
+    # even after SetProcessWindowStation/SetThreadDesktop. But it works in a
+    # fresh subprocess (proven by run_command tests). So we spawn a helper process
+    # for each capture frame.
+    _CAPTURE_HELPER_SCRIPT = r'''#!/usr/bin/env python3
+"""Screen capture helper - spawned as subprocess by the agent.
+BitBlt only works in a fresh process context, not in the long-running agent."""
+import sys, struct, ctypes, ctypes.wintypes
 
-    def _switch_to_interactive_desktop():
-        """Switch current thread to interactive desktop for screen capture.
-        Required when running as SYSTEM (service) which starts on a non-interactive desktop."""
-        nonlocal _desktop_switched, _saved_winsta, _saved_desktop
-        if _desktop_switched:
-            return True
+def main():
+    quality = int(sys.argv[1]) if len(sys.argv) > 1 else 55
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    kernel32 = ctypes.windll.kernel32
+    advapi32 = ctypes.windll.advapi32
+    SRCCOPY = 0x00CC0020
+    
+    # Enable privileges
+    for priv in ("SeTcbPrivilege", "SeDesktopPrivilege"):
         try:
-            # Enable required privileges for accessing interactive desktop
-            _enable_privilege("SeTcbPrivilege")
-            _enable_privilege("SeDesktopPrivilege")
+            token = ctypes.c_void_p()
+            advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0028, ctypes.byref(token))
+            luid = ctypes.create_string_buffer(8)
+            advapi32.LookupPrivilegeValueW(None, priv, luid)
+            tp = ctypes.create_string_buffer(16)
+            ctypes.memmove(tp, luid, 8)
+            struct.pack_into('I', tp, 8, 2)
+            advapi32.AdjustTokenPrivileges(token, False, tp, 0, None, None)
+            kernel32.CloseHandle(token)
+        except Exception:
+            pass
+    
+    # Switch to interactive desktop
+    saved_winsta = user32.GetProcessWindowStation()
+    winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
+    if not winsta or not user32.SetProcessWindowStation(winsta):
+        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"OpenWindowStation failed")
+        sys.stdout.buffer.flush()
+        return
+    desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
+    if not desktop:
+        user32.SetProcessWindowStation(saved_winsta)
+        user32.CloseWindowStation(winsta)
+        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"OpenDesktopW failed")
+        sys.stdout.buffer.flush()
+        return
+    saved_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
+    if not user32.SetThreadDesktop(desktop):
+        user32.CloseDesktop(desktop)
+        user32.SetProcessWindowStation(saved_winsta)
+        user32.CloseWindowStation(winsta)
+        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"SetThreadDesktop failed")
+        sys.stdout.buffer.flush()
+        return
+    
+    try:
+        w = user32.GetSystemMetrics(0)
+        h = user32.GetSystemMetrics(1)
+        if w <= 0 or h <= 0:
+            sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"Bad dimensions %dx%d" % (w, h))
+            sys.stdout.buffer.flush()
+            return
+        
+        hwnd = user32.GetDesktopWindow()
+        hdc = user32.GetWindowDC(hwnd)
+        if not hdc:
+            sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"GetWindowDC failed")
+            sys.stdout.buffer.flush()
+            return
+        try:
+            mem = gdi32.CreateCompatibleDC(hdc)
+            if not mem:
+                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"CreateCompatibleDC failed")
+                return
+            bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
+            if not bmp:
+                gdi32.DeleteDC(mem)
+                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"CreateCompatibleBitmap failed")
+                sys.stdout.buffer.flush()
+                return
+            old = gdi32.SelectObject(mem, bmp)
+            ret = gdi32.BitBlt(mem, 0, 0, w, h, hdc, 0, 0, SRCCOPY)
+            if not ret:
+                gdi32.SelectObject(mem, old)
+                gdi32.DeleteObject(bmp)
+                gdi32.DeleteDC(mem)
+                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"BitBlt failed ret=%d" % ret)
+                sys.stdout.buffer.flush()
+                return
+            
+            class BIH(ctypes.Structure):
+                _fields_ = [("biSize",ctypes.wintypes.DWORD),("biWidth",ctypes.wintypes.LONG),("biHeight",ctypes.wintypes.LONG),("biPlanes",ctypes.wintypes.WORD),("biBitCount",ctypes.wintypes.WORD),("biCompression",ctypes.wintypes.DWORD),("biSizeImage",ctypes.wintypes.DWORD),("biXPelsPerMeter",ctypes.wintypes.LONG),("biYPelsPerMeter",ctypes.wintypes.LONG),("biClrUsed",ctypes.wintypes.DWORD),("biClrImportant",ctypes.wintypes.DWORD)]
+            class BI(ctypes.Structure):
+                _fields_ = [("bmiHeader",BIH),("bmiColors",ctypes.c_uint32*3)]
+            
+            bmi = BI()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BIH)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bmi.bmiHeader.biCompression = 0  # BI_RGB
+            
+            buf = ctypes.create_string_buffer(w * h * 4)
+            rows = gdi32.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bmi), 0)
+            gdi32.SelectObject(mem, old)
+            gdi32.DeleteObject(bmp)
+            gdi32.DeleteDC(mem)
+            
+            if rows == 0:
+                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"GetDIBits returned 0")
+                sys.stdout.buffer.flush()
+                return
+            
+            # Encode JPEG with PIL
+            from PIL import Image
+            import io
+            import numpy as np
+            pixels = np.frombuffer(buf.raw, dtype=np.uint8).reshape((h, w, 4))
+            rgb = np.ascontiguousarray(pixels[:, :, 2::-1])
+            img = Image.fromarray(rgb, 'RGB')
+            out = io.BytesIO()
+            img.save(out, format='JPEG', quality=quality)
+            jpeg_data = out.getvalue()
+            sys.stdout.buffer.write(struct.pack('<II', w, h))
+            sys.stdout.buffer.write(jpeg_data)
+            sys.stdout.buffer.flush()
+        finally:
+            user32.ReleaseDC(hwnd, hdc)
+    finally:
+        try: user32.SetThreadDesktop(saved_desktop)
+        except: pass
+        try: user32.SetProcessWindowStation(saved_winsta)
+        except: pass
+        try: user32.CloseDesktop(desktop)
+        except: pass
+        try: user32.CloseWindowStation(winsta)
+        except: pass
 
-            _saved_winsta = user32.GetProcessWindowStation()
-            winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)  # WINSTA_ALL_ACCESS
-            if not winsta:
-                log.warning("OpenWindowStationW(WinSta0) failed: %d", ctypes.get_last_error())
-                return False
-            if not user32.SetProcessWindowStation(winsta):
-                log.warning("SetProcessWindowStation failed: %d", ctypes.get_last_error())
-                user32.CloseWindowStation(winsta)
-                return False
-            desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)  # DESKTOP_ALL_ACCESS
-            if not desktop:
-                log.warning("OpenDesktopW(Default) failed: %d", ctypes.get_last_error())
-                # Restore window station
-                user32.SetProcessWindowStation(_saved_winsta)
-                user32.CloseWindowStation(winsta)
-                return False
-            _saved_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
-            if not user32.SetThreadDesktop(desktop):
-                log.warning("SetThreadDesktop failed: %d", ctypes.get_last_error())
-                user32.CloseDesktop(desktop)
-                user32.SetProcessWindowStation(_saved_winsta)
-                user32.CloseWindowStation(winsta)
-                return False
-            _desktop_switched = True
-            log.info("Switched to interactive desktop for screen capture")
-            return True
-        except Exception as e:
-            log.error("Desktop switch failed: %s", e, exc_info=True)
-            return False
-
+if __name__ == "__main__":
+    main()
+'''
+    
+    # Write helper script to temp file at init time
+    import tempfile
+    _capture_helper_path = os.path.join(tempfile.gettempdir(), 'openrmm_capture_helper.py')
+    try:
+        with open(_capture_helper_path, 'w') as f:
+            f.write(_CAPTURE_HELPER_SCRIPT)
+        log.info("Wrote capture helper to %s", _capture_helper_path)
+    except Exception as e:
+        log.error("Failed to write capture helper: %s", e, exc_info=True)
+        _capture_helper_path = None
+    
     def capture_screen(quality=55):
-        """Capture screen using ctypes BitBlt. Works when running as SYSTEM
-        after switching to the interactive desktop. Returns (jpeg_bytes, w, h)."""
-        # Ensure we're on the interactive desktop
-        if not _switch_to_interactive_desktop():
-            log.error("Cannot switch to interactive desktop for capture")
+        """Capture screen by spawning a subprocess helper.
+        
+        BitBlt fails inside the agent process when running as SYSTEM in Session 0,
+        even after SetProcessWindowStation/SetThreadDesktop. But it works in a
+        fresh subprocess (proven by run_command tests). So we spawn a helper
+        process for each frame and read back the JPEG via stdout.
+        
+        Returns (jpeg_bytes, width, height) or (None, 0, 0) on error.
+        """
+        if not _capture_helper_path:
+            log.error("Capture helper script not available")
             return None, 0, 0
-
+        
         try:
-            # Get screen dimensions
-            width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
-            height = user32.GetSystemMetrics(1)  # SM_CYSCREEN
-            log.info("capture_screen: dimensions=%dx%d", width, height)
-
-            if width <= 0 or height <= 0:
-                log.error("Invalid screen dimensions: %dx%d", width, height)
+            # Spawn the helper process (no console window on Windows)
+            kwargs = {
+                'capture_output': True,
+                'timeout': 10,
+            }
+            if platform.system() == 'Windows':
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0  # SW_HIDE
+                kwargs['startupinfo'] = si
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            proc = subprocess.run(
+                [sys.executable, _capture_helper_path, str(quality)],
+                **kwargs,
+            )
+            
+            if proc.returncode != 0:
+                stderr_text = proc.stderr.decode('utf-8', errors='replace')[:500]
+                log.error("Capture helper failed (rc=%d): %s", proc.returncode, stderr_text)
+                # Fall through to try reading stdout anyway
+            
+            data = proc.stdout
+            if len(data) < 8:
+                log.error("Capture helper returned too little data: %d bytes", len(data))
                 return None, 0, 0
-
-            # Get the screen DC via GetDesktopWindow + GetWindowDC
-            # GetDC(0) fails in Session 0 (SYSTEM) even after desktop switch,
-            # but GetWindowDC(GetDesktopWindow()) works correctly.
-            hwnd_desktop = user32.GetDesktopWindow()
-            hdc_screen = user32.GetWindowDC(hwnd_desktop)
-            log.info("capture_screen: hwnd_desktop=%s hdc_screen=%s", hwnd_desktop, hdc_screen)
-            if not hdc_screen:
-                log.error("GetWindowDC(GetDesktopWindow) failed")
+            
+            # Parse header: 4 bytes width + 4 bytes height (little-endian)
+            w, h = struct.unpack('<II', data[:8])
+            
+            if w == 0 and h == 0:
+                # Error response - remaining bytes are the error message
+                err_msg = data[8:].decode('utf-8', errors='replace')
+                log.error("Capture helper error: %s", err_msg)
                 return None, 0, 0
-
-            try:
-                # Create compatible DC and bitmap
-                hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
-                log.info("capture_screen: hdc_mem=%s", hdc_mem)
-                if not hdc_mem:
-                    log.error("CreateCompatibleDC failed")
-                    return None, 0, 0
-
-                hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
-                log.info("capture_screen: hbitmap=%s", hbitmap)
-                if not hbitmap:
-                    log.error("CreateCompatibleBitmap failed")
-                    gdi32.DeleteDC(hdc_mem)
-                    return None, 0, 0
-
-                # Select bitmap into DC
-                old_bitmap = gdi32.SelectObject(hdc_mem, hbitmap)
-
-                # BitBlt from screen to our bitmap
-                result = gdi32.BitBlt(hdc_mem, 0, 0, width, height, hdc_screen, 0, 0, SRCCOPY)
-                log.info("capture_screen: BitBlt result=%s", result)
-                if not result:
-                    log.error("BitBlt failed (may be in screensaver/locked state)")
-                    gdi32.SelectObject(hdc_mem, old_bitmap)
-                    gdi32.DeleteObject(hbitmap)
-                    gdi32.DeleteDC(hdc_mem)
-                    return None, 0, 0
-
-                # Get bitmap bits as DIB (top-down BGRX)
-                bmi = BITMAPINFO()
-                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.bmiHeader.biWidth = width
-                bmi.bmiHeader.biHeight = -height  # negative = top-down (BGR, not upside-down)
-                bmi.bmiHeader.biPlanes = 1
-                bmi.bmiHeader.biBitCount = 32  # 32-bit for alpha channel padding
-                bmi.bmiHeader.biCompression = BI_RGB
-
-                buf_size = width * height * 4
-                pixel_buf = ctypes.create_string_buffer(buf_size)
-
-                rows = gdi32.GetDIBits(
-                    hdc_mem, hbitmap, 0, height,
-                    pixel_buf, ctypes.byref(bmi), DIB_RGB_COLORS
-                )
-
-                if rows == 0:
-                    log.error("GetDIBits returned 0 rows")
-                    gdi32.SelectObject(hdc_mem, old_bitmap)
-                    gdi32.DeleteObject(hbitmap)
-                    gdi32.DeleteDC(hdc_mem)
-                    return None, 0, 0
-
-                # Clean up GDI objects AFTER extracting pixel data
-                # (must keep hdc_mem/hbitmap alive for GetDIBits)
-                gdi32.SelectObject(hdc_mem, old_bitmap)
-                gdi32.DeleteObject(hbitmap)
-                gdi32.DeleteDC(hdc_mem)
-
-                # Encode as JPEG using PIL if available
-                try:
-                    from PIL import Image as _PILImage
-                    import io as _io
-                    raw = pixel_buf.raw
-                    # Convert BGRX → RGB efficiently
-                    # Use numpy if available (much faster for large screens), else manual
-                    try:
-                        import numpy as _np
-                        pixels = _np.frombuffer(raw, dtype=_np.uint8).reshape((height, width, 4))
-                        rgb = _np.ascontiguousarray(pixels[:, :, 2::-1])  # BGRX → RGB
-                        img = _PILImage.fromarray(rgb, 'RGB')
-                    except ImportError:
-                        # Manual conversion: extract R,G,B from BGRX
-                        rgb_bytes = bytearray(width * height * 3)
-                        for i in range(width * height):
-                            si = i * 4
-                            di = i * 3
-                            rgb_bytes[di] = raw[si + 2]      # R
-                            rgb_bytes[di + 1] = raw[si + 1]  # G
-                            rgb_bytes[di + 2] = raw[si]       # B
-                        img = _PILImage.frombytes('RGB', (width, height), bytes(rgb_bytes))
-                    out = _io.BytesIO()
-                    img.save(out, format='JPEG', quality=quality)
-                    return out.getvalue(), width, height
-                except ImportError:
-                    # No PIL — can't encode JPEG, try mss fallback
-                    log.warning("PIL not available for JPEG encoding, sending raw pixels")
-                    # Send raw BGRX pixels — frontend would need to handle this
-                    # For now, return as raw data with a 12-byte header: magic + width + height
-                    header = b'RAWX' + struct.pack('<II', width, height)
-                    return header + pixel_buf.raw, width, height
-
-            finally:
-                user32.ReleaseDC(hwnd_desktop, hdc_screen)
-
+            
+            # Success - remaining bytes are the JPEG data
+            jpeg_data = data[8:]
+            if len(jpeg_data) == 0:
+                log.error("Capture helper returned 0 JPEG bytes")
+                return None, 0, 0
+            
+            return jpeg_data, w, h
+            
+        except subprocess.TimeoutExpired:
+            log.error("Capture helper timed out")
+            return None, 0, 0
         except Exception as e:
-            log.error("capture_screen error: %s", e, exc_info=True)
+            log.error("capture_screen subprocess error: %s", e, exc_info=True)
             return None, 0, 0
 
     return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
+
 
 
 def _init_screen_capture_linux():
@@ -1875,7 +1923,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                         if not use_h264 and capture_screen:
                             # --- JPEG binary mode (fallback) ---
                             try:
-                                _frame, w, h = capture_screen(quality=10)
+                                _frame, w, h = await asyncio.to_thread(capture_screen, 10)
                                 log.info("Screen probe: %dx%d, frame=%s", w, h, "yes" if _frame else "none")
                             except Exception as e:
                                 log.error("Screen probe failed: %s", e, exc_info=True)
@@ -1901,7 +1949,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 while desktop_config["running"] and consecutive_errors < 5:
                                     frame_interval = 1.0 / max(desktop_config["fps"], 1)
                                     try:
-                                        frame, w, h = capture_screen(quality=desktop_config["quality"])
+                                        frame, w, h = await asyncio.to_thread(capture_screen, desktop_config["quality"])
                                         if frame and w > 0:
                                             # Send as binary keyframe (0x01) — it's a full JPEG
                                             await send_binary_frame(0x01, frame)
@@ -2013,7 +2061,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                             )
                         else:
                             os.execv(sys.executable, [sys.executable] + sys.argv)
-                        sys.exit(0)
+                        sys.exit(1)  # Non-zero exit so scheduled task restart policy kicks in
 
                     elif msg_type == "reboot_device":
                         log.info("Reboot device command received")
@@ -2077,7 +2125,7 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 pass
                             install_dir = os.path.dirname(os.path.abspath(__file__))
                             subprocess.Popen(f'sleep 2 && rm -rf "{install_dir}" /etc/systemd/system/openrmm-agent.service', shell=True)
-                        sys.exit(0)
+                        sys.exit(1)  # Non-zero exit so scheduled task restart policy kicks in
 
                     elif msg_type == "resize":
                         session_id = data.get("session_id")
