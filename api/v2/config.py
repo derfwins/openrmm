@@ -30,13 +30,8 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
-        "http://10.10.0.122:5173",
-        "http://10.10.0.122:8000",
-        "http://10.10.0.122",
-        "http://rmmapp.derfwins.com",
-        "https://rmmapp.derfwins.com",
-        "http://rmm.derfwins.com",
-        "https://rmm.derfwins.com",
+        "https://openrmm.derfwins.com",
+        "http://openrmm.derfwins.com",
     ]
     
     # Agent
