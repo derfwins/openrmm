@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from v2.config import settings
 from v2.database import async_engine, Base, get_db, AsyncSessionLocal
-from v2.routers import auth, accounts, clients, agents, core, scripts, alerts, terminal, desktop, monitoring, audit, mesh, rustdesk
+from v2.routers import auth, accounts, clients, agents, core, scripts, alerts, terminal, desktop, monitoring, audit, mesh
 from v2.models.agent import Agent
 from sqlalchemy import select, update
 
@@ -122,7 +122,7 @@ app.include_router(desktop.router, tags=["Desktop"])
 app.include_router(monitoring.router, tags=["Monitoring"])
 app.include_router(audit.router, tags=["Audit"])
 app.include_router(mesh.router, tags=["MeshCentral"])
-app.include_router(rustdesk.router, tags=["RustDesk"])
+# RustDesk router removed — built-in remote desktop handles screen sharing
 
 
 @app.get("/api/v1/test/")

@@ -43,14 +43,26 @@ function encodeFrame(frameType: number, payload: ArrayBuffer | Uint8Array): Arra
   return buf
 }
 
-// Helper: encode mouse event
-function encodeMouseEvent(x: number, y: number, buttons: number, wheelDelta: number): ArrayBuffer {
-  const buf = new ArrayBuffer(11)
+// Mouse action codes
+const MOUSE_MOVE = 0x00
+const MOUSE_LEFT_DOWN = 0x01
+const MOUSE_LEFT_UP = 0x02
+const MOUSE_MIDDLE_DOWN = 0x03
+const MOUSE_MIDDLE_UP = 0x04
+const MOUSE_RIGHT_DOWN = 0x05
+const MOUSE_RIGHT_UP = 0x06
+const MOUSE_WHEEL = 0x07
+
+// Helper: encode mouse event (new action-based protocol)
+function encodeMouseEvent(action: number, x: number, y: number, wheelDelta: number = 0): ArrayBuffer {
+  const buf = new ArrayBuffer(action === MOUSE_WHEEL ? 11 : 9)
   const view = new DataView(buf)
-  view.setUint32(0, x, true)       // little-endian x
-  view.setUint32(4, y, true)       // little-endian y
-  view.setUint8(8, buttons)
-  view.setInt16(9, wheelDelta, true)
+  view.setUint8(0, action)
+  view.setUint32(1, x, true)       // little-endian x
+  view.setUint32(5, y, true)       // little-endian y
+  if (action === MOUSE_WHEEL) {
+    view.setInt16(9, wheelDelta, true)
+  }
   return encodeFrame(FRAME_MOUSE, buf)
 }
 
@@ -110,6 +122,9 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   const [screenInfo, setScreenInfo] = useState<{ width: number; height: number; monitors: number } | null>(null)
   const [useWebCodecs, setUseWebCodecs] = useState(false)
   const [codecReady, setCodecReady] = useState(false)
+  const [remoteClipboard, setRemoteClipboard] = useState('')
+  const [localClipboard, setLocalClipboard] = useState('')
+  const [showClipboard, setShowClipboard] = useState(false)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -304,6 +319,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
         // Agent sent clipboard text
         try {
           const text = new TextDecoder().decode(payload)
+          setRemoteClipboard(text)
           navigator.clipboard.writeText(text).catch(() => {})
         } catch { /* ignore */ }
         break
@@ -429,6 +445,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   // Mouse events
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (viewOnly) return
+    e.preventDefault()
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -436,11 +453,13 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    sendBinary(encodeMouseEvent(x, y, { 0: 1, 1: 4, 2: 2 }[e.button] ?? 0, 0))
+    const actionMap: Record<number, number> = { 0: MOUSE_LEFT_DOWN, 1: MOUSE_MIDDLE_DOWN, 2: MOUSE_RIGHT_DOWN }
+    sendBinary(encodeMouseEvent(actionMap[e.button] ?? MOUSE_LEFT_DOWN, x, y))
   }, [viewOnly, sendBinary])
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (viewOnly) return
+    e.preventDefault()
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -448,7 +467,8 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    sendBinary(encodeMouseEvent(x, y, 0, 0))
+    const actionMap: Record<number, number> = { 0: MOUSE_LEFT_UP, 1: MOUSE_MIDDLE_UP, 2: MOUSE_RIGHT_UP }
+    sendBinary(encodeMouseEvent(actionMap[e.button] ?? MOUSE_LEFT_UP, x, y))
   }, [viewOnly, sendBinary])
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -460,12 +480,12 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    const buttons = e.buttons & 1 ? 1 : e.buttons & 4 ? 4 : e.buttons & 2 ? 2 : 0
-    sendBinary(encodeMouseEvent(x, y, buttons, 0))
+    sendBinary(encodeMouseEvent(MOUSE_MOVE, x, y))
   }, [viewOnly, sendBinary])
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
     if (viewOnly) return
+    e.preventDefault()
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -474,8 +494,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
     const delta = Math.sign(e.deltaY) * 120 // Windows WHEEL_DELTA
-    sendBinary(encodeMouseEvent(x, y, 0, delta))
-    e.preventDefault()
+    sendBinary(encodeMouseEvent(MOUSE_WHEEL, x, y, delta))
   }, [viewOnly, sendBinary])
 
   // Keyboard events
@@ -517,6 +536,13 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
         sendBinary(encodeClipboardText(text))
       }
     } catch { /* clipboard access denied */ }
+  }, [sendBinary])
+
+  // Send clipboard text from panel to agent
+  const sendClipboardToAgent = useCallback((text: string) => {
+    if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+      sendBinary(encodeClipboardText(text))
+    }
   }, [sendBinary])
 
   // Quality change
@@ -621,6 +647,15 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             {viewOnly ? '👁 View Only' : '🖥 Control'}
           </button>
 
+          {/* Clipboard toggle */}
+          <button
+            onClick={() => setShowClipboard(!showClipboard)}
+            className={`px-2 py-1 text-xs rounded ${showClipboard ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="Toggle clipboard panel"
+          >
+            📋
+          </button>
+
           {/* Quality selector */}
           <select
             value={quality}
@@ -660,6 +695,58 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       {error && (
         <div className="px-3 py-2 bg-red-900/50 border-b border-red-700 text-red-300 text-sm flex-shrink-0">
           {error}
+        </div>
+      )}
+
+      {/* Clipboard panel */}
+      {showClipboard && (
+        <div className="flex-shrink-0 bg-gray-800 border-b border-gray-700 p-2">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs text-gray-400 font-medium">Shared Clipboard</span>
+            <button
+              onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText()
+                  if (text) { setLocalClipboard(text); sendClipboardToAgent(text) }
+                } catch { /* clipboard access denied */ }
+              }}
+              className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600"
+              title="Paste from browser clipboard and send to agent"
+            >
+              Paste &amp; Send
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="text-xs text-gray-500 mb-1">From Remote</div>
+              <textarea
+                value={remoteClipboard}
+                readOnly
+                className="w-full h-20 text-xs bg-gray-900 text-green-400 border border-gray-600 rounded p-1 font-mono resize-none"
+                onClick={(e) => {
+                  (e.target as HTMLTextAreaElement).select()
+                  navigator.clipboard.writeText(remoteClipboard).catch(() => {})
+                }}
+                title="Click to copy to browser clipboard"
+              />
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 mb-1">To Remote</div>
+              <textarea
+                value={localClipboard}
+                onChange={(e) => setLocalClipboard(e.target.value)}
+                className="w-full h-20 text-xs bg-gray-900 text-blue-400 border border-gray-600 rounded p-1 font-mono resize-none"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    sendClipboardToAgent(localClipboard)
+                    setLocalClipboard('')
+                  }
+                }}
+                placeholder="Type and press Enter to send..."
+              />
+            </div>
+          </div>
         </div>
       )}
 

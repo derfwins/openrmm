@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.16"
+AGENT_VERSION = "0.9.17"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -412,12 +412,8 @@ def get_system_info() -> dict:
     # Read MeshCentral node ID from the agent db file
     info["mesh_node_id"] = get_mesh_node_id()
 
-    # Detect RustDesk installation (peer ID + password + server config)
-    rustdesk_info = get_rustdesk_info()
-    info["rustdesk_id"] = rustdesk_info["rustdesk_id"]
-    info["rustdesk_password"] = rustdesk_info["rustdesk_password"]
-    info["rustdesk_server"] = rustdesk_info["rustdesk_server"]
-    info["rustdesk_relay_server"] = rustdesk_info["rustdesk_relay_server"]
+    # Remote desktop is handled by built-in screen capture + WebSocket relay
+    # (No RustDesk dependency needed)
 
     return info
 
@@ -1319,6 +1315,192 @@ elif platform.system() == "Linux":
         log.warning("Failed to init Linux screen capture: %s", e)
 
 
+# --- Clipboard helpers ---
+
+def _set_clipboard_windows(text):
+    """Write text to Windows clipboard."""
+    import ctypes
+    import ctypes.wintypes
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    if not user32.OpenClipboard(0):
+        return
+    try:
+        user32.EmptyClipboard()
+        data = text.encode('utf-16-le') + b'\x00\x00'
+        GMEM_MOVEABLE = 0x0002
+        h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        ptr = kernel32.GlobalLock(h_mem)
+        ctypes.memmove(ptr, data, len(data))
+        kernel32.GlobalUnlock(h_mem)
+        user32.SetClipboardData(1, h_mem)  # CF_UNICODETEXT = 1
+    finally:
+        user32.CloseClipboard()
+
+
+def _set_clipboard_linux(text):
+    """Write text to Linux clipboard via xclip."""
+    import subprocess
+    try:
+        proc = subprocess.Popen(
+            ['xclip', '-selection', 'clipboard'],
+            stdin=subprocess.PIPE, timeout=2
+        )
+        proc.communicate(input=text.encode('utf-8'), timeout=2)
+    except Exception as e:
+        log.debug("Linux clipboard write failed: %s", e)
+
+
+def _get_clipboard_windows():
+    """Read text from Windows clipboard. Returns None if no text available."""
+    import ctypes
+    import ctypes.wintypes
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    if not user32.IsClipboardFormatAvailable(1):  # CF_UNICODETEXT
+        return None
+    if not user32.OpenClipboard(0):
+        return None
+    try:
+        h = user32.GetClipboardData(1)
+        if not h:
+            return None
+        ptr = kernel32.GlobalLock(h)
+        if not ptr:
+            return None
+        try:
+            text = ctypes.wstring_at(ptr)
+            return text
+        finally:
+            kernel32.GlobalUnlock(h)
+    finally:
+        user32.CloseClipboard()
+
+
+def _get_clipboard_linux():
+    """Read text from Linux clipboard via xclip."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['xclip', '-selection', 'clipboard', '-o'],
+            capture_output=True, timeout=2
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.decode('utf-8', errors='replace')
+    except Exception:
+        pass
+    return None
+
+
+def handle_binary_input_frame(data: bytes):
+    """Process a binary input frame from the browser (mouse/keyboard/clipboard/settings).
+    
+    Frame format: byte 0 = frame type, bytes 1-4 = payload length (big endian), bytes 5+ = payload.
+    
+    Frame types from browser:
+      0x10 = MOUSE (move/click/scroll)
+      0x11 = KEYBOARD (key down/up)
+      0x12 = CLIPBOARD_OUT (text from browser)
+      0x13 = SETTINGS (quality/fps changes)
+    """
+    if len(data) < 5:
+        return
+
+    frame_type = data[0]
+    payload_len = struct.unpack('!I', data[1:5])[0]
+    payload = data[5:5 + payload_len] if payload_len > 0 else b''
+
+    if frame_type == 0x10:  # FRAME_MOUSE
+        if len(payload) >= 9 and send_mouse:
+            action_code = payload[0]
+            x = struct.unpack('<I', payload[1:5])[0]
+            y = struct.unpack('<I', payload[5:9])[0]
+
+            action_map = {
+                0x00: 'move',
+                0x01: 'down',   # left down
+                0x02: 'up',     # left up
+                0x03: 'down',   # middle down
+                0x04: 'up',     # middle up
+                0x05: 'down',   # right down
+                0x06: 'up',     # right up
+                0x07: 'wheel',
+            }
+            button_map = {
+                0x01: 0,  # left
+                0x02: 0,  # left up
+                0x03: 1,  # middle
+                0x04: 1,  # middle up
+                0x05: 2,  # right
+                0x06: 2,  # right up
+            }
+
+            action = action_map.get(action_code, 'move')
+            button = button_map.get(action_code, 0)
+
+            if action_code == 0x07:  # wheel
+                delta = struct.unpack('<h', payload[9:11])[0] if len(payload) >= 11 else 0
+                send_mouse('wheel', x, y, button=0, delta=delta)
+            else:
+                send_mouse(action, x, y, button=button, delta=0)
+
+    elif frame_type == 0x11:  # FRAME_KEYBOARD
+        if len(payload) >= 10 and send_keyboard:
+            action_code = payload[0]  # 0=down, 1=up
+            vk_code = struct.unpack('<I', payload[1:5])[0]
+            # scan_code = struct.unpack('<I', payload[5:9])[0]
+            # modifiers = payload[9]
+
+            VK_REVERSE = {
+                0x08: 'Backspace', 0x09: 'Tab', 0x0D: 'Enter',
+                0x10: 'Shift', 0x11: 'Control', 0x12: 'Alt',
+                0x1B: 'Escape', 0x20: ' ',
+                0x21: 'PageUp', 0x22: 'PageDown', 0x23: 'End', 0x24: 'Home',
+                0x25: 'ArrowLeft', 0x26: 'ArrowUp', 0x27: 'ArrowRight', 0x28: 'ArrowDown',
+                0x2D: 'Insert', 0x2E: 'Delete',
+                0x30: '0', 0x31: '1', 0x32: '2', 0x33: '3', 0x34: '4',
+                0x35: '5', 0x36: '6', 0x37: '7', 0x38: '8', 0x39: '9',
+                0x41: 'a', 0x42: 'b', 0x43: 'c', 0x44: 'd', 0x45: 'e',
+                0x46: 'f', 0x47: 'g', 0x48: 'h', 0x49: 'i', 0x4A: 'j',
+                0x4B: 'k', 0x4C: 'l', 0x4D: 'm', 0x4E: 'n', 0x4F: 'o',
+                0x50: 'p', 0x51: 'q', 0x52: 'r', 0x53: 's', 0x54: 't',
+                0x55: 'u', 0x56: 'v', 0x57: 'w', 0x58: 'x', 0x59: 'y', 0x5A: 'z',
+                0x5B: 'Meta', 0x5C: 'Meta',
+                0x70: 'F1', 0x71: 'F2', 0x72: 'F3', 0x73: 'F4',
+                0x74: 'F5', 0x75: 'F6', 0x76: 'F7', 0x77: 'F8',
+                0x78: 'F9', 0x79: 'F10', 0x7A: 'F11', 0x7B: 'F12',
+                0x90: 'NumLock', 0x91: 'ScrollLock',
+                0xBA: 'Semicolon', 0xBB: 'Equal', 0xBC: 'Comma',
+                0xBD: 'Minus', 0xBE: 'Period', 0xBF: 'Slash',
+                0xC0: 'Backquote', 0xDB: 'BracketLeft', 0xDC: 'Backslash',
+                0xDD: 'BracketRight', 0xDE: 'Quote',
+            }
+            key = VK_REVERSE.get(vk_code, '')
+            action = 'down' if action_code == 0 else 'up'
+            if key:
+                send_keyboard(action=action, key=key, code='', shift=False, ctrl=False, alt=False, meta=False)
+
+    elif frame_type == 0x12:  # FRAME_CLIPBOARD_OUT (browser → agent)
+        if payload:
+            try:
+                text = payload.decode('utf-8')
+                log.info("Received clipboard text from browser (%d chars)", len(text))
+                if platform.system() == "Windows":
+                    _set_clipboard_windows(text)
+                elif platform.system() == "Linux":
+                    _set_clipboard_linux(text)
+            except Exception as e:
+                log.warning("Failed to handle clipboard from browser: %s", e)
+
+    elif frame_type == 0x13:  # FRAME_SETTINGS
+        if payload:
+            try:
+                settings = json.loads(payload.decode('utf-8'))
+                log.info("Desktop settings update: %s", settings)
+            except Exception as e:
+                log.warning("Failed to parse settings frame: %s", e)
+
+
 def ws_agent_loop(server: str, agent_id: str):
     """Persistent WebSocket connection to server for terminal relay."""
     try:
@@ -1392,12 +1574,8 @@ async def ws_agent_connect(server: str, agent_id: str):
                 try:
                     # Handle both text (JSON) and binary frames
                     if isinstance(message, bytes):
-                        # Binary frame from server - parse header
-                        if len(message) < 5:
-                            continue
-                        # Skip binary frames for now (settings, etc.)
-                        # They'll be handled by dedicated handlers later
-                        log.debug("Received binary frame from server, len=%d", len(message))
+                        # Binary input frame from server (mouse/keyboard/clipboard/settings)
+                        handle_binary_input_frame(message)
                         continue
                     data = json.loads(message)
                     msg_type = data.get("type")
@@ -1656,9 +1834,11 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 await send_binary_frame(0x05, info_json)
 
                                 desktop_config = {"fps": fps, "running": True, "crf": crf}
+                                _last_clipboard_h264 = [""]  # mutable container for closure
 
                                 async def desktop_capture_loop_h264():
                                     consecutive_errors = 0
+                                    frame_count = 0
                                     while desktop_config["running"] and consecutive_errors < 5:
                                         frame_interval = 1.0 / max(desktop_config["fps"], 1)
                                         try:
@@ -1667,6 +1847,21 @@ async def ws_agent_connect(server: str, agent_id: str):
                                                 ftype, fbytes = result
                                                 await send_binary_frame(ftype, fbytes)
                                                 consecutive_errors = 0
+                                                frame_count += 1
+
+                                                # Check clipboard every 30 frames (~1 second at 30fps)
+                                                if frame_count % 30 == 0:
+                                                    try:
+                                                        clip_text = None
+                                                        if platform.system() == "Windows":
+                                                            clip_text = _get_clipboard_windows()
+                                                        elif platform.system() == "Linux":
+                                                            clip_text = _get_clipboard_linux()
+                                                        if clip_text and clip_text != _last_clipboard_h264[0]:
+                                                            _last_clipboard_h264[0] = clip_text
+                                                            await send_binary_frame(0x04, clip_text.encode('utf-8'))
+                                                    except Exception:
+                                                        pass
                                             else:
                                                 consecutive_errors += 1
                                         except Exception as e:
@@ -1719,9 +1914,11 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 await send_binary_frame(0x05, info_json)
 
                             desktop_config = {"quality": 55, "fps": 10, "running": True}
+                            _last_clipboard = [""]  # mutable container for closure
 
                             async def desktop_capture_loop_jpeg():
                                 consecutive_errors = 0
+                                frame_count = 0
                                 while desktop_config["running"] and consecutive_errors < 5:
                                     frame_interval = 1.0 / max(desktop_config["fps"], 1)
                                     try:
@@ -1730,6 +1927,21 @@ async def ws_agent_connect(server: str, agent_id: str):
                                             # Send as binary keyframe (0x01) — it's a full JPEG
                                             await send_binary_frame(0x01, frame)
                                             consecutive_errors = 0
+                                            frame_count += 1
+
+                                            # Check clipboard every 30 frames (~3 seconds at 10fps)
+                                            if frame_count % 30 == 0:
+                                                try:
+                                                    clip_text = None
+                                                    if platform.system() == "Windows":
+                                                        clip_text = _get_clipboard_windows()
+                                                    elif platform.system() == "Linux":
+                                                        clip_text = _get_clipboard_linux()
+                                                    if clip_text and clip_text != _last_clipboard[0]:
+                                                        _last_clipboard[0] = clip_text
+                                                        await send_binary_frame(0x04, clip_text.encode('utf-8'))
+                                                except Exception:
+                                                    pass
                                         else:
                                             consecutive_errors += 1
                                     except Exception as e:

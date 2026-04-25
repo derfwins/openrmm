@@ -218,8 +218,6 @@ async def list_agents(
             "os_version": a.os_version, "public_ip": a.public_ip,
             "local_ip": a.local_ip, "logged_in_user": a.logged_in_user,
             "mesh_node_id": a.mesh_node_id,
-            "rustdesk_id": a.rustdesk_id,
-            "rustdesk_password": a.rustdesk_password,
             "disks_json": a.disks_json, "memory_json": a.memory_json,
             "uptime_seconds": a.uptime_seconds, "logged_in_users": a.logged_in_users,
             "running_processes": a.running_processes, "cpu_percent": a.cpu_percent,
@@ -260,8 +258,6 @@ async def get_agent(
         "os_version": agent.os_version, "public_ip": agent.public_ip,
         "local_ip": agent.local_ip, "logged_in_user": agent.logged_in_user,
         "mesh_node_id": agent.mesh_node_id,
-        "rustdesk_id": agent.rustdesk_id,
-        "rustdesk_password": agent.rustdesk_password,
         "disks_json": agent.disks_json, "memory_json": agent.memory_json,
         "uptime_seconds": agent.uptime_seconds, "logged_in_users": agent.logged_in_users,
         "running_processes": agent.running_processes, "cpu_percent": agent.cpu_percent,
@@ -332,8 +328,6 @@ class HeartbeatRequest(BaseModel):
     cpu_percent: float = 0
     services_json: str = ""
     mesh_node_id: str = ""
-    rustdesk_id: str = ""
-    rustdesk_password: str = ""
 
 
 @router.post("/heartbeat/")
@@ -383,17 +377,6 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
     mesh_val = getattr(req, "mesh_node_id", None)
     if mesh_val and "@" in mesh_val and "$" in mesh_val:
         agent.mesh_node_id = mesh_val
-
-    # Only update RustDesk fields if agent provides a non-empty peer ID
-    # (prevents overwriting correct DB value with empty string from older agents)
-    if req.rustdesk_id:
-        # Don't overwrite a manually-set password with empty string
-        # but DO overwrite if agent reports a different peer ID (reinstall case)
-        if agent.rustdesk_id != req.rustdesk_id:
-            agent.rustdesk_id = req.rustdesk_id
-            logger.info(f"RustDesk peer ID updated via heartbeat: {req.rustdesk_id} for agent {agent.hostname}")
-        if req.rustdesk_password:
-            agent.rustdesk_password = req.rustdesk_password
 
     await db.commit()
 
@@ -531,7 +514,6 @@ class AgentUpdate(BaseModel):
     description: Optional[str] = None
     is_maintenance: Optional[bool] = None
     monitoring_type: Optional[str] = None
-    rustdesk_id: Optional[str] = None
 
 
 @router.patch("/{agent_id}/")
@@ -557,8 +539,6 @@ async def update_agent(
         agent.is_maintenance = update.is_maintenance
     if update.monitoring_type is not None:
         agent.monitoring_type = update.monitoring_type
-    if update.rustdesk_id is not None:
-        agent.rustdesk_id = update.rustdesk_id
     
     await db.commit()
     await db.refresh(agent)
@@ -566,53 +546,4 @@ async def update_agent(
     return {"id": agent.id, "hostname": agent.hostname, "site_id": agent.site_id, "status": agent.status}
 
 
-@router.patch("/{agent_id}/rustdesk-id/")
-async def update_rustdesk_id(
-    agent_id: str,
-    rustdesk_id: str = Query(..., description="RustDesk peer ID to link"),
-    rustdesk_password: Optional[str] = Query(None, description="Permanent password for unattended access"),
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Link a RustDesk peer ID (and optional password) to an OpenRMM agent."""
-    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
-    agent = result.scalar_one_or_none()
-    if not agent:
-        try:
-            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
-            agent = result.scalar_one_or_none()
-        except (ValueError, TypeError):
-            pass
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
 
-    agent.rustdesk_id = rustdesk_id
-    if rustdesk_password is not None:
-        agent.rustdesk_password = rustdesk_password
-    await db.commit()
-    return {"status": "ok", "agent_id": agent_id, "rustdesk_id": rustdesk_id}
-
-
-@router.patch("/{agent_id}/rustdesk-password/")
-async def update_rustdesk_password(
-    agent_id: str,
-    password_data: dict,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Set or update the permanent RustDesk password for unattended access."""
-    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
-    agent = result.scalar_one_or_none()
-    if not agent:
-        try:
-            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
-            agent = result.scalar_one_or_none()
-        except (ValueError, TypeError):
-            pass
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    password = password_data.get("password", "")
-    agent.rustdesk_password = password
-    await db.commit()
-    return {"status": "ok", "agent_id": agent_id, "rustdesk_password": "updated"}
