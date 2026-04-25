@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $Server -or $ClientId -eq 0 -or $SiteId -eq 0) {
-    Write-Host "Usage: .\install.ps1 -Server https://rmmapp.derfwins.com -ClientId 1 -SiteId 1" -ForegroundColor Yellow
+    Write-Host "Usage: .\install.ps1 -Server https://openrmm.derfwins.com -ClientId 1 -SiteId 1" -ForegroundColor Yellow
     Write-Host "Get these values from the Install Agent page in OpenRMM" -ForegroundColor Yellow
     exit 1
 }
