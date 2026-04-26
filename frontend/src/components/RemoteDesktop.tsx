@@ -8,86 +8,13 @@ interface Props {
 
 type Quality = 'low' | 'medium' | 'high'
 
-const QUALITY_SETTINGS: Record<Quality, { quality: number; fps: number; bitrate: number }> = {
-  low: { quality: 30, fps: 10, bitrate: 500_000 },
-  medium: { quality: 55, fps: 20, bitrate: 2_000_000 },
-  high: { quality: 80, fps: 30, bitrate: 5_000_000 },
+const QUALITY_FPS: Record<Quality, number> = {
+  low: 15,
+  medium: 24,
+  high: 30,
 }
 
-// Binary frame types from agent
-const FRAME_H264_KEY = 0x01
-const FRAME_H264_DELTA = 0x02
-const FRAME_CURSOR = 0x03
-const FRAME_CLIPBOARD = 0x04
-const FRAME_CONFIG = 0x05
-
-// Binary frame types to agent
-const FRAME_MOUSE = 0x10
-const FRAME_KEYBOARD = 0x11
-const FRAME_CLIPBOARD_OUT = 0x12
-const FRAME_SETTINGS = 0x13
-
-// Helper: encode binary frame with 5-byte header
-function encodeFrame(frameType: number, payload: ArrayBuffer | Uint8Array): ArrayBuffer {
-  const payloadLen = payload instanceof Uint8Array ? payload.byteLength : payload.byteLength
-  const buf = new ArrayBuffer(5 + payloadLen)
-  const view = new DataView(buf)
-  view.setUint8(0, frameType)
-  view.setUint32(1, payloadLen, false) // big endian
-  const body = new Uint8Array(buf, 5)
-  if (payload instanceof Uint8Array) {
-    body.set(payload)
-  } else {
-    body.set(new Uint8Array(payload))
-  }
-  return buf
-}
-
-// Mouse action codes
-const MOUSE_MOVE = 0x00
-const MOUSE_LEFT_DOWN = 0x01
-const MOUSE_LEFT_UP = 0x02
-const MOUSE_MIDDLE_DOWN = 0x03
-const MOUSE_MIDDLE_UP = 0x04
-const MOUSE_RIGHT_DOWN = 0x05
-const MOUSE_RIGHT_UP = 0x06
-const MOUSE_WHEEL = 0x07
-
-// Helper: encode mouse event (new action-based protocol)
-function encodeMouseEvent(action: number, x: number, y: number, wheelDelta: number = 0): ArrayBuffer {
-  const buf = new ArrayBuffer(action === MOUSE_WHEEL ? 11 : 9)
-  const view = new DataView(buf)
-  view.setUint8(0, action)
-  view.setUint32(1, x, true)       // little-endian x
-  view.setUint32(5, y, true)       // little-endian y
-  if (action === MOUSE_WHEEL) {
-    view.setInt16(9, wheelDelta, true)
-  }
-  return encodeFrame(FRAME_MOUSE, buf)
-}
-
-// Helper: encode keyboard event
-function encodeKeyboardEvent(action: number, vkCode: number, scanCode: number, modifiers: number): ArrayBuffer {
-  const buf = new ArrayBuffer(10)
-  const view = new DataView(buf)
-  view.setUint8(0, action)    // 0=down, 1=up
-  view.setUint32(1, vkCode, true)
-  view.setUint32(5, scanCode, true)
-  view.setUint8(9, modifiers)
-  return encodeFrame(FRAME_KEYBOARD, buf)
-}
-
-// Helper: encode clipboard text
-function encodeClipboardText(text: string): ArrayBuffer {
-  return encodeFrame(FRAME_CLIPBOARD_OUT, new TextEncoder().encode(text))
-}
-
-// Helper: encode settings JSON
-function encodeSettings(settings: object): ArrayBuffer {
-  return encodeFrame(FRAME_SETTINGS, new TextEncoder().encode(JSON.stringify(settings)))
-}
-
-// Key code to VK code mapping (Windows virtual key codes)
+// Key code to Windows VK code mapping
 const KEY_TO_VK: Record<string, number> = {
   Backspace: 0x08, Tab: 0x09, Enter: 0x0D, ShiftLeft: 0x10, ShiftRight: 0x10,
   ControlLeft: 0x11, ControlRight: 0x11, AltLeft: 0x12, AltRight: 0x12,
@@ -111,454 +38,374 @@ const KEY_TO_VK: Record<string, number> = {
   BracketRight: 0xDD, Quote: 0xDE,
 }
 
+interface TurnCredentials {
+  username: string
+  password: string
+  urls: string[]
+}
+
 const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   const [connected, setConnected] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [quality, setQuality] = useState<Quality>('medium')
   const [viewOnly, setViewOnly] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
-  const [fps, setFps] = useState(0)
-  const [latency, setLatency] = useState(0)
-  const [screenInfo, setScreenInfo] = useState<{ width: number; height: number; monitors: number } | null>(null)
-  const [useWebCodecs, setUseWebCodecs] = useState(false)
-  const [codecReady, setCodecReady] = useState(false)
+  const [stats, setStats] = useState({ fps: 0, latency: 0, resolution: '' })
+  const [showClipboard, setShowClipboard] = useState(false)
   const [remoteClipboard, setRemoteClipboard] = useState('')
   const [localClipboard, setLocalClipboard] = useState('')
-  const [showClipboard, setShowClipboard] = useState(false)
 
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const pcRef = useRef<RTCPeerConnection | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const decoderRef = useRef<VideoDecoder | null>(null)
-  const fpsCounterRef = useRef({ frames: 0, lastTime: performance.now() })
-  const pingRef = useRef({ lastPing: 0, lastPong: 0 })
+  const dcRef = useRef<RTCDataChannel | null>(null) // input data channel
+  const sessionIdRef = useRef<string>('')
+  const turnCredsRef = useRef<TurnCredentials | null>(null)
   const remoteSizeRef = useRef({ width: 1920, height: 1080 })
-  const imgRef = useRef<HTMLImageElement | null>(null)
-  const codecFailedRef = useRef(false)
 
-  // Check WebCodecs support
-  useEffect(() => {
-    if (typeof VideoDecoder !== 'undefined') {
-      setUseWebCodecs(true)
-    }
-  }, [])
-
-  // FPS counter update
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const counter = fpsCounterRef.current
-      const now = performance.now()
-      const elapsed = now - counter.lastTime
-      if (elapsed >= 1000) {
-        setFps(Math.round(counter.frames * 1000 / elapsed))
-        counter.frames = 0
-        counter.lastTime = now
-      }
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
-
-  // Setup VideoDecoder
-  const setupDecoder = useCallback(() => {
-    if (!useWebCodecs || codecFailedRef.current) return
-
-    try {
-      const canvas = canvasRef.current
-      if (!canvas) return
-
-      const decoder = new VideoDecoder({
-        output: (frame: VideoFrame) => {
-          const ctx = canvas.getContext('2d')
-          if (ctx) {
-            if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-              canvas.width = frame.displayWidth
-              canvas.height = frame.displayHeight
-            }
-            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height)
-          }
-          frame.close()
-
-          // FPS counter
-          fpsCounterRef.current.frames++
-        },
-        error: (e: Error) => {
-          console.error('VideoDecoder error:', e)
-          codecFailedRef.current = true
-          setCodecReady(false)
-        },
-      })
-
-      decoder.configure({
-        codec: 'avc1.42E01E', // H.264 Constrained Baseline
-        optimizeForLatency: true,
-      })
-
-      decoderRef.current = decoder
-      setCodecReady(true)
-    } catch (e) {
-      console.warn('WebCodecs setup failed, falling back to JPEG:', e)
-      codecFailedRef.current = true
-      setUseWebCodecs(false)
-    }
-  }, [useWebCodecs])
-
-  // JPEG fallback renderer
-  const renderJpegFrame = useCallback((data: ArrayBuffer) => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const blob = new Blob([data], { type: 'image/jpeg' })
-    const url = URL.createObjectURL(blob)
-
-    if (!imgRef.current) {
-      imgRef.current = new Image()
-    }
-    const img = imgRef.current
-
-    img.onload = () => {
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      if (canvas.width !== img.width || canvas.height !== img.height) {
-        canvas.width = img.width
-        canvas.height = img.height
-        remoteSizeRef.current = { width: img.width, height: img.height }
-      }
-
-      ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
-      fpsCounterRef.current.frames++
-    }
-    img.src = url
-  }, [])
-
-  // Parse and handle binary frame from agent
-  const handleBinaryFrame = useCallback((buffer: ArrayBuffer) => {
-    if (buffer.byteLength < 5) return
-
-    const view = new DataView(buffer)
-    const frameType = view.getUint8(0)
-    const payloadLen = view.getUint32(1, false) // big endian
-    const payload = buffer.slice(5, 5 + payloadLen)
-
-    switch (frameType) {
-      case FRAME_H264_KEY:
-      case FRAME_H264_DELTA: {
-        const isKeyframe = frameType === FRAME_H264_KEY
-
-        // Check if this is actually JPEG data (fallback from agent)
-        const jpegMagic = payload.byteLength >= 3 &&
-          new Uint8Array(payload)[0] === 0xFF &&
-          new Uint8Array(payload)[1] === 0xD8 &&
-          new Uint8Array(payload)[2] === 0xFF
-
-        if (jpegMagic) {
-          // Render JPEG directly
-          const blob = new Blob([payload], { type: 'image/jpeg' })
-          createImageBitmap(blob).then(bmp => {
-            const canvas = canvasRef.current
-            const ctx = canvas?.getContext('2d')
-            if (ctx && canvas) {
-              canvas.width = bmp.width
-              canvas.height = bmp.height
-              ctx.drawImage(bmp, 0, 0)
-            }
-            bmp.close()
-            fpsCounterRef.current.frames++
-          }).catch(() => {})
-          break
-        }
-
-        const decoder = decoderRef.current
-
-        if (decoder && useWebCodecs && !codecFailedRef.current && decoder.state !== 'closed') {
-          try {
-            const chunk = new EncodedVideoChunk({
-              type: isKeyframe ? 'key' : 'delta',
-              timestamp: performance.now() * 1000, // microseconds
-              data: payload,
-            })
-            decoder.decode(chunk)
-          } catch (e) {
-            console.warn('Decode failed, falling back to JPEG:', e)
-            codecFailedRef.current = true
-            renderJpegFrame(buffer.slice(5))
-          }
-        } else {
-          // Fallback: treat as raw JPEG (legacy agents)
-          renderJpegFrame(payload)
-        }
-        break
-      }
-
-      case FRAME_CURSOR: {
-        // Cursor data: 2 bytes x, 2 bytes y
-        if (payload.byteLength >= 4) {
-          const cursorView = new DataView(payload)
-          const cx = cursorView.getUint16(0, true)
-          const cy = cursorView.getUint16(2, true)
-          // Draw cursor overlay on canvas
-          const canvas = canvasRef.current
-          if (canvas) {
-            const ctx = canvas.getContext('2d')
-            if (ctx) {
-              const scaleX = canvas.width / remoteSizeRef.current.width
-              const scaleY = canvas.height / remoteSizeRef.current.height
-              // Simple cursor indicator
-              ctx.fillStyle = 'rgba(255,255,255,0.8)'
-              ctx.beginPath()
-              ctx.arc(cx * scaleX, cy * scaleY, 3, 0, Math.PI * 2)
-              ctx.fill()
-            }
-          }
-        }
-        break
-      }
-
-      case FRAME_CLIPBOARD: {
-        // Agent sent clipboard text
-        try {
-          const text = new TextDecoder().decode(payload)
-          setRemoteClipboard(text)
-          navigator.clipboard.writeText(text).catch(() => {})
-        } catch { /* ignore */ }
-        break
-      }
-
-      case FRAME_CONFIG: {
-        // JSON config from agent (screen info, etc.)
-        try {
-          const config = JSON.parse(new TextDecoder().decode(payload))
-          if (config.width && config.height) {
-            remoteSizeRef.current = { width: config.width, height: config.height }
-            setScreenInfo({
-              width: config.width,
-              height: config.height,
-              monitors: config.monitors || 1,
-            })
-          }
-        } catch { /* ignore */ }
-        break
-      }
-
-      default:
-        console.warn(`Unknown frame type: 0x${frameType.toString(16).padStart(2, '0')}`)
-    }
-  }, [useWebCodecs, renderJpegFrame])
-
-  // Connect WebSocket
-  const connect = useCallback(() => {
+  // Connect: open signaling WS, get TURN creds, then let backend signal agent
+  const connect = useCallback(async () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
+    setConnecting(true)
     setError(null)
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     const wsUrl = `${protocol}//${host}/ws/desktop/${agentId}/?token=${token}`
-
     const ws = new WebSocket(wsUrl)
-    ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
     ws.onopen = () => {
-      setConnected(true)
-      setError(null)
-
-      // Setup decoder if WebCodecs available
-      if (useWebCodecs && !codecFailedRef.current) {
-        setupDecoder()
-      }
-
-      // Send initial quality settings
-      const settings = QUALITY_SETTINGS[quality]
-      ws.send(encodeSettings(settings))
-
-      // Start ping interval for latency measurement
-      pingRef.current.lastPing = performance.now()
+      // Backend will send session_start with TURN creds, then signal agent
     }
 
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        handleBinaryFrame(event.data)
-      } else {
-        try {
-          const msg = JSON.parse(event.data)
-          switch (msg.type) {
-            case 'desktop_info':
-              remoteSizeRef.current = { width: msg.width || 1920, height: msg.height || 1080 }
-              setScreenInfo({
-                width: msg.width || 1920,
-                height: msg.height || 1080,
-                monitors: msg.monitors || 1,
-              })
-              break
-            case 'desktop_stopped':
-              setError('Remote desktop session ended by agent')
-              setConnected(false)
-              break
-            case 'pong':
-              setLatency(Math.round(performance.now() - pingRef.current.lastPing))
-              break
-            case 'error':
-              setError(msg.message || 'Error')
-              break
+    ws.onmessage = async (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+
+        switch (msg.type) {
+          case 'session_start': {
+            // Backend sent session ID + TURN credentials
+            sessionIdRef.current = msg.session_id
+            // Store TURN credentials for PeerConnection creation
+            turnCredsRef.current = msg.turn || null
+            // Now wait for webrtc_offer from agent
+            break
           }
-        } catch { /* ignore */ }
+
+          case 'webrtc_offer': {
+            // Agent sent SDP offer — create RTCPeerConnection and answer
+            const turnCreds: TurnCredentials = turnCredsRef.current || { urls: [], username: '', password: '' }
+
+            // Create RTCPeerConnection with TURN servers
+            const iceServers: RTCIceServer[] = [
+              { urls: 'stun:stun.l.google.com:19302' },
+            ]
+            if (turnCreds.urls?.length) {
+              iceServers.push({
+                urls: turnCreds.urls,
+                username: turnCreds.username,
+                credential: turnCreds.password,
+              })
+            }
+
+            const pc = new RTCPeerConnection({
+              iceServers,
+              bundlePolicy: 'max-bundle',
+              rtcpMuxPolicy: 'require',
+            })
+            pcRef.current = pc
+
+            // Handle video track
+            pc.ontrack = (ev) => {
+              if (videoRef.current && ev.streams[0]) {
+                videoRef.current.srcObject = ev.streams[0]
+              }
+            }
+
+            // Handle data channel (agent creates it)
+            pc.ondatachannel = (ev) => {
+              const channel = ev.channel
+              dcRef.current = channel
+
+              channel.onopen = () => {
+                setConnected(true)
+                setConnecting(false)
+                setError(null)
+              }
+
+              channel.onclose = () => {
+                // DataChannel closed
+              }
+
+              channel.onmessage = (e) => {
+                try {
+                  const data = JSON.parse(e.data)
+                  if (data.type === 'clipboard') {
+                    setRemoteClipboard(data.text || '')
+                    navigator.clipboard.writeText(data.text || '').catch(() => {})
+                  }
+                } catch { /* ignore non-JSON messages */ }
+              }
+            }
+
+            // Handle ICE candidates — send to agent via signaling WS
+            pc.onicecandidate = (ev) => {
+              if (ev.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({
+                  type: 'webrtc_ice',
+                  session_id: sessionIdRef.current,
+                  candidate: ev.candidate.toJSON(),
+                }))
+              }
+            }
+
+            // Connection state changes
+            pc.onconnectionstatechange = () => {
+              const state = pc.connectionState
+              if (state === 'connected') {
+                setConnected(true)
+                setConnecting(false)
+              } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                if (state === 'failed') {
+                  setError('WebRTC connection failed')
+                }
+                setConnected(false)
+              }
+            }
+
+            // Set remote description (agent's offer)
+            await pc.setRemoteDescription({
+              sdp: msg.sdp,
+              type: msg.type_ as RTCSdpType,
+            })
+
+            // Create answer
+            const answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+
+            // Send answer back via signaling WS
+            ws.send(JSON.stringify({
+              type: 'webrtc_answer',
+              session_id: sessionIdRef.current,
+              sdp: pc.localDescription!.sdp,
+              type_: pc.localDescription!.type,
+            }))
+
+            break
+          }
+
+          case 'webrtc_ice': {
+            // ICE candidate from agent
+            const pc = pcRef.current
+            if (pc && msg.candidate) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate))
+              } catch (e) {
+                console.warn('ICE candidate error:', e)
+              }
+            }
+            break
+          }
+
+          case 'webrtc_stopped': {
+            setError('Remote desktop session ended by agent')
+            cleanup()
+            break
+          }
+
+          case 'webrtc_error': {
+            setError(msg.message || 'WebRTC error')
+            cleanup()
+            break
+          }
+
+          case 'ping': {
+            // Latency measurement
+            ws.send(JSON.stringify({ type: 'pong' }))
+            break
+          }
+
+          case 'error': {
+            setError(msg.message || 'Error')
+            break
+          }
+        }
+      } catch (e) {
+        console.error('WS message error:', e)
       }
     }
 
     ws.onclose = (event) => {
+      setConnecting(false)
       setConnected(false)
       if (event.code === 4003) setError('Agent is offline')
       else if (event.code === 4004) setError('Agent not found')
       else if (event.code === 4001) setError('Authentication failed')
+      else if (!error) setError('Connection closed')
     }
 
-    ws.onerror = () => setError('Connection failed')
-  }, [agentId, token, quality, useWebCodecs, setupDecoder, handleBinaryFrame])
-
-  const disconnect = useCallback(() => {
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'desktop_stop' }))
+    ws.onerror = () => {
+      setConnecting(false)
+      setError('Connection failed')
     }
-    ws?.close()
+  }, [agentId, token])
 
-    // Close decoder
-    const decoder = decoderRef.current
-    if (decoder && decoder.state !== 'closed') {
-      decoder.close()
+  const cleanup = useCallback(() => {
+    // Close DataChannel
+    if (dcRef.current) {
+      dcRef.current.close()
+      dcRef.current = null
     }
-    decoderRef.current = null
-    setCodecReady(false)
+    // Close PeerConnection
+    if (pcRef.current) {
+      pcRef.current.close()
+      pcRef.current = null
+    }
+    // Close WebSocket
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'desktop_stop' }))
+      wsRef.current.close()
+      wsRef.current = null
+    }
     setConnected(false)
+    setConnecting(false)
   }, [])
 
-  // Send binary input to agent
-  const sendBinary = useCallback((data: ArrayBuffer) => {
+  const disconnect = useCallback(() => {
+    cleanup()
+  }, [cleanup])
+
+  // Send input event via DataChannel
+  const sendInput = useCallback((event: object) => {
     if (viewOnly) return
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(data)
+    const dc = dcRef.current
+    if (dc?.readyState === 'open') {
+      dc.send(JSON.stringify(event))
     }
   }, [viewOnly])
 
   // Mouse events
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLVideoElement>) => {
     if (viewOnly) return
     e.preventDefault()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
+    const video = videoRef.current
+    if (!video) return
+    const rect = video.getBoundingClientRect()
     const scaleX = remoteSizeRef.current.width / rect.width
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    const actionMap: Record<number, number> = { 0: MOUSE_LEFT_DOWN, 1: MOUSE_MIDDLE_DOWN, 2: MOUSE_RIGHT_DOWN }
-    sendBinary(encodeMouseEvent(actionMap[e.button] ?? MOUSE_LEFT_DOWN, x, y))
-  }, [viewOnly, sendBinary])
+    const buttonMap: Record<number, number> = { 0: 0, 1: 1, 2: 2 } // left, middle, right
+    sendInput({ type: 'mousedown', x, y, button: buttonMap[e.button] ?? 0 })
+  }, [viewOnly, sendInput])
 
-  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLVideoElement>) => {
     if (viewOnly) return
     e.preventDefault()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
+    const video = videoRef.current
+    if (!video) return
+    const rect = video.getBoundingClientRect()
     const scaleX = remoteSizeRef.current.width / rect.width
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    const actionMap: Record<number, number> = { 0: MOUSE_LEFT_UP, 1: MOUSE_MIDDLE_UP, 2: MOUSE_RIGHT_UP }
-    sendBinary(encodeMouseEvent(actionMap[e.button] ?? MOUSE_LEFT_UP, x, y))
-  }, [viewOnly, sendBinary])
+    const buttonMap: Record<number, number> = { 0: 0, 1: 1, 2: 2 }
+    sendInput({ type: 'mouseup', x, y, button: buttonMap[e.button] ?? 0 })
+  }, [viewOnly, sendInput])
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLVideoElement>) => {
     if (viewOnly) return
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
+    const video = videoRef.current
+    if (!video) return
+    const rect = video.getBoundingClientRect()
     const scaleX = remoteSizeRef.current.width / rect.width
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    sendBinary(encodeMouseEvent(MOUSE_MOVE, x, y))
-  }, [viewOnly, sendBinary])
+    sendInput({ type: 'mousemove', x, y })
+  }, [viewOnly, sendInput])
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLVideoElement>) => {
     if (viewOnly) return
     e.preventDefault()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
+    const video = videoRef.current
+    if (!video) return
+    const rect = video.getBoundingClientRect()
     const scaleX = remoteSizeRef.current.width / rect.width
     const scaleY = remoteSizeRef.current.height / rect.height
     const x = Math.round((e.clientX - rect.left) * scaleX)
     const y = Math.round((e.clientY - rect.top) * scaleY)
-    const delta = Math.sign(e.deltaY) * 120 // Windows WHEEL_DELTA
-    sendBinary(encodeMouseEvent(MOUSE_WHEEL, x, y, delta))
-  }, [viewOnly, sendBinary])
+    const delta = Math.sign(e.deltaY) * 120
+    sendInput({ type: 'wheel', x, y, delta })
+  }, [viewOnly, sendInput])
+
+  // Double-click
+  const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLVideoElement>) => {
+    if (viewOnly) return
+    const video = videoRef.current
+    if (!video) return
+    const rect = video.getBoundingClientRect()
+    const scaleX = remoteSizeRef.current.width / rect.width
+    const scaleY = remoteSizeRef.current.height / rect.height
+    const x = Math.round((e.clientX - rect.left) * scaleX)
+    const y = Math.round((e.clientY - rect.top) * scaleY)
+    // Simulate double click: left down, left up, left down, left up
+    sendInput({ type: 'mousedown', x, y, button: 0 })
+    sendInput({ type: 'mouseup', x, y, button: 0 })
+    sendInput({ type: 'mousedown', x, y, button: 0 })
+    sendInput({ type: 'mouseup', x, y, button: 0 })
+  }, [viewOnly, sendInput])
 
   // Keyboard events
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLCanvasElement>) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLVideoElement>) => {
     if (viewOnly) return
     e.preventDefault()
+    e.stopPropagation()
 
-    const vkCode = KEY_TO_VK[e.code] ?? e.keyCode
-    const scanCode = 0 // Will be filled by agent from vkCode
+    const vk = KEY_TO_VK[e.code] ?? e.keyCode
     let modifiers = 0
     if (e.shiftKey) modifiers |= 1
     if (e.ctrlKey) modifiers |= 2
     if (e.altKey) modifiers |= 4
     if (e.metaKey) modifiers |= 8
 
-    sendBinary(encodeKeyboardEvent(0, vkCode, scanCode, modifiers)) // 0 = key down
-  }, [viewOnly, sendBinary])
+    sendInput({ type: 'keydown', vk, scan: 0, modifiers })
+  }, [viewOnly, sendInput])
 
-  const handleKeyUp = useCallback((e: React.KeyboardEvent<HTMLCanvasElement>) => {
+  const handleKeyUp = useCallback((e: React.KeyboardEvent<HTMLVideoElement>) => {
     if (viewOnly) return
     e.preventDefault()
+    e.stopPropagation()
 
-    const vkCode = KEY_TO_VK[e.code] ?? e.keyCode
-    const scanCode = 0
+    const vk = KEY_TO_VK[e.code] ?? e.keyCode
     let modifiers = 0
     if (e.shiftKey) modifiers |= 1
     if (e.ctrlKey) modifiers |= 2
     if (e.altKey) modifiers |= 4
     if (e.metaKey) modifiers |= 8
 
-    sendBinary(encodeKeyboardEvent(1, vkCode, scanCode, modifiers)) // 1 = key up
-  }, [viewOnly, sendBinary])
+    sendInput({ type: 'keyup', vk, scan: 0, modifiers })
+  }, [viewOnly, sendInput])
 
-  // Clipboard sync on focus
-  const handleCanvasFocus = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-        sendBinary(encodeClipboardText(text))
-      }
-    } catch { /* clipboard access denied */ }
-  }, [sendBinary])
-
-  // Send clipboard text from panel to agent
+  // Clipboard sync
   const sendClipboardToAgent = useCallback((text: string) => {
-    if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-      sendBinary(encodeClipboardText(text))
+    if (text) {
+      sendInput({ type: 'clipboard', text })
     }
-  }, [sendBinary])
+  }, [sendInput])
 
-  // Quality change
+  // Quality change — send FPS setting to agent
   const changeQuality = useCallback((q: Quality) => {
     setQuality(q)
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(encodeSettings(QUALITY_SETTINGS[q]))
-    }
-  }, [])
+    sendInput({ type: 'settings', fps: QUALITY_FPS[q] })
+  }, [sendInput])
 
   // Fullscreen toggle
   const toggleFullscreen = useCallback(() => {
-    const container = containerRef.current
+    const container = document.getElementById('remote-desktop-container')
     if (!container) return
-
     if (!document.fullscreenElement) {
       container.requestFullscreen().then(() => setFullscreen(true)).catch(() => {})
     } else {
@@ -572,70 +419,59 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     return () => document.removeEventListener('fullscreenchange', handler)
   }, [])
 
-  // Ping interval for latency
+  // Update stats from video stream
   useEffect(() => {
     if (!connected) return
-    const interval = setInterval(() => {
-      const ws = wsRef.current
-      if (ws?.readyState === WebSocket.OPEN) {
-        pingRef.current.lastPing = performance.now()
-        ws.send(JSON.stringify({ type: 'ping' }))
-      }
-    }, 5000)
+    const interval = setInterval(async () => {
+      const pc = pcRef.current
+      if (!pc) return
+      try {
+        const stats = await pc.getStats()
+        let fps = 0
+        let resolution = ''
+        stats.forEach((report) => {
+          if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
+            fps = report.framesPerSecond || 0
+            if (report.frameWidth && report.frameHeight) {
+              remoteSizeRef.current = { width: report.frameWidth, height: report.frameHeight }
+              resolution = `${report.frameWidth}×${report.frameHeight}`
+            }
+          }
+        })
+        setStats(prev => ({ ...prev, fps: Math.round(fps), resolution: resolution || prev.resolution }))
+      } catch { /* stats not available */ }
+    }, 1000)
     return () => clearInterval(interval)
   }, [connected])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      const ws = wsRef.current
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'desktop_stop' }))
-        ws.close()
-      }
-      const decoder = decoderRef.current
-      if (decoder && decoder.state !== 'closed') {
-        decoder.close()
-      }
+      cleanup()
     }
-  }, [])
+  }, [cleanup])
 
   // Auto-connect
   useEffect(() => {
     if (agentId && token) connect()
-  }, [agentId, token]) // intentionally not including connect to avoid reconnection loop
+  }, [agentId, token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full bg-black">
+    <div id="remote-desktop-container" className="flex flex-col h-full bg-black">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500' : 'bg-gray-500'}`} />
+          <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : connecting ? 'bg-yellow-500' : 'bg-gray-500'}`} />
           <span className="text-sm text-gray-300">
-            {connected ? 'Connected' : 'Disconnected'}
+            {connected ? 'Connected' : connecting ? 'Connecting...' : 'Disconnected'}
           </span>
-          {connected && fps > 0 && (
-            <span className="text-xs text-gray-400">{fps} FPS</span>
+          {connected && stats.fps > 0 && (
+            <span className="text-xs text-gray-400">{stats.fps} FPS</span>
           )}
-          {latency > 0 && (
-            <span className={`text-xs ${latency < 50 ? 'text-green-400' : latency < 100 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {latency}ms
-            </span>
+          {stats.resolution && (
+            <span className="text-xs text-gray-500">{stats.resolution}</span>
           )}
-          {screenInfo && (
-            <span className="text-xs text-gray-500">
-              {screenInfo.width}×{screenInfo.height}
-              {screenInfo.monitors > 1 && ` · ${screenInfo.monitors} monitors`}
-            </span>
-          )}
-          {useWebCodecs && (
-            <span className="text-xs text-blue-400">
-              {codecReady ? 'HW Decode' : codecFailedRef.current ? 'SW Fallback' : '...'}
-            </span>
-          )}
-          {!useWebCodecs && (
-            <span className="text-xs text-gray-500">JPEG</span>
-          )}
+          <span className="text-xs text-violet-400">WebRTC</span>
         </div>
         <div className="flex items-center gap-2">
           {/* View Only toggle */}
@@ -662,9 +498,9 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             onChange={(e) => changeQuality(e.target.value as Quality)}
             className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded border border-gray-600"
           >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
+            <option value="low">Low (15fps)</option>
+            <option value="medium">Medium (24fps)</option>
+            <option value="high">High (30fps)</option>
           </select>
 
           {/* Fullscreen */}
@@ -681,8 +517,8 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
               Disconnect
             </button>
           ) : (
-            <button onClick={connect} className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700">
-              Connect
+            <button onClick={connect} className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700" disabled={connecting}>
+              {connecting ? 'Connecting...' : 'Connect'}
             </button>
           )}
           <button onClick={onClose} className="px-2 py-1 text-xs text-gray-400 hover:text-white">
@@ -713,7 +549,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
               className="px-2 py-0.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600"
               title="Paste from browser clipboard and send to agent"
             >
-              Paste &amp; Send
+              Paste & Send
             </button>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -750,20 +586,26 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Video */}
       <div className="flex-1 flex items-center justify-center overflow-hidden relative" style={{ background: '#111' }}>
-        {!connected && !error && (
-          <div className="text-gray-500 text-sm">Connecting to remote desktop...</div>
+        {!connected && !connecting && !error && (
+          <div className="text-gray-500 text-sm">Click Connect to start remote desktop...</div>
         )}
-        <canvas
-          ref={canvasRef}
+        {connecting && !connected && (
+          <div className="text-yellow-400 text-sm animate-pulse">Establishing WebRTC connection...</div>
+        )}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
           onMouseMove={handleMouseMove}
           onWheel={handleWheel}
+          onDoubleClick={handleDoubleClick}
           onKeyDown={handleKeyDown}
           onKeyUp={handleKeyUp}
-          onFocus={handleCanvasFocus}
           tabIndex={0}
           className="max-w-full max-h-full object-contain cursor-default outline-none"
           style={{ imageRendering: 'auto' }}

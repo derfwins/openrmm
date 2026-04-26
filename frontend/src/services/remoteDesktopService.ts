@@ -1,5 +1,5 @@
 /**
- * RemoteDesktop Service — handles built-in remote desktop via WebSocket relay
+ * RemoteDesktop Service — handles WebRTC remote desktop via signaling WebSocket + TURN credentials
  */
 
 class RemoteDesktopService {
@@ -23,38 +23,20 @@ class RemoteDesktopService {
   }
 
   /**
-   * Start a desktop session via REST (returns session info).
+   * Fetch TURN credentials for WebRTC.
    */
-  async startSession(agentId: string): Promise<any> {
+  async getTurnCredentials(): Promise<{ username: string; password: string; urls: string[] }> {
     const token = localStorage.getItem('token')
     if (!token) throw new Error('Not authenticated')
 
-    const res = await fetch(`${this.API_BASE}/start/?agent_id=${encodeURIComponent(agentId)}`, {
-      method: 'POST',
+    const res = await fetch(`${this.API_BASE}/turn-credentials/`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Failed to start remote desktop session')
+      throw new Error(err.detail || 'Failed to get TURN credentials')
     }
     return res.json()
-  }
-
-  /**
-   * Stop a desktop session.
-   */
-  async stopSession(agentId: string): Promise<void> {
-    const token = localStorage.getItem('token')
-    if (!token) throw new Error('Not authenticated')
-
-    const res = await fetch(`${this.API_BASE}/stop/?agent_id=${encodeURIComponent(agentId)}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Failed to stop remote desktop session')
-    }
   }
 }
 

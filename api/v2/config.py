@@ -34,6 +34,10 @@ class Settings(BaseSettings):
         "http://openrmm.derfwins.com",
     ]
     
+    # TURN server (WebRTC relay)
+    TURN_SHARED_SECRET: str = "fXQa7DiO7_Fy-bCDmo5H6h_8giYaHlaT0hHKWcgD_7gHq_ZwOhAxVTrWnEzN68TP"
+    TURN_HOST: str = "turn.openrmm.derfwins.com"
+
     # Agent
     LATEST_AGENT_VER: str = "0.1.0"
     AGENT_DOWNLOAD_URL: str = ""

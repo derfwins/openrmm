@@ -2282,6 +2282,66 @@ async def ws_agent_connect(server: str, agent_id: str):
                             "session_id": session_id,
                         }))
 
+                    # --- WebRTC desktop session handling ---
+                    elif msg_type == "webrtc_start":
+                        session_id = data.get("session_id")
+                        turn_config = data.get("turn", {})
+                        fps = data.get("fps", 30)
+                        log.info("WebRTC desktop session starting: %s", session_id)
+                        try:
+                            from webrtc_desktop import WebRTCDesktopSession
+                            webrtc_sess = WebRTCDesktopSession(session_id, turn_config, ws)
+                            # Store session for later reference (answer/ICE)
+                            sessions["_webrtc_" + session_id] = {"session": webrtc_sess}
+                            asyncio.create_task(webrtc_sess.start(fps=fps))
+                        except Exception as e:
+                            log.error("WebRTC session start failed: %s", e, exc_info=True)
+                            await ws.send(json.dumps({
+                                "type": "webrtc_error",
+                                "session_id": session_id,
+                                "message": str(e),
+                            }))
+
+                    elif msg_type == "webrtc_answer":
+                        session_id = data.get("session_id")
+                        sdp = data.get("sdp", "")
+                        type_ = data.get("type_", "answer")
+                        webrtc_sess_entry = sessions.get("_webrtc_" + session_id)
+                        if webrtc_sess_entry and webrtc_sess_entry.get("session"):
+                            try:
+                                await webrtc_sess_entry["session"].handle_answer(sdp, type_)
+                                log.info("WebRTC answer processed for session %s", session_id)
+                            except Exception as e:
+                                log.error("WebRTC answer failed: %s", e, exc_info=True)
+                        else:
+                            log.warning("No WebRTC session found for answer: %s", session_id)
+
+                    elif msg_type == "webrtc_ice":
+                        session_id = data.get("session_id")
+                        candidate_json = data.get("candidate", {})
+                        webrtc_sess_entry = sessions.get("_webrtc_" + session_id)
+                        if webrtc_sess_entry and webrtc_sess_entry.get("session"):
+                            try:
+                                await webrtc_sess_entry["session"].handle_ice_candidate(candidate_json)
+                            except Exception as e:
+                                log.warning("WebRTC ICE candidate failed: %s", e)
+                        else:
+                            log.warning("No WebRTC session found for ICE: %s", session_id)
+
+                    elif msg_type == "webrtc_stop":
+                        session_id = data.get("session_id")
+                        log.info("WebRTC session stopped: %s", session_id)
+                        webrtc_sess_entry = sessions.pop("_webrtc_" + session_id, None)
+                        if webrtc_sess_entry and webrtc_sess_entry.get("session"):
+                            try:
+                                await webrtc_sess_entry["session"].stop()
+                            except Exception:
+                                pass
+                        await ws.send(json.dumps({
+                            "type": "webrtc_stopped",
+                            "session_id": session_id,
+                        }))
+
                     elif msg_type == "desktop_settings":
                         session_id = data.get("session_id")
                         dsess = sessions.get("_desktop_" + session_id)

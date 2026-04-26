@@ -7,7 +7,6 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import agent_connections, terminal_sessions, desktop_sessions, pending_sessions, verify_token, lookup_agent_id
-from v2.routers.desktop import relay_desktop_frame, relay_desktop_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,30 +49,8 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                     msg_type = parsed.get("type")
                     logger.warning(f"Agent {agent_id} sent: {msg_type}")
                 elif "bytes" in data and data["bytes"]:
-                    # Binary frame from agent (desktop H.264, cursor, etc.)
-                    raw = data["bytes"]
-                    if len(raw) < 5:
-                        logger.warning(f"Agent {agent_id}: binary frame too short ({len(raw)} bytes)")
-                        continue
-
-                    # Agent sends: 1-byte type + 4-byte length + payload
-                    # No session_id prefix — relay to all desktop sessions for this agent
-                    ftype = raw[0] if raw else 0
-                    from v2.routers.desktop import _frame_type_name
-                    logger.warning(f"Agent {agent_id}: binary frame type={_frame_type_name(ftype)} len={len(raw)}")
-
-                    # Relay to all browser desktop sessions for this agent
-                    from v2.routers.ws_state import desktop_sessions
-                    sessions_to_remove = []
-                    for sid, sess in desktop_sessions.items():
-                        if sess.get("agent_id") == agent_id and sess.get("browser_ws"):
-                            try:
-                                await sess["browser_ws"].send_bytes(raw)
-                            except Exception as e:
-                                logger.warning(f"Failed to relay desktop frame to session {sid}: {e}")
-                                sessions_to_remove.append(sid)
-                    for sid in sessions_to_remove:
-                        desktop_sessions.pop(sid, None)
+                    # Binary frames no longer used — WebRTC handles media transport
+                    logger.debug(f"Agent {agent_id}: unexpected binary frame ({len(data['bytes'])} bytes)")
                     continue
                 else:
                     continue
@@ -132,32 +109,61 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                 elif msg_type == "resize":
                     pass
 
-                # --- Desktop relay messages ---
-                elif msg_type == "desktop_frame":
-                    # Legacy base64 JPEG frame (fallback)
-                    session_id = data.get("session_id")
-                    import base64
-                    frame_data = data.get("frame")
-                    if frame_data and session_id:
+                # --- WebRTC signaling relay messages ---
+                elif msg_type == "webrtc_offer":
+                    # Agent sent SDP offer — relay to browser via desktop session
+                    session_id = parsed.get("session_id")
+                    session = desktop_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
                         try:
-                            raw = base64.b64decode(frame_data)
-                            # Wrap as binary frame for browser compatibility
-                            # Type 0x01 = keyframe (legacy JPEG treated as keyframe)
-                            header = bytes([0x01]) + len(raw).to_bytes(4, "big")
-                            await relay_desktop_frame(agent_id, session_id, header + raw)
+                            await session["browser_ws"].send_json(parsed)
+                            logger.info(f"Relayed webrtc_offer to browser session {session_id}")
                         except Exception as e:
-                            logger.warning(f"Desktop frame relay error: {e}")
+                            logger.warning(f"Failed to relay webrtc_offer: {e}")
+
+                elif msg_type == "webrtc_ice":
+                    # Agent sent ICE candidate — relay to browser
+                    session_id = parsed.get("session_id")
+                    session = desktop_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception as e:
+                            logger.warning(f"Failed to relay webrtc_ice: {e}")
+
+                elif msg_type == "webrtc_stopped":
+                    # Agent stopped WebRTC session
+                    session_id = parsed.get("session_id")
+                    session = desktop_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception:
+                            pass
+                    desktop_sessions.pop(session_id, None)
+
+                elif msg_type == "webrtc_error":
+                    # Agent reported WebRTC error
+                    session_id = parsed.get("session_id")
+                    session = desktop_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception:
+                            pass
+
+                # --- Legacy desktop messages (kept for backward compat during transition) ---
+                elif msg_type == "desktop_frame":
+                    # Legacy base64 JPEG — no longer relayed (WebRTC handles video)
+                    logger.debug(f"Ignored legacy desktop_frame from agent {agent_id}")
 
                 elif msg_type == "desktop_info":
-                    # Agent sent screen info (resolution, monitors)
-                    session_id = data.get("session_id")
-                    if session_id:
-                        await relay_desktop_json(agent_id, session_id, data)
+                    # Legacy screen info — no longer relayed
+                    logger.debug(f"Ignored legacy desktop_info from agent {agent_id}")
 
                 elif msg_type == "desktop_stopped":
-                    session_id = data.get("session_id")
+                    session_id = parsed.get("session_id")
                     if session_id:
-                        await relay_desktop_json(agent_id, session_id, data)
                         desktop_sessions.pop(session_id, None)
 
         except WebSocketDisconnect:
