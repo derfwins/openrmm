@@ -20,7 +20,7 @@ import io
 import struct
 
 # Config
-AGENT_VERSION = "0.9.24"
+AGENT_VERSION = "0.9.29"
 HEARTBEAT_INTERVAL = 30
 BACKOFF_MAX = 60
 ID_FILE = Path(os.path.expanduser("~")) / ".openrmm-agent-id"
@@ -763,80 +763,77 @@ def _init_screen_capture_windows():
     # fresh subprocess (proven by run_command tests). So we spawn a helper process
     # for each capture frame.
     _CAPTURE_HELPER_SCRIPT = r'''#!/usr/bin/env python3
-"""Screen capture helper - spawned as subprocess by the agent.
-BitBlt only works in a fresh process context, not in the long-running agent."""
-import sys, struct, ctypes, ctypes.wintypes
+"""Screen capture helper - spawned in the interactive session by the agent.
+
+BitBlt only works in the interactive session (Session 1), not in Session 0.
+The agent (running as SYSTEM) creates a duplicate token with the session ID
+changed to the console session and launches this helper via CreateProcessAsUserW.
+
+Output is written to a temp file: first 8 bytes = width+height (uint32 LE),
+then either JPEG data or an error message (prefixed by 0,0 width/height).
+"""
+import sys, os, struct, ctypes, ctypes.wintypes
+
+def _write_result(outfile, data):
+    """Write result to temp file (more reliable than pipes across sessions)."""
+    if outfile:
+        with open(outfile, 'wb') as f:
+            f.write(data)
+    else:
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
 
 def main():
     quality = int(sys.argv[1]) if len(sys.argv) > 1 else 55
+    outfile = sys.argv[2] if len(sys.argv) > 2 else None
+
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
     kernel32 = ctypes.windll.kernel32
-    advapi32 = ctypes.windll.advapi32
+
     SRCCOPY = 0x00CC0020
-    
-    # Enable privileges
-    for priv in ("SeTcbPrivilege", "SeDesktopPrivilege"):
-        try:
-            token = ctypes.c_void_p()
-            advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0028, ctypes.byref(token))
-            luid = ctypes.create_string_buffer(8)
-            advapi32.LookupPrivilegeValueW(None, priv, luid)
-            tp = ctypes.create_string_buffer(16)
-            ctypes.memmove(tp, luid, 8)
-            struct.pack_into('I', tp, 8, 2)
-            advapi32.AdjustTokenPrivileges(token, False, tp, 0, None, None)
-            kernel32.CloseHandle(token)
-        except Exception:
-            pass
-    
-    # Switch to interactive desktop
+
+    # Switch to interactive window station and desktop
     saved_winsta = user32.GetProcessWindowStation()
     winsta = user32.OpenWindowStationW("WinSta0", False, 0x0037)
     if not winsta or not user32.SetProcessWindowStation(winsta):
-        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"OpenWindowStation failed")
-        sys.stdout.buffer.flush()
+        _write_result(outfile, struct.pack('<II', 0, 0) + b"OpenWindowStation failed")
         return
     desktop = user32.OpenDesktopW("Default", 0, False, 0x003f)
     if not desktop:
         user32.SetProcessWindowStation(saved_winsta)
         user32.CloseWindowStation(winsta)
-        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"OpenDesktopW failed")
-        sys.stdout.buffer.flush()
+        _write_result(outfile, struct.pack('<II', 0, 0) + b"OpenDesktopW failed")
         return
     saved_desktop = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
     if not user32.SetThreadDesktop(desktop):
         user32.CloseDesktop(desktop)
         user32.SetProcessWindowStation(saved_winsta)
         user32.CloseWindowStation(winsta)
-        sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"SetThreadDesktop failed")
-        sys.stdout.buffer.flush()
+        _write_result(outfile, struct.pack('<II', 0, 0) + b"SetThreadDesktop failed")
         return
-    
+
     try:
         w = user32.GetSystemMetrics(0)
         h = user32.GetSystemMetrics(1)
         if w <= 0 or h <= 0:
-            sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"Bad dimensions %dx%d" % (w, h))
-            sys.stdout.buffer.flush()
+            _write_result(outfile, struct.pack('<II', 0, 0) + ("Bad dimensions %dx%d" % (w, h)).encode())
             return
-        
+
         hwnd = user32.GetDesktopWindow()
         hdc = user32.GetWindowDC(hwnd)
         if not hdc:
-            sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"GetWindowDC failed")
-            sys.stdout.buffer.flush()
+            _write_result(outfile, struct.pack('<II', 0, 0) + b"GetWindowDC failed")
             return
         try:
             mem = gdi32.CreateCompatibleDC(hdc)
             if not mem:
-                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"CreateCompatibleDC failed")
+                _write_result(outfile, struct.pack('<II', 0, 0) + b"CreateCompatibleDC failed")
                 return
             bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
             if not bmp:
                 gdi32.DeleteDC(mem)
-                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"CreateCompatibleBitmap failed")
-                sys.stdout.buffer.flush()
+                _write_result(outfile, struct.pack('<II', 0, 0) + b"CreateCompatibleBitmap failed")
                 return
             old = gdi32.SelectObject(mem, bmp)
             ret = gdi32.BitBlt(mem, 0, 0, w, h, hdc, 0, 0, SRCCOPY)
@@ -844,35 +841,32 @@ def main():
                 gdi32.SelectObject(mem, old)
                 gdi32.DeleteObject(bmp)
                 gdi32.DeleteDC(mem)
-                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"BitBlt failed ret=%d" % ret)
-                sys.stdout.buffer.flush()
+                _write_result(outfile, struct.pack('<II', 0, 0) + ("BitBlt failed ret=%d" % ret).encode())
                 return
-            
+
             class BIH(ctypes.Structure):
                 _fields_ = [("biSize",ctypes.wintypes.DWORD),("biWidth",ctypes.wintypes.LONG),("biHeight",ctypes.wintypes.LONG),("biPlanes",ctypes.wintypes.WORD),("biBitCount",ctypes.wintypes.WORD),("biCompression",ctypes.wintypes.DWORD),("biSizeImage",ctypes.wintypes.DWORD),("biXPelsPerMeter",ctypes.wintypes.LONG),("biYPelsPerMeter",ctypes.wintypes.LONG),("biClrUsed",ctypes.wintypes.DWORD),("biClrImportant",ctypes.wintypes.DWORD)]
             class BI(ctypes.Structure):
                 _fields_ = [("bmiHeader",BIH),("bmiColors",ctypes.c_uint32*3)]
-            
+
             bmi = BI()
             bmi.bmiHeader.biSize = ctypes.sizeof(BIH)
             bmi.bmiHeader.biWidth = w
             bmi.bmiHeader.biHeight = -h
             bmi.bmiHeader.biPlanes = 1
             bmi.bmiHeader.biBitCount = 32
-            bmi.bmiHeader.biCompression = 0  # BI_RGB
-            
+            bmi.bmiHeader.biCompression = 0
+
             buf = ctypes.create_string_buffer(w * h * 4)
             rows = gdi32.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bmi), 0)
             gdi32.SelectObject(mem, old)
             gdi32.DeleteObject(bmp)
             gdi32.DeleteDC(mem)
-            
+
             if rows == 0:
-                sys.stdout.buffer.write(struct.pack('<II', 0, 0) + b"GetDIBits returned 0")
-                sys.stdout.buffer.flush()
+                _write_result(outfile, struct.pack('<II', 0, 0) + b"GetDIBits returned 0")
                 return
-            
-            # Encode JPEG with PIL
+
             from PIL import Image
             import io
             import numpy as np
@@ -882,9 +876,7 @@ def main():
             out = io.BytesIO()
             img.save(out, format='JPEG', quality=quality)
             jpeg_data = out.getvalue()
-            sys.stdout.buffer.write(struct.pack('<II', w, h))
-            sys.stdout.buffer.write(jpeg_data)
-            sys.stdout.buffer.flush()
+            _write_result(outfile, struct.pack('<II', w, h) + jpeg_data)
         finally:
             user32.ReleaseDC(hwnd, hdc)
     finally:
@@ -913,69 +905,343 @@ if __name__ == "__main__":
         _capture_helper_path = None
     
     def capture_screen(quality=55):
-        """Capture screen by spawning a subprocess helper.
-        
-        BitBlt fails inside the agent process when running as SYSTEM in Session 0,
-        even after SetProcessWindowStation/SetThreadDesktop. But it works in a
-        fresh subprocess (proven by run_command tests). So we spawn a helper
-        process for each frame and read back the JPEG via stdout.
-        
+        """Capture screen by spawning subprocess helper in the interactive session.
+
+        The agent runs as SYSTEM in Session 0 where BitBlt fails.
+        We use CreateProcessAsUserW with a duplicated SYSTEM token whose
+        SessionId is set to the active console session (usually 1).
+        This makes the helper process run in the interactive session
+        where it can access the real desktop and capture the screen.
+
         Returns (jpeg_bytes, width, height) or (None, 0, 0) on error.
         """
         if not _capture_helper_path:
             log.error("Capture helper script not available")
             return None, 0, 0
-        
+
+        import ctypes
+        import ctypes.wintypes
+        import tempfile
+
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+
+        # Set up proper function signatures for ctypes
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.GetLastError.restype = ctypes.wintypes.DWORD
+
+        advapi32.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.OpenProcessToken.restype = ctypes.wintypes.BOOL
+
+        advapi32.DuplicateTokenEx.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.DuplicateTokenEx.restype = ctypes.wintypes.BOOL
+
+        advapi32.SetTokenInformation.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.c_void_p, ctypes.wintypes.DWORD]
+        advapi32.SetTokenInformation.restype = ctypes.wintypes.BOOL
+
+        advapi32.AdjustTokenPrivileges.argtypes = [ctypes.c_void_p, ctypes.wintypes.BOOL, ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+        advapi32.AdjustTokenPrivileges.restype = ctypes.wintypes.BOOL
+
+        advapi32.LookupPrivilegeValueW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.LookupPrivilegeValueW.restype = ctypes.wintypes.BOOL
+
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+
+        # Create temp file for capture output
+        tmp_out = os.path.join(tempfile.gettempdir(), 'openrmm_capture_%d.tmp' % os.getpid())
+
         try:
-            # Spawn the helper process (no console window on Windows)
+            # Step 1: Get the active console session ID
+            # WTSGetActiveConsoleSessionId is in kernel32
+            kernel32.WTSGetActiveConsoleSessionId.restype = ctypes.wintypes.UINT
+            console_session_id = kernel32.WTSGetActiveConsoleSessionId()
+            log.info("Capture: console session ID = %s", console_session_id)
+
+            if console_session_id == 0xFFFFFFFF:
+                log.warning("Capture: no console session (0xFFFFFFFF), trying fallback")
+                return _capture_screen_fallback(quality)
+
+            # Step 2: Get our process token (SYSTEM)
+            current_process = kernel32.GetCurrentProcess()
+            current_token = ctypes.c_void_p()
+
+            # TOKEN_ALL_ACCESS = 0x000F01FF
+            TOKEN_ALL_ACCESS = 0x000F01FF
+            if not advapi32.OpenProcessToken(current_process, TOKEN_ALL_ACCESS, ctypes.byref(current_token)):
+                err = kernel32.GetLastError()
+                log.error("Capture: OpenProcessToken failed: %s (handle=%s)", err, current_process)
+                return None, 0, 0
+
+            log.info("Capture: got process token handle=%s", current_token.value)
+
+            try:
+                # Step 3: Enable SeDebugPrivilege (needed for SetTokenInformation with TokenSessionId)
+                SE_DEBUG_NAME = "SeDebugPrivilege"
+                luid = ctypes.c_void_p()
+                if not advapi32.LookupPrivilegeValueW(None, SE_DEBUG_NAME, ctypes.byref(luid)):
+                    err = kernel32.GetLastError()
+                    log.warning("Capture: LookupPrivilegeValue failed: %s (continuing)", err)
+                else:
+                    tp = ctypes.create_string_buffer(16)
+                    struct.pack_into('I', tp, 0, 1)  # PrivilegeCount = 1
+                    struct.pack_into('I', tp, 12, 2)  # SE_PRIVILEGE_ENABLED
+                    advapi32.AdjustTokenPrivileges(current_token, False, tp, 0, None, None)
+                    adjust_err = kernel32.GetLastError()
+                    if adjust_err != 0:
+                        log.warning("Capture: AdjustTokenPrivileges error: %s (continuing)", adjust_err)
+
+                # Step 4: Duplicate the token as a primary token
+                dup_token = ctypes.c_void_p()
+                # TokenPrimary = 1, SecurityDelegation = 2
+                if not advapi32.DuplicateTokenEx(
+                    current_token,
+                    TOKEN_ALL_ACCESS,  # TOKEN_ALL_ACCESS for the new token
+                    None,
+                    2,  # SecurityDelegation
+                    1,  # TokenPrimary
+                    ctypes.byref(dup_token)
+                ):
+                    err = kernel32.GetLastError()
+                    log.error("Capture: DuplicateTokenEx failed: %s", err)
+                    return None, 0, 0
+
+                log.info("Capture: duplicated token handle=%s", dup_token.value)
+
+                try:
+                    # Step 5: Change the token's session to the console session
+                    session_id_c = ctypes.c_ulong(console_session_id)
+                    if not advapi32.SetTokenInformation(
+                        dup_token,
+                        0x0C,  # TokenSessionId
+                        ctypes.byref(session_id_c),
+                        ctypes.sizeof(session_id_c)
+                    ):
+                        err = kernel32.GetLastError()
+                        log.error("Capture: SetTokenInformation(TokenSessionId=%s) failed: %s", console_session_id, err)
+                        return None, 0, 0
+
+                    log.info("Capture: set token session to %s", console_session_id)
+
+                    # Step 6: Create the process in the interactive session
+                    cmdline = '"%s" "%s" %d "%s"' % (sys.executable, _capture_helper_path, quality, tmp_out)
+
+                    log.info("Capture: launching helper in session %s: %s", console_session_id, cmdline[:80])
+
+                    # Use CreateProcessAsUserW to launch in the interactive session
+                    # This is THE KEY: running the helper as SYSTEM but in Session 1
+                    # allows it to access the interactive desktop and capture BitBlt
+                    
+                    # Set up function signature for CreateProcessAsUserW
+                    advapi32.CreateProcessAsUserW.argtypes = [
+                        ctypes.c_void_p,       # hToken
+                        ctypes.c_wchar_p,       # lpApplicationName
+                        ctypes.c_wchar_p,       # lpCommandLine
+                        ctypes.c_void_p,        # lpProcessAttributes
+                        ctypes.c_void_p,        # lpThreadAttributes
+                        ctypes.wintypes.BOOL,   # bInheritHandles
+                        ctypes.wintypes.DWORD,  # dwCreationFlags
+                        ctypes.c_void_p,        # lpEnvironment
+                        ctypes.c_wchar_p,       # lpCurrentDirectory
+                        ctypes.c_void_p,        # lpStartupInfo (STARTUPINFOW)
+                        ctypes.c_void_p,        # lpProcessInformation (PROCESS_INFORMATION)
+                    ]
+                    advapi32.CreateProcessAsUserW.restype = ctypes.wintypes.BOOL
+
+                    # Build STARTUPINFOW struct for CreateProcessAsUserW
+                    # typedef struct _STARTUPINFOW {
+                    #   DWORD cb; LPWSTR lpReserved; LPWSTR lpDesktop; LPWSTR lpTitle;
+                    #   DWORD dwX; DWORD dwY; DWORD dwXSize; DWORD dwYSize;
+                    #   DWORD dwXCountChars; DWORD dwYCountChars; DWORD dwFillAttribute;
+                    #   DWORD dwFlags; WORD wShowWindow; WORD cbReserved2;
+                    #   LPBYTE lpReserved2; HANDLE hStdInput; HANDLE hStdOutput;
+                    #   HANDLE hStdError;
+                    # }
+                    class STARTUPINFOW(ctypes.Structure):
+                        _fields_ = [
+                            ("cb", ctypes.wintypes.DWORD),
+                            ("lpReserved", ctypes.c_wchar_p),
+                            ("lpDesktop", ctypes.c_wchar_p),
+                            ("lpTitle", ctypes.c_wchar_p),
+                            ("dwX", ctypes.wintypes.DWORD),
+                            ("dwY", ctypes.wintypes.DWORD),
+                            ("dwXSize", ctypes.wintypes.DWORD),
+                            ("dwYSize", ctypes.wintypes.DWORD),
+                            ("dwXCountChars", ctypes.wintypes.DWORD),
+                            ("dwYCountChars", ctypes.wintypes.DWORD),
+                            ("dwFillAttribute", ctypes.wintypes.DWORD),
+                            ("dwFlags", ctypes.wintypes.DWORD),
+                            ("wShowWindow", ctypes.wintypes.WORD),
+                            ("cbReserved2", ctypes.wintypes.WORD),
+                            ("lpReserved2", ctypes.c_void_p),
+                            ("hStdInput", ctypes.c_void_p),
+                            ("hStdOutput", ctypes.c_void_p),
+                            ("hStdError", ctypes.c_void_p),
+                        ]
+
+                    class PROCESS_INFORMATION(ctypes.Structure):
+                        _fields_ = [
+                            ("hProcess", ctypes.c_void_p),
+                            ("hThread", ctypes.c_void_p),
+                            ("dwProcessId", ctypes.wintypes.DWORD),
+                            ("dwThreadId", ctypes.wintypes.DWORD),
+                        ]
+
+                    # Set up startup info
+                    si = STARTUPINFOW()
+                    si.cb = ctypes.sizeof(STARTUPINFOW)
+                    si.lpDesktop = "WinSta0\Default"
+                    si.dwFlags = 0x00000001  # STARTF_USESHOWWINDOW
+                    si.wShowWindow = 0  # SW_HIDE
+
+                    pi = PROCESS_INFORMATION()
+
+                    CREATE_NO_WINDOW = 0x08000000
+                    CREATE_UNICODE_ENVIRONMENT = 0x00000400
+
+                    # Launch the helper process using the duplicated token
+                    # The token has been set to Session 1, so the process will run there
+                    log.info("Capture: calling CreateProcessAsUserW with token=%s", dup_token.value)
+                    result = advapi32.CreateProcessAsUserW(
+                        dup_token,           # hToken - the duplicated token set to session 1
+                        None,                 # lpApplicationName
+                        cmdline,              # lpCommandLine
+                        None,                 # lpProcessAttributes
+                        None,                 # lpThreadAttributes
+                        False,                # bInheritHandles
+                        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,  # dwCreationFlags
+                        None,                 # lpEnvironment (inherit from parent)
+                        None,                 # lpCurrentDirectory
+                        ctypes.byref(si),     # lpStartupInfo
+                        ctypes.byref(pi),     # lpProcessInformation
+                    )
+
+                    if not result:
+                        err = kernel32.GetLastError()
+                        log.error("Capture: CreateProcessAsUserW failed: %s", err)
+                        return None, 0, 0
+
+                    log.info("Capture: helper PID=%s launched in session %s", pi.dwProcessId, console_session_id)
+
+                    # Close thread handle immediately (we don't need it)
+                    kernel32.CloseHandle(pi.hThread)
+
+                    # Wait for process to finish
+                    WAIT_OBJECT_0 = 0
+                    INFINITE = 0xFFFFFFFF
+                    wait_result = kernel32.WaitForSingleObject(pi.hProcess, 10000)  # 10 second timeout
+                    if wait_result != WAIT_OBJECT_0:
+                        log.error("Capture: helper process wait failed or timed out: %s", wait_result)
+                        kernel32.TerminateProcess(pi.hProcess, 1)
+                        kernel32.CloseHandle(pi.hProcess)
+                        return None, 0, 0
+
+                    # Get exit code
+                    exit_code = ctypes.wintypes.DWORD()
+                    kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code))
+                    kernel32.CloseHandle(pi.hProcess)
+
+                    if exit_code.value != 0:
+                        log.error("Capture: helper exited with code %s", exit_code.value)
+
+                    # Read result from temp file
+                    try:
+                        with open(tmp_out, 'rb') as f:
+                            data = f.read()
+                    except FileNotFoundError:
+                        log.error("Capture: helper did not write output file")
+                        return None, 0, 0
+                    except PermissionError:
+                        log.error("Capture: cannot read output file (permission denied)")
+                        return None, 0, 0
+
+                    if len(data) < 8:
+                        log.error("Capture: helper output too small: %d bytes", len(data))
+                        return None, 0, 0
+
+                    w, h = struct.unpack('<II', data[:8])
+                    if w == 0 and h == 0:
+                        err_msg = data[8:].decode('utf-8', errors='replace')
+                        log.error("Capture helper error: %s", err_msg)
+                        return None, 0, 0
+
+                    jpeg_data = data[8:]
+                    if len(jpeg_data) == 0:
+                        log.error("Capture: helper returned 0 JPEG bytes")
+                        return None, 0, 0
+
+                    log.info("Capture: got screen %dx%d (%d bytes)", w, h, len(jpeg_data))
+                    return jpeg_data, w, h
+
+                finally:
+                    kernel32.CloseHandle(dup_token)
+
+            finally:
+                kernel32.CloseHandle(current_token)
+
+        except Exception as e:
+            log.error("capture_screen error: %s", e, exc_info=True)
+            return None, 0, 0
+        finally:
+            try:
+                os.unlink(tmp_out)
+            except OSError:
+                pass
+
+    def _capture_screen_fallback(quality=55):
+        """Fallback: spawn helper in same session (may fail as SYSTEM in Session 0)."""
+        if not _capture_helper_path:
+            return None, 0, 0
+        import tempfile
+        tmp_out = os.path.join(tempfile.gettempdir(), 'openrmm_capture_fb_%d.tmp' % os.getpid())
+        try:
             kwargs = {
-                'capture_output': True,
+                'stdout': subprocess.DEVNULL,
+                'stderr': subprocess.PIPE,
                 'timeout': 10,
             }
             if platform.system() == 'Windows':
                 si = subprocess.STARTUPINFO()
                 si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = 0  # SW_HIDE
+                si.wShowWindow = 0
                 kwargs['startupinfo'] = si
                 kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             proc = subprocess.run(
-                [sys.executable, _capture_helper_path, str(quality)],
+                [sys.executable, _capture_helper_path, str(quality), tmp_out],
                 **kwargs,
             )
-            
             if proc.returncode != 0:
-                stderr_text = proc.stderr.decode('utf-8', errors='replace')[:500]
-                log.error("Capture helper failed (rc=%d): %s", proc.returncode, stderr_text)
-                # Fall through to try reading stdout anyway
-            
-            data = proc.stdout
+                stderr_text = (proc.stderr or b'').decode('utf-8', errors='replace')[:500]
+                log.error("Capture fallback helper failed (rc=%d): %s", proc.returncode, stderr_text)
+
+            try:
+                with open(tmp_out, 'rb') as f:
+                    data = f.read()
+            except FileNotFoundError:
+                log.error("Capture fallback: no output file")
+                return None, 0, 0
+
             if len(data) < 8:
-                log.error("Capture helper returned too little data: %d bytes", len(data))
+                log.error("Capture fallback: output too small: %d bytes", len(data))
                 return None, 0, 0
-            
-            # Parse header: 4 bytes width + 4 bytes height (little-endian)
+
             w, h = struct.unpack('<II', data[:8])
-            
             if w == 0 and h == 0:
-                # Error response - remaining bytes are the error message
                 err_msg = data[8:].decode('utf-8', errors='replace')
-                log.error("Capture helper error: %s", err_msg)
+                log.error("Capture fallback error: %s", err_msg)
                 return None, 0, 0
-            
-            # Success - remaining bytes are the JPEG data
-            jpeg_data = data[8:]
-            if len(jpeg_data) == 0:
-                log.error("Capture helper returned 0 JPEG bytes")
-                return None, 0, 0
-            
-            return jpeg_data, w, h
-            
-        except subprocess.TimeoutExpired:
-            log.error("Capture helper timed out")
-            return None, 0, 0
+
+            return data[8:], w, h
+
         except Exception as e:
-            log.error("capture_screen subprocess error: %s", e, exc_info=True)
+            log.error("capture_screen fallback error: %s", e, exc_info=True)
             return None, 0, 0
+        finally:
+            try:
+                os.unlink(tmp_out)
+            except OSError:
+                pass
+
 
     return capture_screen, h264_available, capture_init_h264, capture_frame_h264, capture_flush_h264, capture_cleanup_h264
 
