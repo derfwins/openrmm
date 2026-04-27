@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
@@ -33,6 +33,7 @@ const DeviceDetail = () => {
   const [pkgInstalledLoading, setPkgInstalledLoading] = useState(false)
   const [chocoInstalling, setChocoInstalling] = useState(false)
   const [chocoInstallOutput, setChocoInstallOutput] = useState('')
+  const [chocoInstalled, setChocoInstalled] = useState<'unknown' | 'yes' | 'no'>('unknown')
   const [pkgInstalling, setPkgInstalling] = useState<string | null>(null)
   const [pkgUninstalling, setPkgUninstalling] = useState<string | null>(null)
   const [pkgActionOutput, setPkgActionOutput] = useState<{ pkg: string; output: string; success: boolean } | null>(null)
@@ -236,16 +237,21 @@ const DeviceDetail = () => {
 
   const handleInstallChocolatey = async () => {
     if (!id || !isActive) return
-    if (!confirm('Install Chocolatey on this device? This will download and run the official Chocolatey installer.')) return
     setChocoInstalling(true)
     setChocoInstallOutput('')
     try {
       const result = await apiService.installChocolatey(id)
-      setChocoInstallOutput(result.output || (result.success ? 'Chocolatey installed successfully!' : 'Installation may have failed.'))
-      // Refresh installed packages after install
-      if (result.success) {
-        setPkgManager('chocolatey')
-        setTimeout(() => handlePkgListInstalled(), 2000)
+      const output = result.output || ''
+      if (output.toLowerCase().includes('already installed')) {
+        setChocoInstalled('yes')
+        setChocoInstallOutput('')
+      } else {
+        setChocoInstallOutput(result.success ? 'Chocolatey installed successfully!' : 'Installation may have failed.')
+        if (result.success) {
+          setChocoInstalled('yes')
+          setPkgManager('chocolatey')
+          setTimeout(() => handlePkgListInstalled(), 2000)
+        }
       }
     } catch (e: any) {
       setChocoInstallOutput(`Error: ${e.message}`)
@@ -253,6 +259,19 @@ const DeviceDetail = () => {
       setChocoInstalling(false)
     }
   }
+
+  // Auto-check Chocolatey status when software tab is first viewed
+  const chocoCheckedRef = useRef(false)
+  useEffect(() => {
+    if (activeTab !== 'software' || !id || !isActive || chocoCheckedRef.current) return
+    chocoCheckedRef.current = true
+    apiService.installChocolatey(id).then(result => {
+      const output = (result.output || '').toLowerCase()
+      setChocoInstalled(output.includes('already installed') ? 'yes' : 'no')
+    }).catch(() => {
+      setChocoInstalled('no')
+    })
+  }, [activeTab, id, isActive])
 
   const services = parseJsonSafe(agent.services_json, [])
   const cpuPct = agent.cpu_percent ?? 0
@@ -576,14 +595,30 @@ const DeviceDetail = () => {
                   >
                     {pkgInstalledLoading ? 'Loading...' : 'List Installed'}
                   </button>
-                  <button
-                    onClick={handleInstallChocolatey}
-                    disabled={!isActive || chocoInstalling}
-                    className="px-3 py-1.5 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                    title="Install Chocolatey package manager on this device"
-                  >
-                    {chocoInstalling ? 'Installing...' : 'Install Chocolatey'}
-                  </button>
+                  {chocoInstalled === 'yes' ? (
+                    <span className="px-3 py-1.5 text-sm bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded-lg inline-flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      Chocolatey Installed
+                    </span>
+                  ) : chocoInstalled === 'no' ? (
+                    <button
+                      onClick={handleInstallChocolatey}
+                      disabled={!isActive || chocoInstalling}
+                      className="px-3 py-1.5 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                      title="Install Chocolatey package manager on this device"
+                    >
+                      {chocoInstalling ? 'Installing...' : 'Install Chocolatey'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleInstallChocolatey}
+                      disabled={!isActive || chocoInstalling}
+                      className="px-3 py-1.5 text-sm bg-gray-400 text-white rounded-lg hover:bg-gray-500 disabled:opacity-50 transition-colors animate-pulse"
+                      title="Checking Chocolatey status..."
+                    >
+                      {chocoInstalling ? 'Checking...' : 'Checking...'}
+                    </button>
+                  )}
                 </div>
               </div>
 

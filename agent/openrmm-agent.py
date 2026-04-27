@@ -2534,8 +2534,9 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                         def _search():
                             if manager == "winget":
-                                cmd = f'winget search "{query}" --accept-source-agreements'
-                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                                # winget must run in user context — use powershell with user profile
+                                cmd = f'powershell -NoProfile -Command "winget search \'{query}\' --accept-source-agreements 2>&1 | Out-String"'
+                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=90)
                                 lines = result.stdout.strip().split('\n')
                                 packages = []
                                 header_passed = False
@@ -2563,19 +2564,25 @@ async def ws_agent_connect(server: str, agent_id: str):
                                                 "source": source_found or "winget",
                                                 "manager": "winget",
                                             })
-                                return packages, result.stdout, result.returncode
-                            else:  # chocolatey
-                                cmd = f'choco search "{query}" --limit-output --no-color'
-                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                                # winget often returns non-zero even with results
+                                return packages, result.stdout, 0 if packages else result.returncode
+                            else:  # chocolatey — use full path to ensure SYSTEM can find it
+                                choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
+                                if not os.path.isfile(choco_path):
+                                    # Fallback: try PATH
+                                    choco_path = 'choco'
+                                cmd = f'"{choco_path}" search "{query}" --limit-output --no-color'
+                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=90)
                                 packages = []
                                 for line in result.stdout.strip().split('\n'):
                                     if '|' in line:
                                         p = line.split('|')
                                         if len(p) >= 2:
                                             packages.append({"name": p[0], "id": p[0], "version": p[1], "source": "chocolatey", "manager": "chocolatey"})
-                                if result.returncode != 0 and "not recognized" in (result.stderr + result.stdout).lower():
-                                    return packages, "Chocolatey not installed. Install it first or use winget.", result.returncode
-                                return packages, result.stdout, result.returncode
+                                if not packages and "not recognized" in (result.stderr + result.stdout).lower():
+                                    return packages, "Chocolatey not installed. Click 'Install Chocolatey' to install it.", result.returncode
+                                # choco returns 0 on success, but some results may return 1 (reboot needed)
+                                return packages, result.stdout, 0 if packages else result.returncode
 
                         try:
                             packages, raw_output, rc = await asyncio.to_thread(_search)
@@ -2610,13 +2617,12 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                         def _install():
                             if manager == "winget":
-                                cmd = f'winget install "{package_id}" -h --accept-package-agreements --accept-source-agreements {install_args}'
-                            else:  # chocolatey — auto-bootstrap if needed
-                                chk = subprocess.run("choco --version", shell=True, capture_output=True, text=True, timeout=10)
-                                if chk.returncode != 0:
-                                    bootstrap = 'Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString(\'https://community.chocolatey.org/install.ps1\'))'
-                                    subprocess.run(f'powershell -NoProfile -Command "{bootstrap}"', shell=True, capture_output=True, text=True, timeout=120)
-                                cmd = f'choco install {package_id} -y {install_args}'.strip()
+                                cmd = f'powershell -NoProfile -Command "winget install \'{package_id}\' -h --accept-package-agreements --accept-source-agreements {install_args} 2>&1 | Out-String"'
+                            else:  # chocolatey — use full path
+                                choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
+                                if not os.path.isfile(choco_path):
+                                    choco_path = 'choco'
+                                cmd = f'"{choco_path}" install {package_id} -y {install_args}'.strip()
                             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
                             output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
                             return output, result.returncode
@@ -2647,14 +2653,28 @@ async def ws_agent_connect(server: str, agent_id: str):
                         log.info("Installing Chocolatey")
 
                         def _install_choco():
-                            # Check if already installed
+                            # Check if already installed — use full path for SYSTEM context
+                            choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
+                            if os.path.isfile(choco_path):
+                                chk = subprocess.run(f'"{choco_path}" --version', shell=True, capture_output=True, text=True, timeout=10)
+                                if chk.returncode == 0:
+                                    version = chk.stdout.strip()
+                                    return f"Chocolatey already installed: {version}", 0
+                            # Also try PATH
                             chk = subprocess.run("choco --version", shell=True, capture_output=True, text=True, timeout=10)
                             if chk.returncode == 0:
-                                version = chk.stdout.strip()
-                                return f"Chocolatey already installed: {version}", 0
+                                return f"Chocolatey already installed: {chk.stdout.strip()}", 0
                             # Bootstrap Chocolatey
-                            bootstrap = 'Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString(\'https://community.chocolatey.org/install.ps1\'))'
-                            result = subprocess.run(f'powershell -NoProfile -Command "{bootstrap}"', shell=True, capture_output=True, text=True, timeout=180)
+                            bootstrap_ps = (
+                                "Set-ExecutionPolicy Bypass -Scope Process -Force; "
+                                "[System.Net.ServicePointManager]::SecurityProtocol = "
+                                "[System.Net.ServicePointManager]::SecurityProtocol -bor 3072; "
+                                "iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+                            )
+                            result = subprocess.run(
+                                f'powershell -NoProfile -Command "{bootstrap_ps}"',
+                                shell=True, capture_output=True, text=True, timeout=180
+                            )
                             output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
                             return output, result.returncode
 
@@ -2686,9 +2706,12 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                         def _uninstall():
                             if manager == "winget":
-                                cmd = f'winget uninstall "{package_id}" -h'
+                                cmd = f'powershell -NoProfile -Command "winget uninstall \'{package_id}\' -h 2>&1 | Out-String"'
                             else:
-                                cmd = f'choco uninstall {package_id} -y'
+                                choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
+                                if not os.path.isfile(choco_path):
+                                    choco_path = 'choco'
+                                cmd = f'"{choco_path}" uninstall {package_id} -y'
                             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
                             output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
                             return output, result.returncode
@@ -2722,9 +2745,12 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                         def _list():
                             if manager == "winget":
-                                cmd = 'winget list --accept-source-agreements'
+                                cmd = 'powershell -NoProfile -Command "winget list --accept-source-agreements 2>&1 | Out-String"'
                             else:
-                                cmd = 'choco list --local-only'
+                                choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
+                                if not os.path.isfile(choco_path):
+                                    choco_path = 'choco'
+                                cmd = f'"{choco_path}" list --local-only'
                             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
                             return result.stdout, result.stderr, result.returncode
 

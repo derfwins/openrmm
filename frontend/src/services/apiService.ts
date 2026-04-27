@@ -249,12 +249,13 @@ export const apiService = {
   },
 
   async installChocolatey(agentId: string): Promise<any> {
+    // This endpoint also checks if already installed and returns status
     const response = await authFetch(`${API_BASE_URL}/packages/chocolatey-install/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId }),
     })
-    if (!response.ok) throw new Error('Failed to install Chocolatey')
+    if (!response.ok) throw new Error('Failed to check/install Chocolatey')
     return response.json()
   },
 
