@@ -31,6 +31,8 @@ const DeviceDetail = () => {
   const [pkgSearchError, setPkgSearchError] = useState('')
   const [pkgInstalled, setPkgInstalled] = useState<any[]>([])
   const [pkgInstalledLoading, setPkgInstalledLoading] = useState(false)
+  const [chocoInstalling, setChocoInstalling] = useState(false)
+  const [chocoInstallOutput, setChocoInstallOutput] = useState('')
   const [pkgInstalling, setPkgInstalling] = useState<string | null>(null)
   const [pkgUninstalling, setPkgUninstalling] = useState<string | null>(null)
   const [pkgActionOutput, setPkgActionOutput] = useState<{ pkg: string; output: string; success: boolean } | null>(null)
@@ -232,6 +234,26 @@ const DeviceDetail = () => {
     }
   }
 
+  const handleInstallChocolatey = async () => {
+    if (!id || !isActive) return
+    if (!confirm('Install Chocolatey on this device? This will download and run the official Chocolatey installer.')) return
+    setChocoInstalling(true)
+    setChocoInstallOutput('')
+    try {
+      const result = await apiService.installChocolatey(id)
+      setChocoInstallOutput(result.output || (result.success ? 'Chocolatey installed successfully!' : 'Installation may have failed.'))
+      // Refresh installed packages after install
+      if (result.success) {
+        setPkgManager('chocolatey')
+        setTimeout(() => handlePkgListInstalled(), 2000)
+      }
+    } catch (e: any) {
+      setChocoInstallOutput(`Error: ${e.message}`)
+    } finally {
+      setChocoInstalling(false)
+    }
+  }
+
   const services = parseJsonSafe(agent.services_json, [])
   const cpuPct = agent.cpu_percent ?? 0
   const memPct = memory.percent ?? 0
@@ -320,20 +342,6 @@ const DeviceDetail = () => {
               >
                 <IconPower className="w-4 h-4" />
                 Reboot
-              </button>
-            )}
-            {isActive && (
-              <button
-                onClick={async () => {
-                  if (confirm('Shut down this device? The machine will power off in 5 seconds.')) {
-                    await fetch(`/agents/${id}/shutdown/`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-                  }
-                }}
-                className="px-4 py-2 text-sm rounded-lg transition-colors bg-gray-800 dark:bg-gray-700 text-red-400 hover:bg-gray-700 dark:hover:bg-gray-600 flex items-center gap-2"
-                title="Shut down the device"
-              >
-                <IconPower className="w-4 h-4" />
-                Shut Down
               </button>
             )}
             <button
@@ -568,8 +576,23 @@ const DeviceDetail = () => {
                   >
                     {pkgInstalledLoading ? 'Loading...' : 'List Installed'}
                   </button>
+                  <button
+                    onClick={handleInstallChocolatey}
+                    disabled={!isActive || chocoInstalling}
+                    className="px-3 py-1.5 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                    title="Install Chocolatey package manager on this device"
+                  >
+                    {chocoInstalling ? 'Installing...' : 'Install Chocolatey'}
+                  </button>
                 </div>
               </div>
+
+              {/* Chocolatey install status */}
+              {chocoInstallOutput && (
+                <div className={`text-xs p-2 rounded ${chocoInstallOutput.startsWith('Error') ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'}`}>
+                  {chocoInstallOutput}
+                </div>
+              )}
 
               {/* Installed packages */}
               {pkgInstalled.length > 0 && (

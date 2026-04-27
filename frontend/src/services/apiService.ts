@@ -248,6 +248,16 @@ export const apiService = {
     return response.json()
   },
 
+  async installChocolatey(agentId: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/packages/chocolatey-install/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId }),
+    })
+    if (!response.ok) throw new Error('Failed to install Chocolatey')
+    return response.json()
+  },
+
   // Remote commands
   async sendCommand(agentId: string, command: string, shell: string = 'powershell') {
     const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/cmd/`, {

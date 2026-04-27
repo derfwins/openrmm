@@ -2642,6 +2642,41 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 "output": f"ERROR: {str(e)}",
                             }))
 
+                    elif msg_type == "chocolatey_install":
+                        session_id = data.get("session_id", "choco-install")
+                        log.info("Installing Chocolatey")
+
+                        def _install_choco():
+                            # Check if already installed
+                            chk = subprocess.run("choco --version", shell=True, capture_output=True, text=True, timeout=10)
+                            if chk.returncode == 0:
+                                version = chk.stdout.strip()
+                                return f"Chocolatey already installed: {version}", 0
+                            # Bootstrap Chocolatey
+                            bootstrap = 'Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString(\'https://community.chocolatey.org/install.ps1\'))'
+                            result = subprocess.run(f'powershell -NoProfile -Command "{bootstrap}"', shell=True, capture_output=True, text=True, timeout=180)
+                            output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
+                            return output, result.returncode
+
+                        try:
+                            output, rc = await asyncio.to_thread(_install_choco)
+                            await ws.send(json.dumps({
+                                "type": "chocolatey_install_result",
+                                "session_id": session_id,
+                                "success": rc == 0,
+                                "output": output[:20000],
+                                "return_code": rc,
+                            }))
+                        except Exception as e:
+                            log.error("chocolatey_install error: %s", e, exc_info=True)
+                            await ws.send(json.dumps({
+                                "type": "chocolatey_install_result",
+                                "session_id": session_id,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}",
+                                "return_code": -1,
+                            }))
+
                     elif msg_type == "package_uninstall":
                         package_id = data.get("package_id", "")
                         manager = data.get("manager", "winget")
