@@ -43,6 +43,19 @@ const DeviceDetail = () => {
   // Escape key for modals
   useEscapeKey(() => setPkgShowArgsModal(null), !!pkgShowArgsModal)
 
+  // Auto-check Chocolatey status when software tab is first viewed (must be before any early returns)
+  const chocoCheckedRef = useRef(false)
+  useEffect(() => {
+    if (activeTab !== 'software' || !id || !isActive || chocoCheckedRef.current) return
+    chocoCheckedRef.current = true
+    apiService.installChocolatey(id).then(result => {
+      const output = (result.output || '').toLowerCase()
+      setChocoInstalled(output.includes('already installed') ? 'yes' : 'no')
+    }).catch(() => {
+      setChocoInstalled('no')
+    })
+  }, [activeTab, id, isActive])
+
   useEffect(() => {
     if (id) loadAgent()
     const interval = setInterval(() => { if (id) loadAgent() }, 30000)
@@ -272,19 +285,6 @@ const DeviceDetail = () => {
       setChocoInstalling(false)
     }
   }
-
-  // Auto-check Chocolatey status when software tab is first viewed
-  const chocoCheckedRef = useRef(false)
-  useEffect(() => {
-    if (activeTab !== 'software' || !id || !isActive || chocoCheckedRef.current) return
-    chocoCheckedRef.current = true
-    apiService.installChocolatey(id).then(result => {
-      const output = (result.output || '').toLowerCase()
-      setChocoInstalled(output.includes('already installed') ? 'yes' : 'no')
-    }).catch(() => {
-      setChocoInstalled('no')
-    })
-  }, [activeTab, id, isActive])
 
   const services = parseJsonSafe(agent.services_json, [])
   const cpuPct = agent.cpu_percent ?? 0
