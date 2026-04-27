@@ -170,9 +170,9 @@ export const apiService = {
     return response.json()
   },
 
-  // Script execution (v2 API)
+  // Script execution
   async runScriptOnAgents(scriptId: number, agentIds: string[]): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/scripts/${scriptId}/run/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/${scriptId}/run/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_ids: agentIds }),
@@ -182,7 +182,7 @@ export const apiService = {
   },
 
   async runAdhocScript(body: string, shell: string, agentIds: string[]): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/scripts/run-adhoc/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/run-adhoc/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ body, shell, agent_ids: agentIds }),
@@ -192,7 +192,7 @@ export const apiService = {
   },
 
   async getScriptExecutions(): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/scripts/executions/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/executions/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch script executions')
@@ -200,7 +200,7 @@ export const apiService = {
   },
 
   async getScriptExecution(sessionId: string): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/scripts/executions/${sessionId}/`, {
+    const response = await authFetch(`${API_BASE_URL}/scripts/executions/${sessionId}/`, {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to fetch script execution')
@@ -209,7 +209,7 @@ export const apiService = {
 
   // Package management
   async searchPackages(agentId: string, query: string, manager: string): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/packages/search/`, {
+    const response = await authFetch(`${API_BASE_URL}/packages/search/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId, query, manager }),
@@ -219,7 +219,7 @@ export const apiService = {
   },
 
   async installPackage(agentId: string, packageId: string, manager: string, installArgs?: string): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/packages/install/`, {
+    const response = await authFetch(`${API_BASE_URL}/packages/install/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager, install_args: installArgs }),
@@ -229,7 +229,7 @@ export const apiService = {
   },
 
   async uninstallPackage(agentId: string, packageId: string, manager: string): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/packages/uninstall/`, {
+    const response = await authFetch(`${API_BASE_URL}/packages/uninstall/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager }),
@@ -239,7 +239,7 @@ export const apiService = {
   },
 
   async listPackages(agentId: string, manager: string): Promise<any> {
-    const response = await authFetch(`${API_BASE_URL}/v2/packages/list/`, {
+    const response = await authFetch(`${API_BASE_URL}/packages/list/`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ agent_id: agentId, manager }),
