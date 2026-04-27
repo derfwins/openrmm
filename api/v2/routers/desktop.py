@@ -72,19 +72,23 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
     5. ICE candidates trickle both ways
     6. WebRTC connection established — video/audio go peer-to-peer or via TURN
     """
+    logger.warning(f"Desktop WS: new connection for agent_id={agent_id}, token present={bool(token)}")
     user = await verify_token(token)
+    logger.warning(f"Desktop WS: verify_token result: user={user.username if user else None}")
     if not user:
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
     agent_uuid = await lookup_agent_id(agent_id)
+    logger.warning(f"Desktop WS: lookup_agent_id result: agent_uuid={agent_uuid}")
     if not agent_uuid:
         await websocket.accept()
         await websocket.close(code=4004, reason="Agent not found")
         return
 
     agent_ws = agent_connections.get(agent_uuid)
+    logger.warning(f"Desktop WS: agent_ws lookup for {agent_uuid}: found={bool(agent_ws)}, keys={list(agent_connections.keys())}")
     if not agent_ws:
         await websocket.accept()
         await websocket.close(code=4003, reason="Agent offline")
@@ -98,6 +102,7 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
         "browser_ws": websocket,
         "agent_id": agent_uuid,
     }
+    logger.warning(f"Desktop WS: created session {session_id} for agent {agent_uuid}, desktop_sessions keys={list(desktop_sessions.keys())}")
 
     # Generate TURN credentials for this user
     turn_creds = generate_turn_credentials(str(user.id))
@@ -135,7 +140,12 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
     try:
         while True:
             data = await websocket.receive()
-
+            
+            # Check for disconnect message
+            if data.get("type") == "websocket.disconnect":
+                logger.warning(f"Desktop WS: browser sent disconnect frame, code={data.get('code')}")
+                break
+            
             if "text" in data:
                 try:
                     parsed = json.loads(data["text"])
@@ -148,6 +158,7 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
 
                 if msg_type == "webrtc_answer":
                     # Browser sent SDP answer — relay to agent
+                    logger.warning(f"Desktop WS: received webrtc_answer from browser, session_id={session_id}, relaying to agent")
                     agent_ws = agent_connections.get(agent_uuid)
                     if agent_ws:
                         parsed["session_id"] = session_id
@@ -158,6 +169,7 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
 
                 elif msg_type == "webrtc_ice":
                     # Browser sent ICE candidate — relay to agent
+                    logger.warning(f"Desktop WS: received webrtc_ice from browser, session_id={session_id}")
                     agent_ws = agent_connections.get(agent_uuid)
                     if agent_ws:
                         parsed["session_id"] = session_id

@@ -113,17 +113,22 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                 elif msg_type == "webrtc_offer":
                     # Agent sent SDP offer — relay to browser via desktop session
                     session_id = parsed.get("session_id")
+                    logger.warning(f"webrtc_offer from agent {agent_id}, session_id={session_id}, desktop_sessions keys={list(desktop_sessions.keys())}")
                     session = desktop_sessions.get(session_id)
+                    logger.warning(f"webrtc_offer: session_id={session_id}, session_found={bool(session)}, browser_ws_found={bool(session and session.get('browser_ws'))}")
                     if session and session.get("browser_ws"):
                         try:
                             await session["browser_ws"].send_json(parsed)
-                            logger.info(f"Relayed webrtc_offer to browser session {session_id}")
+                            logger.warning(f"Relayed webrtc_offer to browser session {session_id}")
                         except Exception as e:
                             logger.warning(f"Failed to relay webrtc_offer: {e}")
+                    else:
+                        logger.warning(f"webrtc_offer: no desktop session found for session_id={session_id}, available={list(desktop_sessions.keys())}")
 
                 elif msg_type == "webrtc_ice":
                     # Agent sent ICE candidate — relay to browser
                     session_id = parsed.get("session_id")
+                    logger.warning(f"webrtc_ice from agent {agent_id}, session_id={session_id}")
                     session = desktop_sessions.get(session_id)
                     if session and session.get("browser_ws"):
                         try:
@@ -144,6 +149,18 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
 
                 elif msg_type == "webrtc_error":
                     # Agent reported WebRTC error
+                    session_id = parsed.get("session_id")
+                    session = desktop_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception:
+                            pass
+
+                elif msg_type == "webrtc_log":
+                    # Agent sent diagnostic log (for debugging)
+                    logger.warning(f"[WebRTC Log] session={parsed.get('session_id')}: {parsed.get('message')}")
+                    # Also relay to browser for console visibility
                     session_id = parsed.get("session_id")
                     session = desktop_sessions.get(session_id)
                     if session and session.get("browser_ws"):

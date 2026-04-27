@@ -77,7 +77,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     wsRef.current = ws
 
     ws.onopen = () => {
-      // Backend will send session_start with TURN creds, then signal agent
+      console.log('[RemoteDesktop] WS opened, waiting for session_start...')
     }
 
     ws.onmessage = async (event) => {
@@ -87,6 +87,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
         switch (msg.type) {
           case 'session_start': {
             // Backend sent session ID + TURN credentials
+            console.log('[RemoteDesktop] Got session_start, session_id:', msg.session_id, 'turn_urls:', msg.turn?.urls)
             sessionIdRef.current = msg.session_id
             // Store TURN credentials for PeerConnection creation
             turnCredsRef.current = msg.turn || null
@@ -96,6 +97,8 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
 
           case 'webrtc_offer': {
             // Agent sent SDP offer — create RTCPeerConnection and answer
+            console.log('[RemoteDesktop] Received webrtc_offer, session_id:', msg.session_id, 'sdp length:', msg.sdp?.length, 'type_:', msg.type_)
+            try {
             const turnCreds: TurnCredentials = turnCredsRef.current || { urls: [], username: '', password: '' }
 
             // Create RTCPeerConnection with TURN servers
@@ -119,6 +122,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
 
             // Handle video track
             pc.ontrack = (ev) => {
+              console.log('[RemoteDesktop] Got remote track:', ev.track.kind, ev.streams.length)
               if (videoRef.current && ev.streams[0]) {
                 videoRef.current.srcObject = ev.streams[0]
               }
@@ -126,17 +130,19 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
 
             // Handle data channel (agent creates it)
             pc.ondatachannel = (ev) => {
+              console.log('[RemoteDesktop] Got data channel:', ev.channel.label)
               const channel = ev.channel
               dcRef.current = channel
 
               channel.onopen = () => {
+                console.log('[RemoteDesktop] DataChannel open')
                 setConnected(true)
                 setConnecting(false)
                 setError(null)
               }
 
               channel.onclose = () => {
-                // DataChannel closed
+                console.log('[RemoteDesktop] DataChannel closed')
               }
 
               channel.onmessage = (e) => {
@@ -164,6 +170,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             // Connection state changes
             pc.onconnectionstatechange = () => {
               const state = pc.connectionState
+              console.log('[RemoteDesktop] Connection state:', state)
               if (state === 'connected') {
                 setConnected(true)
                 setConnecting(false)
@@ -176,23 +183,38 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             }
 
             // Set remote description (agent's offer)
-            await pc.setRemoteDescription({
+            console.log('[RemoteDesktop] Setting remote description, type:', msg.type_)
+            await pc.setRemoteDescription(new RTCSessionDescription({
               sdp: msg.sdp,
               type: msg.type_ as RTCSdpType,
-            })
+            }))
+            console.log('[RemoteDesktop] Remote description set successfully')
 
             // Create answer
+            console.log('[RemoteDesktop] Creating answer...')
             const answer = await pc.createAnswer()
+            console.log('[RemoteDesktop] Answer created, type:', answer.type, 'sdp length:', answer.sdp?.length)
             await pc.setLocalDescription(answer)
+            console.log('[RemoteDesktop] Local description set')
 
             // Send answer back via signaling WS
-            ws.send(JSON.stringify({
-              type: 'webrtc_answer',
-              session_id: sessionIdRef.current,
-              sdp: pc.localDescription!.sdp,
-              type_: pc.localDescription!.type,
-            }))
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: 'webrtc_answer',
+                session_id: sessionIdRef.current,
+                sdp: pc.localDescription!.sdp,
+                type_: pc.localDescription!.type,
+              }))
+              console.log('[RemoteDesktop] Sent webrtc_answer')
+            } else {
+              console.error('[RemoteDesktop] WS not open, cannot send answer')
+              setError('Signaling connection lost')
+            }
 
+            } catch (webrtcErr) {
+              console.error('[RemoteDesktop] WebRTC setup error:', webrtcErr)
+              setError(`WebRTC setup failed: ${webrtcErr instanceof Error ? webrtcErr.message : String(webrtcErr)}`)
+            }
             break
           }
 
@@ -221,6 +243,11 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             break
           }
 
+          case 'webrtc_log': {
+            console.log('[WebRTC Agent Log]', msg.message)
+            break
+          }
+
           case 'ping': {
             // Latency measurement
             ws.send(JSON.stringify({ type: 'pong' }))
@@ -238,12 +265,13 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     }
 
     ws.onclose = (event) => {
+      console.log('[RemoteDesktop] WS closed, code:', event.code, 'reason:', event.reason)
       setConnecting(false)
       setConnected(false)
       if (event.code === 4003) setError('Agent is offline')
       else if (event.code === 4004) setError('Agent not found')
       else if (event.code === 4001) setError('Authentication failed')
-      else if (!error) setError('Connection closed')
+      else setError('Connection closed')
     }
 
     ws.onerror = () => {

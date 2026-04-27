@@ -11,15 +11,15 @@ A modern, open-source Remote Monitoring and Management platform for MSPs.
 | **Database** | PostgreSQL 15 | 5432 |
 | **Cache** | Redis 7 | 6379 |
 | **Message Queue** | NATS 2 | 4222 |
-| **Remote Desktop** | MeshCentral (embedded) | 4430 |
+| **Remote Desktop** | Custom WebRTC (aiortc) | — |
 | **Reverse Proxy** | Nginx | 80/443 |
 
 ## Features
 
 - **Agent Management** — Lightweight Python agent with auto-update, heartbeat, and system monitoring
 - **Remote Terminal** — WebSocket-based terminal access through the OpenRMM UI
-- **Remote Desktop** — MeshCentral integration, fully embedded in OpenRMM (no separate login)
-- **Auto-Install** — MeshCentral agent is automatically downloaded and configured by the OpenRMM agent
+- **Remote Desktop** — Custom WebRTC remote desktop with full mouse/keyboard control, no third-party dependencies
+- **Auto-Install** — Agent installer automatically sets up the OpenRMM agent as a Windows scheduled task
 - **Monitoring** — CPU, RAM, disk, services, and custom checks
 - **Patch Management** — Track and manage software updates
 - **Alert System** — Real-time alerts via WebSocket
@@ -40,8 +40,8 @@ cp .env.example .env
 docker compose up -d
 
 # Access
-# Frontend: https://rmmapp.derfwins.com (or http://localhost)
-# API Docs: https://rmmapp.derfwins.com/docs
+# Frontend: https://openrmm.derfwins.com (or http://localhost)
+# API Docs: https://openrmm.derfwins.com/docs
 ```
 
 ### Default Login
@@ -55,7 +55,7 @@ docker compose up -d
 Download `install.ps1` and `openrmm-agent.py` from the server, then:
 
 ```powershell
-.\install.ps1 -Server https://rmmapp.derfwins.com -ClientId 1 -SiteId 1
+.\install.ps1 -Server https://openrmm.derfwins.com -ClientId 1 -SiteId 1
 ```
 
 The installer:
@@ -68,9 +68,7 @@ The installer:
 
 On first startup, the OpenRMM agent automatically:
 - Registers with the server and receives an agent ID
-- **Downloads and installs the MeshCentral remote access agent** (no manual steps)
-- The MeshCentral agent connects via `wss://<server>/agent.ashx` through nginx
-- Device appears in the "Managed Devices" group in MeshCentral
+- Connects via WebSocket for real-time communication
 - Enables remote desktop and terminal access through the OpenRMM UI
 
 ### Agent Auto-Update
@@ -83,13 +81,6 @@ The agent checks for updates on every heartbeat. Bumping `AGENT_VERSION` in the 
 |------|--------|---------|
 | `/v2/` | Backend | API endpoints |
 | `/ws/` | Backend (WebSocket) | Agent & browser real-time |
-| `/mesh/api/` | Backend | MeshCentral API proxy |
-| `/mesh/` | MeshCentral UI | Embedded remote desktop |
-| `/meshws/` | MeshCentral (WebSocket) | MeshCentral WS |
-| `/agent.ashx` | MeshCentral (WebSocket) | Agent connection |
-| `/meshagents` | MeshCentral | Agent binary downloads |
-| `/meshagents.ashx` | MeshCentral | Agent binary downloads |
-| `/agentinvite` | MeshCentral | Agent invite page |
 | `/` | Frontend (Vite) | SPA |
 
 ## API Endpoints
@@ -100,12 +91,33 @@ The agent checks for updates on every heartbeat. Bumping `AGENT_VERSION` in the 
 | `POST /v2/login/` | POST | Full login with optional 2FA |
 | `GET /agents/` | GET | List all agents |
 | `POST /agents/heartbeat/` | POST | Agent heartbeat |
-| `GET /mesh/api/download-agent/` | GET | Download MeshCentral agent |
-| `GET /mesh/api/download-configured-agent/` | GET | Download pre-configured MeshCentral agent |
-| `GET /mesh/api/mesh-config/` | GET | Get MeshCentral mesh configuration |
-| `GET /mesh/api/sso-token/` | GET | Generate MeshCentral SSO token |
+| `GET /v2/desktop/{agent_id}/` | GET | WebRTC desktop signaling |
 
 Full interactive docs at `/docs` (Swagger UI).
+
+## Remote Desktop
+
+OpenRMM includes a custom-built WebRTC remote desktop system — no third-party remote desktop tools required.
+
+### How it works
+
+1. OpenRMM agent runs on the Windows device as a SYSTEM scheduled task
+2. When a user clicks "Remote Desktop" in the UI, the browser establishes a WebRTC peer connection via the backend signaling channel
+3. The agent launches a capture helper process in the interactive user session (using `WTSQueryUserToken` + `CreateProcessAsUserW`) which captures the screen via BitBlt and streams H.264 video over WebRTC
+4. A separate input helper process (also in the user session) receives mouse/keyboard events from the browser via DataChannel and injects them via `SendInput`
+5. Both helper processes use `pythonw.exe` with `CREATE_NO_WINDOW` so no console windows appear
+
+### Key components
+
+- **webrtc_desktop.py** — Main WebRTC handler: SDP offer/answer, ICE candidates, screen capture track, DataChannel input relay
+- **input_helper.py** — Runs in the user session, listens on named pipe `\\.\pipe\openrmm_input`, calls `SendInput` for mouse/keyboard events
+- **RemoteDesktop.tsx** — Frontend React component with WebRTC peer connection, DataChannel input handling, and TURN server configuration
+
+### Requirements
+
+- **Virtual Display Driver** (e.g., MttVDD/IddSampleDriver) for headless servers — provides a virtual display when no physical monitor is attached
+- **TURN server** (Coturn) for NAT traversal — relay candidates for browsers and agents behind NAT
+- **Windows** — screen capture and input injection currently Windows-only
 
 ## Project Structure
 
@@ -120,14 +132,15 @@ openrmm/
 │   │   ├── models/         # SQLAlchemy models
 │   │   └── routers/        # API route handlers
 │   │       ├── agents.py   # Agent CRUD & heartbeat
-│   │       ├── mesh.py     # MeshCentral integration
 │   │       ├── terminal.py # Remote terminal WebSocket
-│   │       ├── desktop.py  # Remote desktop (MeshCentral)
+│   │       ├── desktop.py  # Remote desktop (WebRTC signaling)
 │   │       └── monitoring.py # Monitoring & alerts
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── agent/                  # Python agent (runs on managed devices)
 │   ├── openrmm-agent.py    # Main agent script
+│   ├── webrtc_desktop.py   # WebRTC remote desktop handler
+│   ├── input_helper.py     # Input injection helper (user session)
 │   ├── install.ps1         # Windows installer
 │   ├── install.sh          # Linux installer
 │   └── requirements.txt
@@ -141,7 +154,6 @@ openrmm/
 │   └── package.json
 ├── docker/
 │   ├── nginx/nginx.conf    # Reverse proxy config
-│   ├── meshcentral/        # MeshCentral config & setup
 │   └── postgres/           # DB init scripts
 ├── docker-compose.yml      # Full stack deployment
 └── .env                    # Environment variables
@@ -156,28 +168,9 @@ openrmm/
 | `REDIS_HOST` | localhost | Redis host |
 | `SECRET_KEY` | (dev key) | JWT signing key |
 | `DEBUG` | True | Debug mode |
-| `MESH_SERVER_URL` | https://rmmapp.derfwins.com | MeshCentral external URL |
-| `MESH_INTERNAL_URL` | http://meshcentral:4430 | MeshCentral internal URL |
-| `MESH_LOGIN_TOKEN_KEY` | (empty) | MeshCentral admin login key |
-| `MESH_MESH_ID` | (empty) | MeshCentral device group mesh ID |
-
-## MeshCentral Integration
-
-OpenRMM embeds MeshCentral for remote desktop and terminal access. The integration is seamless — users never see or interact with MeshCentral directly.
-
-### How it works
-
-1. OpenRMM agent downloads a **pre-configured MeshCentral agent EXE** (with meshid baked in)
-2. The agent installs it as a Windows service (`Mesh Agent`)
-3. MeshAgent connects to `wss://<server>/agent.ashx` (proxied through nginx to MeshCentral)
-4. The device appears in MeshCentral's "Managed Devices" group
-5. OpenRMM's UI embeds MeshCentral via iframe with SSO for remote desktop
-
-### Key endpoints
-
-- `/mesh/api/download-configured-agent/` — Serves the pre-configured agent EXE (generated by MeshCentral with meshid)
-- `/mesh/api/mesh-config/` — Returns mesh configuration (MeshID, ServerID) for .msh files
-- `/mesh/api/sso-token/` — Generates SSO tokens for iframe embedding
+| `TURN_SERVER_URL` | (none) | TURN server URL for WebRTC |
+| `TURN_USERNAME` | (none) | TURN server username |
+| `TURN_PASSWORD` | (none) | TURN server password |
 
 ## License
 

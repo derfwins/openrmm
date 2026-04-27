@@ -2,8 +2,9 @@
 
 ## Supported Versions
 
-[Latest](https://github.com/amidaware/tacticalrmm/releases/latest) release
+[Latest](https://github.com/derfwins/openrmm/releases/latest) release
 
 ## Reporting a Vulnerability
 
-https://docs.tacticalrmm.com/security
+Please open a GitHub issue or contact security@derfwins.com to report security vulnerabilities.
+Do not publicly disclose vulnerabilities before they have been addressed.

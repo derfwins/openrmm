@@ -288,6 +288,23 @@ async def generate_installer(
     return PlainTextResponse(script)
 
 
+@router.get("/download/webrtc_desktop.py")
+async def download_webrtc_desktop():
+    """Download the WebRTC desktop module."""
+    import os
+    possible_paths = [
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent", "webrtc_desktop.py")),
+        "/app/agent/webrtc_desktop.py",
+        "/opt/openrmm/agent/webrtc_desktop.py",
+    ]
+    for path in possible_paths:
+        if os.path.isfile(path):
+            from fastapi.responses import FileResponse
+            return FileResponse(path, media_type="text/x-python", filename="webrtc_desktop.py")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="webrtc_desktop.py not found")
+
+
 @router.get("/download/openrmm-agent.py")
 async def download_agent():
     """Download the agent Python script."""
