@@ -2164,6 +2164,11 @@ class ScreenCaptureTrack(MediaStreamTrack):
         if frame_array is None:
             frame_array = np.zeros((self._capture.height, self._capture.width, 3), dtype=np.uint8)
 
+        # H.264 requires even dimensions — crop if odd
+        h, w = frame_array.shape[:2]
+        if h % 2 != 0 or w % 2 != 0:
+            frame_array = frame_array[:h - h % 2, :w - w % 2]
+
         video_frame = av.VideoFrame.from_ndarray(frame_array, format="rgb24")
 
         self._frame_counter += 1
