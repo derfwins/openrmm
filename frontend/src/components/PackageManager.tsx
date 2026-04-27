@@ -55,7 +55,7 @@ const PackageManager = () => {
         status: (d.status || 'offline') as string,
       })))
       // Auto-select first online agent
-      const online = devList.filter(d => d.status === 'online' || d.status === 'Online')
+      const online = devList.filter((d: any) => d.status === 'online' || d.status === 'Online')
       if (online.length > 0) setSelectedAgent(String(online[0].id || online[0].agent_id || ''))
     } catch {
       setDevices([])
