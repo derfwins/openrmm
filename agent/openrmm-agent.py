@@ -2565,6 +2565,10 @@ async def ws_agent_connect(server: str, agent_id: str):
                                                 "manager": "winget",
                                             })
                                 # winget often returns non-zero even with results
+                                if not packages:
+                                    combined = (result.stdout + result.stderr).lower()
+                                    if not result.stdout.strip() or "no packages found" in combined:
+                                        return packages, "Winget returned no results. Winget may not be available when running as SYSTEM. Try using Chocolatey instead.", result.returncode
                                 return packages, result.stdout, 0 if packages else result.returncode
                             else:  # chocolatey — use full path to ensure SYSTEM can find it
                                 choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')

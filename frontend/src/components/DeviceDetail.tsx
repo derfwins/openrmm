@@ -24,7 +24,7 @@ const DeviceDetail = () => {
   const [serviceActionLoading, setServiceActionLoading] = useState<string | null>(null)
 
   // Software tab state
-  const [pkgManager, setPkgManager] = useState<'winget' | 'chocolatey'>('winget')
+  const [pkgManager, setPkgManager] = useState<'winget' | 'chocolatey'>('chocolatey')
   const [pkgSearchQuery, setPkgSearchQuery] = useState('')
   const [pkgSearchResults, setPkgSearchResults] = useState<any[]>([])
   const [pkgSearchLoading, setPkgSearchLoading] = useState(false)
@@ -586,7 +586,7 @@ const DeviceDetail = () => {
                     className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   >
                     <option value="winget">{<><IconWindows size={14} /> Winget</>}</option>
-                    <option value="chocolatey">🍫 Chocolatey</option>
+                    <option value="chocolatey">Chocolatey</option>
                   </select>
                   <button
                     onClick={handlePkgListInstalled}
