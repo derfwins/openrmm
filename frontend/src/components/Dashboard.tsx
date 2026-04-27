@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
-import { IconCheck } from './Icons'
+import { IconCheck, IconMonitor, IconOnline, IconOffline, IconAlerts, IconWindows, IconLinux, IconApple, IconPackage, IconRocket, IconScripts, IconBell, IconRefresh, IconSettings } from './Icons'
 
 interface DashboardStats {
   totalAgents: number
@@ -137,7 +137,9 @@ const Dashboard = () => {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center space-y-4">
-          <div className="text-5xl">⚠️</div>
+          <div className="flex items-center justify-center w-16 h-16 rounded-full bg-red-900/30 mb-2">
+            <IconAlerts size={32} className="text-red-400" />
+          </div>
           <p className="text-gray-300 text-lg">{error}</p>
           <button
             onClick={loadDashboard}
@@ -166,16 +168,16 @@ const Dashboard = () => {
           onClick={loadDashboard}
           className="px-4 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors text-gray-300 flex items-center gap-2"
         >
-          <span>↻</span> Refresh
+          <IconRefresh size={14} /> Refresh
         </button>
       </div>
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Agents" value={stats.totalAgents} icon="💻" gradient="from-blue-600 to-indigo-700" link="/devices" />
-        <StatCard title="Online" value={stats.onlineAgents} icon="🟢" gradient="from-emerald-600 to-green-700" link="/devices?filter=online" />
-        <StatCard title="Offline" value={stats.offlineAgents} icon="🔴" gradient="from-red-600 to-rose-700" link="/devices?filter=offline" />
-        <StatCard title="Alerts" value={stats.totalAlerts} icon="⚠️" gradient="from-amber-600 to-orange-700" link="/alerts" />
+        <StatCard title="Total Agents" value={stats.totalAgents} icon={<IconMonitor size={22} />} gradient="from-blue-600 to-indigo-700" link="/devices" />
+        <StatCard title="Online" value={stats.onlineAgents} icon={<IconOnline size={22} />} gradient="from-emerald-600 to-green-700" link="/devices?filter=online" />
+        <StatCard title="Offline" value={stats.offlineAgents} icon={<IconOffline size={22} />} gradient="from-red-600 to-rose-700" link="/devices?filter=offline" />
+        <StatCard title="Alerts" value={stats.totalAlerts} icon={<IconAlerts size={22} />} gradient="from-amber-600 to-orange-700" link="/alerts" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -183,10 +185,10 @@ const Dashboard = () => {
         <div className="bg-gray-800 rounded-xl border border-gray-700 p-5">
           <h2 className="text-sm font-semibold text-white mb-4">Agent Platforms</h2>
           <div className="space-y-3">
-            <PlatformBar label="Windows" count={platforms.windows} total={stats.totalAgents} color="bg-blue-500" icon="🪟" />
-            <PlatformBar label="Linux" count={platforms.linux} total={stats.totalAgents} color="bg-yellow-500" icon="🐧" />
-            <PlatformBar label="macOS" count={platforms.mac} total={stats.totalAgents} color="bg-gray-400" icon="🍎" />
-            <PlatformBar label="Other" count={platforms.other} total={stats.totalAgents} color="bg-purple-500" icon="📦" />
+            <PlatformBar label="Windows" count={platforms.windows} total={stats.totalAgents} color="bg-blue-500" icon={<IconWindows size={14} />} />
+            <PlatformBar label="Linux" count={platforms.linux} total={stats.totalAgents} color="bg-yellow-500" icon={<IconLinux size={14} />} />
+            <PlatformBar label="macOS" count={platforms.mac} total={stats.totalAgents} color="bg-gray-400" icon={<IconApple size={14} />} />
+            <PlatformBar label="Other" count={platforms.other} total={stats.totalAgents} color="bg-purple-500" icon={<IconPackage size={14} />} />
           </div>
 
           {/* System Health */}
@@ -222,9 +224,7 @@ const Dashboard = () => {
               {alerts.map((alert) => (
                 <div key={alert.id} className="px-5 py-3 hover:bg-gray-750 transition-colors">
                   <div className="flex items-start gap-3">
-                    <span className="text-sm mt-0.5">
-                      {alert.severity === 'critical' ? '🔴' : alert.severity === 'warning' ? '🟡' : '🔵'}
-                    </span>
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${alert.severity === 'critical' ? 'bg-red-500' : alert.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'}`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-gray-200 truncate">{alert.message || alert.alert_type}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
@@ -243,10 +243,10 @@ const Dashboard = () => {
         <div className="bg-gray-800 rounded-xl border border-gray-700 p-5">
           <h2 className="text-sm font-semibold text-white mb-4">Quick Actions</h2>
           <div className="space-y-2">
-            <ActionCard icon="🚀" label="Deploy Agent" desc="Install on a new device" link="/devices" />
-            <ActionCard icon="📜" label="Run Script" desc="Execute on agents" link="/scripts" />
-            <ActionCard icon="🔔" label="View Alerts" desc={`${stats.totalAlerts} unresolved`} link="/alerts" />
-            <ActionCard icon="🔧" label="Check Patches" desc="Windows updates" link="/patches" />
+            <ActionCard icon={<IconRocket size={18} />} label="Deploy Agent" desc="Install on a new device" link="/devices" />
+            <ActionCard icon={<IconScripts size={18} />} label="Run Script" desc="Execute on agents" link="/scripts" />
+            <ActionCard icon={<IconBell size={18} />} label="View Alerts" desc={`${stats.totalAlerts} unresolved`} link="/alerts" />
+            <ActionCard icon={<IconSettings size={18} />} label="Check Patches" desc="Windows updates" link="/patches" />
           </div>
         </div>
       </div>
@@ -257,7 +257,7 @@ const Dashboard = () => {
 // ── Sub-components ──
 
 const StatCard = ({ title, value, icon, gradient, link }: {
-  title: string; value: number; icon: string; gradient: string; link: string
+  title: string; value: number; icon: React.ReactNode; gradient: string; link: string
 }) => (
   <Link to={link} className="bg-gray-800 rounded-xl border border-gray-700 p-5 hover:border-gray-600 transition-all hover:-translate-y-0.5">
     <div className="flex items-center justify-between">
@@ -265,7 +265,7 @@ const StatCard = ({ title, value, icon, gradient, link }: {
         <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">{title}</p>
         <p className="text-3xl font-bold text-white mt-1">{value}</p>
       </div>
-      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center text-xl shadow-lg`}>
+      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shadow-lg`}>
         {icon}
       </div>
     </div>
@@ -273,7 +273,7 @@ const StatCard = ({ title, value, icon, gradient, link }: {
 )
 
 const PlatformBar = ({ label, count, total, color, icon }: {
-  label: string; count: number; total: number; color: string; icon: string
+  label: string; count: number; total: number; color: string; icon: React.ReactNode
 }) => {
   const pct = total > 0 ? (count / total) * 100 : 0
   return (
@@ -298,13 +298,13 @@ const HealthIndicator = ({ name, ok }: { name: string; ok?: boolean }) => (
 )
 
 const ActionCard = ({ icon, label, desc, link }: {
-  icon: string; label: string; desc: string; link: string
+  icon: React.ReactNode; label: string; desc: string; link: string
 }) => (
   <Link
     to={link}
     className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-700 transition-colors group"
   >
-    <span className="text-xl">{icon}</span>
+    <span className="text-lg w-6 h-6 flex items-center justify-center">{icon}</span>
     <div>
       <p className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors">{label}</p>
       <p className="text-xs text-gray-500">{desc}</p>

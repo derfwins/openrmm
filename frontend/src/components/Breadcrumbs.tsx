@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom'
+import { IconChevronRight } from './Icons'
 
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -9,7 +10,6 @@ const routeLabels: Record<string, string> = {
   alerts: 'Alerts',
   scripts: 'Scripts',
   automation: 'Automation',
-  software: 'Software',
   patches: 'Patches',
   install: 'Install Agent',
   settings: 'Settings',
@@ -41,13 +41,13 @@ const Breadcrumbs = () => {
         const isLast = i === crumbs.length - 1
         return (
           <span key={crumb.path} className="flex items-center gap-1">
-            {i > 0 && <span className="text-gray-600">&gt;</span>}
+            {i > 0 && <IconChevronRight size={10} className="text-gray-400 dark:text-gray-600" />}
             {isLast ? (
-              <span className="text-gray-300">{crumb.label}</span>
+              <span className="text-gray-800 dark:text-gray-300 font-medium">{crumb.label}</span>
             ) : (
               <button
                 onClick={() => navigate(crumb.path)}
-                className="text-gray-500 hover:text-white transition-colors"
+                className="text-gray-500 dark:text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors"
               >
                 {crumb.label}
               </button>

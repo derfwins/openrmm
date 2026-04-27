@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
-import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconPower } from './Icons'
+import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconPower, IconWrench, IconSettings, IconCpu, IconZap, IconUserIcon } from './Icons'
 import RemoteDesktop from './RemoteDesktop'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 
 const DeviceDetail = () => {
   const { id } = useParams<{ id: string }>()
@@ -35,6 +36,9 @@ const DeviceDetail = () => {
   const [pkgActionOutput, setPkgActionOutput] = useState<{ pkg: string; output: string; success: boolean } | null>(null)
   const [pkgInstallArgs, setPkgInstallArgs] = useState('')
   const [pkgShowArgsModal, setPkgShowArgsModal] = useState<string | null>(null)
+
+  // Escape key for modals
+  useEscapeKey(() => setPkgShowArgsModal(null), !!pkgShowArgsModal)
 
   useEffect(() => {
     if (id) loadAgent()
@@ -502,11 +506,11 @@ const DeviceDetail = () => {
               <div className="space-y-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Activity</h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Services" value={services.length || '—'} icon="wrench" />
-                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon="cog" />
-                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon="cpu" />
-                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon="ram" />
-                  <MiniStat label="Logged-in Users" value={users.length || '—'} icon="user" />
+                  <MiniStat label="Services" value={services.length || '—'} icon={<IconWrench size={18} />} />
+                  <MiniStat label="Processes" value={agent.running_processes ?? '—'} icon={<IconSettings size={18} />} />
+                  <MiniStat label="CPU Usage" value={`${cpuPct.toFixed(1)}%`} icon={<IconCpu size={18} />} />
+                  <MiniStat label="Memory Usage" value={`${memPct.toFixed(1)}%`} icon={<IconZap size={18} />} />
+                  <MiniStat label="Logged-in Users" value={users.length || '—'} icon={<IconUserIcon size={18} />} />
                 </div>
                 {users.length > 0 && (
                   <div>
@@ -554,7 +558,7 @@ const DeviceDetail = () => {
                     onChange={e => setPkgManager(e.target.value as 'winget' | 'chocolatey')}
                     className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   >
-                    <option value="winget">🪟 Winget</option>
+                    <option value="winget">{<><IconWindows size={14} /> Winget</>}</option>
                     <option value="chocolatey">🍫 Chocolatey</option>
                   </select>
                   <button
@@ -562,7 +566,7 @@ const DeviceDetail = () => {
                     disabled={!isActive || pkgInstalledLoading}
                     className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
-                    {pkgInstalledLoading ? 'Loading...' : '📋 List Installed'}
+                    {pkgInstalledLoading ? 'Loading...' : 'List Installed'}
                   </button>
                 </div>
               </div>
@@ -596,7 +600,7 @@ const DeviceDetail = () => {
                                 onClick={() => handlePkgUninstall(pkg)}
                                 disabled={pkgUninstalling === pkg.id}
                                 className="px-2 py-0.5 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50"
-                              >{pkgUninstalling === pkg.id ? 'Removing...' : '🗑️ Remove'}</button>
+                              >{pkgUninstalling === pkg.id ? 'Removing...' : 'Remove'}</button>
                             </td>
                           </tr>
                         ))}
@@ -609,7 +613,7 @@ const DeviceDetail = () => {
               {/* Search bar */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><IconSearch size={14} /></span>
                   <input
                     value={pkgSearchQuery}
                     onChange={e => setPkgSearchQuery(e.target.value)}
@@ -706,9 +710,9 @@ const DeviceDetail = () => {
               {/* Custom install args modal */}
               {pkgShowArgsModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setPkgShowArgsModal(null)}>
-                  <div className="fixed inset-0 bg-black/60" />
-                  <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-md w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">⚙️ Custom Install Arguments</h3>
+                  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm modal-backdrop" />
+                  <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-md w-full mx-4 p-6 modal-content" onClick={e => e.stopPropagation()}>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2"><IconSettings size={16} className="inline mr-1" /> Custom Install Arguments</h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Package: <span className="text-gray-900 dark:text-white font-mono">{pkgShowArgsModal}</span></p>
                     <input
                       value={pkgInstallArgs}
@@ -856,14 +860,10 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
-const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: string }) => (
+const MiniStat = ({ label, value, icon }: { label: string; value: any; icon: React.ReactNode }) => (
   <div className="bg-gray-50 dark:bg-gray-750 rounded-lg p-3 flex items-center gap-3">
-    <div className="text-lg">
-      {icon === 'wrench' && '🔧'}
-      {icon === 'cog' && '⚙️'}
-      {icon === 'cpu' && '🔥'}
-      {icon === 'ram' && '🧠'}
-      {icon === 'user' && '👤'}
+    <div className="text-blue-400">
+      {icon}
     </div>
     <div>
       <p className="text-lg font-bold text-gray-900 dark:text-white">{value}</p>

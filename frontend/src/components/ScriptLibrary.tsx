@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import apiService from '../services/apiService'
+import { IconSearch, IconPlay, IconCopy, IconEdit, IconTrash, IconCheck, IconWindows, IconLinux, IconRefresh, IconPackage, IconTerminal, IconZap, IconGlobe, IconShield, IconBook, IconSparkles, IconUsers, IconWrench } from './Icons'
+import { useEscapeKey } from '../hooks/useEscapeKey'
 
 type ShellType = 'powershell' | 'bash' | 'python'
 type CategoryType = 'Community' | 'Custom' | 'AI-Generated' | 'Diagnostics' | 'Network' | 'Cleanup' | 'Repair' | 'Security' | 'Power Management'
@@ -26,10 +28,10 @@ const CATEGORIES: CategoryType[] = ['Community', 'Custom', 'AI-Generated', 'Diag
 
 const shellIcon = (shell: string) => {
   switch (shell) {
-    case 'powershell': case 'cmd': return '🪟'
-    case 'bash': case 'shell': return '🐧'
-    case 'python': case 'py': return '🐍'
-    default: return '📝'
+    case 'powershell': case 'cmd': return <IconWindows size={14} />
+    case 'bash': case 'shell': return <IconLinux size={14} />
+    case 'python': case 'py': return <IconTerminal size={14} />
+    default: return <IconPackage size={14} />
   }
 }
 
@@ -47,18 +49,18 @@ const categoryColor = (cat: string) => {
   }
 }
 
-const categoryEmoji = (cat: string) => {
+const categoryIcon = (cat: string) => {
   switch (cat) {
-    case 'Community': return '👥'
-    case 'Custom': return '✏️'
-    case 'AI-Generated': return '🤖'
-    case 'Diagnostics': return '🔍'
-    case 'Network': return '🌐'
-    case 'Cleanup': return '🧹'
-    case 'Repair': return '🔧'
-    case 'Security': return '🛡️'
-    case 'Power Management': return '⚡'
-    default: return '📦'
+    case 'Community': return <IconUsers size={14} />
+    case 'Custom': return <IconEdit size={14} />
+    case 'AI-Generated': return <IconSparkles size={14} />
+    case 'Diagnostics': return <IconSearch size={14} />
+    case 'Network': return <IconGlobe size={14} />
+    case 'Cleanup': return <IconRefresh size={14} />
+    case 'Repair': return <IconWrench size={14} />
+    case 'Security': return <IconShield size={14} />
+    case 'Power Management': return <IconZap size={14} />
+    default: return <IconPackage size={14} />
   }
 }
 
@@ -97,6 +99,11 @@ const ScriptLibrary = () => {
   const [selectedAgents, setSelectedAgents] = useState<string[]>([])
   const [runLoading, setRunLoading] = useState(false)
   const [runOutput, setRunOutput] = useState('')
+
+  // Escape key handlers for modals
+  useEscapeKey(() => setShowEditor(false), showEditor)
+  useEscapeKey(() => setShowDelete(false), showDelete)
+  useEscapeKey(() => setShowRun(false), showRun)
 
   const loadData = useCallback(async () => {
     try {
@@ -231,8 +238,8 @@ const ScriptLibrary = () => {
           <p className="text-gray-400 text-sm mt-1">{scripts.length} scripts available</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={loadData} className="px-4 py-2 text-sm bg-gray-800 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors">
-            ↻ Refresh
+          <button onClick={loadData} className="px-4 py-2 text-sm bg-gray-800 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-1.5">
+            <IconRefresh size={14} /> Refresh
           </button>
           <button onClick={openCreate} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
             + New Script
@@ -243,7 +250,7 @@ const ScriptLibrary = () => {
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
-          <span className="absolute left-3 top-2.5 text-gray-500">🔍</span>
+          <span className="absolute left-3 top-2.5 text-gray-500"><IconSearch size={14} /></span>
           <input
             type="text"
             placeholder="Search scripts..."
@@ -266,7 +273,7 @@ const ScriptLibrary = () => {
           className="px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-gray-300 focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Categories</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{categoryEmoji(c)} {c}</option>)}
+          {CATEGORIES.map(c => <option key={c} value={c}>{categoryIcon(c)} {c}</option>)}
         </select>
       </div>
 
@@ -277,8 +284,8 @@ const ScriptLibrary = () => {
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent mx-auto" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="p-8 text-center">
-            <div className="text-4xl mb-3">📜</div>
+            <div className="p-8 text-center">
+              <div className="mb-3 flex justify-center"><IconBook size={32} className="text-gray-600" /></div>
             <p className="text-sm text-gray-400">
               {scripts.length === 0 ? 'No scripts yet. Create one to get started.' : 'No scripts match your filters'}
             </p>
@@ -298,7 +305,7 @@ const ScriptLibrary = () => {
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-medium text-white truncate">{script.name}</h3>
                           <span className={`px-2 py-0.5 text-xs rounded ${categoryColor(script.category)}`}>
-                            {categoryEmoji(script.category || 'Custom')} {script.category || 'Custom'}
+                            {categoryIcon(script.category || 'Custom')} {script.category || 'Custom'}
                           </span>
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{script.description || 'No description'}</p>
@@ -315,30 +322,30 @@ const ScriptLibrary = () => {
                       )}
                       <button
                         onClick={() => handleCopy(script)}
-                        className="px-2 py-1.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                        className="px-2 py-1.5 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors flex items-center gap-1"
                         title="Copy script"
                       >
-                        {copyFeedback === script.id ? '✓' : '📋'}
+                        {copyFeedback === script.id ? <IconCheck size={12} className="text-green-400" /> : <IconCopy size={12} />}
                       </button>
                       <button
                         onClick={() => openRun(script)}
-                        className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1"
                       >
-                        ▶ Run
+                        <IconPlay size={12} /> Run
                       </button>
                       <button
                         onClick={() => openEdit(script)}
                         className="px-2 py-1.5 text-xs bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
                         title="Edit"
                       >
-                        ✏️
+                        <IconEdit size={12} />
                       </button>
                       <button
                         onClick={() => { setDeletingScript(script); setShowDelete(true) }}
                         className="px-2 py-1.5 text-xs bg-gray-700 text-red-400 rounded-lg hover:bg-red-900/50 transition-colors"
                         title="Delete"
                       >
-                        🗑️
+                        <IconTrash size={12} />
                       </button>
                     </div>
                   </div>
@@ -363,8 +370,8 @@ const ScriptLibrary = () => {
 
       {/* Create/Edit Modal */}
       {showEditor && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowEditor(false)}>
-          <div className="bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm modal-backdrop flex items-center justify-center z-50" onClick={() => setShowEditor(false)}>
+          <div className="bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto modal-content" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-700">
               <h3 className="text-lg font-semibold text-white">{editingScript ? 'Edit Script' : 'New Script'}</h3>
             </div>
@@ -403,7 +410,7 @@ const ScriptLibrary = () => {
                     onChange={e => setForm({ ...form, category: e.target.value as CategoryType })}
                     className="w-full px-3 py-2 text-sm bg-gray-900 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
                   >
-                    {CATEGORIES.map(c => <option key={c} value={c}>{categoryEmoji(c)} {c}</option>)}
+                    {CATEGORIES.map(c => <option key={c} value={c}>{categoryIcon(c)} {c}</option>)}
                   </select>
                 </div>
                 <div className="w-24">
@@ -446,8 +453,8 @@ const ScriptLibrary = () => {
 
       {/* Delete Confirmation Modal */}
       {showDelete && deletingScript && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowDelete(false)}>
-          <div className="bg-gray-800 rounded-xl shadow-xl max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm modal-backdrop flex items-center justify-center z-50" onClick={() => setShowDelete(false)}>
+          <div className="bg-gray-800 rounded-xl shadow-xl max-w-md w-full mx-4 modal-content" onClick={e => e.stopPropagation()}>
             <div className="p-5">
               <h3 className="text-lg font-semibold text-white mb-2">Delete Script</h3>
               <p className="text-sm text-gray-400">
@@ -468,8 +475,8 @@ const ScriptLibrary = () => {
 
       {/* Run Script Modal */}
       {showRun && runScript && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowRun(false)}>
-          <div className="bg-gray-800 rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm modal-backdrop flex items-center justify-center z-50" onClick={() => setShowRun(false)}>
+          <div className="bg-gray-800 rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto modal-content" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-700">
               <h3 className="text-lg font-semibold text-white">Run: {runScript.name}</h3>
               <p className="text-xs text-gray-400 mt-1">{shellIcon(runScript.shell)} {runScript.shell} • {runScript.category}</p>
