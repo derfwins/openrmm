@@ -166,23 +166,36 @@ const DeviceDetail = () => {
     try {
       const result = await apiService.listPackages(id, pkgManager)
       if (result.output) {
-        // Parse table output
         const lines = result.output.split('\n')
         const packages: any[] = []
-        let headerPassed = false
-        for (const line of lines) {
-          if (!headerPassed) { if (line.includes('---')) headerPassed = true; continue }
-          const trimmed = line.trim()
-          if (!trimmed) continue
-          const parts = trimmed.split(/\s{2,}/)
-          if (parts.length >= 2) {
-            packages.push({
-              name: parts[0] || '',
-              id: parts[1] || parts[0],
-              version: parts[2] || '',
-              source: parts[3] || pkgManager,
-              manager: pkgManager,
-            })
+        const isPipeDelimited = lines.length > 0 && lines[0].includes('|') && !lines[0].includes('---')
+        if (isPipeDelimited) {
+          // Chocolatey --limit-output format: name|version
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed) continue
+            const p = trimmed.split('|')
+            if (p.length >= 2) {
+              packages.push({ name: p[0], id: p[0], version: p[1], source: 'chocolatey', manager: 'chocolatey' })
+            }
+          }
+        } else {
+          // Table format (winget or choco default)
+          let headerPassed = false
+          for (const line of lines) {
+            if (!headerPassed) { if (line.includes('---')) headerPassed = true; continue }
+            const trimmed = line.trim()
+            if (!trimmed) continue
+            const parts = trimmed.split(/\s{2,}/)
+            if (parts.length >= 2) {
+              packages.push({
+                name: parts[0] || '',
+                id: parts[1] || parts[0],
+                version: parts[2] || '',
+                source: parts[3] || pkgManager,
+                manager: pkgManager,
+              })
+            }
           }
         }
         setPkgInstalled(packages)

@@ -2754,8 +2754,9 @@ async def ws_agent_connect(server: str, agent_id: str):
                                 choco_path = os.path.join(os.environ.get('ProgramData', r'C:\ProgramData'), 'chocolatey', 'bin', 'choco.exe')
                                 if not os.path.isfile(choco_path):
                                     choco_path = 'choco'
-                                cmd = f'"{choco_path}" list --local-only'
+                                cmd = f'"{choco_path}" list --local-only --limit-output --no-color'
                             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                            log.info("package_list: cmd=%s rc=%d stdout=%d bytes stderr=%d bytes", cmd, result.returncode, len(result.stdout), len(result.stderr))
                             return result.stdout, result.stderr, result.returncode
 
                         try:
