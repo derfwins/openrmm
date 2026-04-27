@@ -73,6 +73,7 @@ class WebSocketService {
       this.connectionCallbacks.forEach(cb => cb(false))
 
       // Auth rejected — only logout on explicit auth rejection codes
+      // 4001 = custom auth rejection, 1008 = policy violation (used by FastAPI WS auth)
       if (event.code === 4001 || event.code === 1008) {
         localStorage.removeItem('token')
         localStorage.removeItem('username')

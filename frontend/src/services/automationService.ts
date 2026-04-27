@@ -4,9 +4,9 @@ import type {
   AutomationSchedule,
 } from '../types/automation'
 
-// Auto-logout on 401
+// Auto-logout on 401/403 — clear token and redirect to login
 const handleUnauthorized = (res: Response) => {
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('token')
     localStorage.removeItem('username')
     window.location.href = '/login'

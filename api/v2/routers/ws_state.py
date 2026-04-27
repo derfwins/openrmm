@@ -1,5 +1,6 @@
-"""Shared state and utilities for WebSocket relay (terminal + desktop)."""
+"""Shared state and utilities for WebSocket relay (terminal + desktop + browser)."""
 
+import asyncio
 from jose import JWTError, jwt
 from sqlalchemy import select
 
@@ -20,6 +21,11 @@ pending_sessions: dict[str, object] = {}
 
 # Desktop sessions: session_id -> { "browser_ws": WebSocket, "agent_id": str }
 desktop_sessions: dict[str, dict] = {}
+
+# Browser connections: set of authenticated browser WebSockets for real-time updates
+browser_connections: set = asyncio.Queue.__new__(type('S', (), {}))  # placeholder
+# Use a set of (user_id, websocket) tuples
+browser_connections: list[tuple[int, object]] = []
 
 
 async def verify_token(token: str) -> User | None:
@@ -52,3 +58,16 @@ async def lookup_agent_id(agent_db_id: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+async def broadcast_to_browsers(message: dict):
+    """Send a message to all connected browser WebSocket clients."""
+    dead = []
+    for i, (user_id, ws) in enumerate(browser_connections):
+        try:
+            await ws.send_json(message)
+        except Exception:
+            dead.append(i)
+    # Remove dead connections (reverse order to preserve indices)
+    for i in reversed(dead):
+        browser_connections.pop(i)

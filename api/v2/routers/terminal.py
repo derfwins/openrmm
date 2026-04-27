@@ -6,7 +6,11 @@ import logging
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
-from v2.routers.ws_state import agent_connections, terminal_sessions, desktop_sessions, pending_sessions, verify_token, lookup_agent_id
+from v2.routers.ws_state import (
+    agent_connections, terminal_sessions, desktop_sessions,
+    pending_sessions, verify_token, lookup_agent_id,
+    browser_connections, broadcast_to_browsers,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -19,6 +23,13 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
         agent_connections[agent_id] = websocket
         logger.warning(f"AGENT WS: {agent_id} connected, total: {len(agent_connections)}")
         print(f"AGENT WS: {agent_id} connected, total: {len(agent_connections)}", flush=True)
+
+        # Notify browsers that this agent came online
+        await broadcast_to_browsers({
+            "type": "agent_status",
+            "channel": "agents",
+            "data": {"agent_id": agent_id, "status": "online"},
+        })
 
         # Start a keepalive task to prevent Cloudflare timeout (100s)
         async def keepalive():
@@ -192,6 +203,14 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
             keepalive_task.cancel()
             if agent_connections.get(agent_id) == websocket:
                 del agent_connections[agent_id]
+
+            # Notify browsers that this agent went offline
+            await broadcast_to_browsers({
+                "type": "agent_status",
+                "channel": "agents",
+                "data": {"agent_id": agent_id, "status": "offline"},
+            })
+
             logger.warning(f"AGENT WS: {agent_id} removed, remaining: {len(agent_connections)}")
             # Clean up any sessions for this agent
             to_remove = [sid for sid, s in terminal_sessions.items() if s.get("agent_id") == agent_id]
@@ -306,3 +325,78 @@ async def terminal_ws(websocket: WebSocket, agent_id: str, token: str = Query(..
                 await agent_ws.send_json({"type": "terminal_kill", "session_id": session_id})
             except Exception:
                 pass
+
+
+# === General Browser WebSocket ===
+
+@router.websocket("/ws/")
+async def browser_ws(websocket: WebSocket, token: str = Query(...)):
+    """General browser WebSocket for real-time updates (agent status changes, etc.).
+
+    Authenticated via JWT token in query string.
+    Server pushes agent status updates, new alerts, etc.
+    Browser can subscribe to channels by sending JSON messages.
+    """
+    # Must accept first, then check auth — FastAPI doesn't support
+    # rejecting WebSocket upgrade before accept (would give HTTP 403)
+    await websocket.accept()
+
+    # Verify auth
+    user = await verify_token(token)
+    if not user:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        return
+
+    # Register this browser connection
+    conn_entry = (user.id, websocket)
+    browser_connections.append(conn_entry)
+
+    logger.info(f"Browser WS connected: user={user.username}, total browsers={len(browser_connections)}")
+
+    # Send initial connection confirmation
+    await websocket.send_json({
+        "type": "connected",
+        "channel": "system",
+        "data": {"message": "Connected to OpenRMM real-time updates"},
+        "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+    })
+
+    try:
+        while True:
+            data = await websocket.receive()
+
+            if "text" in data:
+                try:
+                    parsed = json.loads(data["text"])
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = parsed.get("type", "")
+
+                if msg_type == "ping":
+                    # Browser keepalive — respond with pong
+                    await websocket.send_json({"type": "pong", "channel": "system", "data": None, "timestamp": ""})
+                elif msg_type == "subscribe":
+                    # Browser wants to subscribe to a channel
+                    # For now, all browsers get all updates
+                    channel = parsed.get("channel", "")
+                    logger.debug(f"Browser WS: user={user.username} subscribed to {channel}")
+                else:
+                    logger.debug(f"Browser WS: unknown message type={msg_type}")
+
+            elif "bytes" in data:
+                continue  # ignore binary
+            else:
+                continue
+
+    except WebSocketDisconnect:
+        logger.info(f"Browser WS disconnected: user={user.username}")
+    except Exception as e:
+        logger.warning(f"Browser WS error: user={user.username}, error={e}")
+    finally:
+        # Clean up
+        try:
+            browser_connections.remove(conn_entry)
+        except ValueError:
+            pass
+        logger.info(f"Browser WS cleanup: user={user.username}, remaining={len(browser_connections)}")

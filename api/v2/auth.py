@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,29 @@ from v2.config import settings
 from v2.database import get_db, AsyncSessionLocal
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+
+
+class BearerAuth(HTTPBearer):
+    """Custom HTTPBearer that returns 401 (not 403) for missing/malformed tokens.
+    
+    FastAPI's default HTTPBearer returns 403 for missing auth, but per HTTP specs,
+    401 is correct for unauthenticated requests. Frontend relies on 401 to trigger
+    redirect to login — 403 causes silent failure and polling loops.
+    """
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
+        try:
+            return await super().__call__(request)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Not authenticated",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            raise
+
+
+security = BearerAuth()
 
 
 def verify_password(plain: str, hashed: str) -> bool:

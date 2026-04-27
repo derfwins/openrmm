@@ -2,9 +2,10 @@
 
 import { API_BASE_URL } from '../config'
 
-// Auto-logout on 401 — clear token and redirect to login
+// Auto-logout on 401/403 — clear token and redirect to login
+// 401 = expired/invalid token; 403 = FastAPI HTTPBearer returns this for missing auth
 const handleUnauthorized = (res: Response) => {
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('token')
     localStorage.removeItem('username')
     window.location.href = '/login'

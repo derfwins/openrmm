@@ -4,9 +4,10 @@ import type { AgentInfo, AgentCommand, AgentEnrollment } from '../types/agent'
 // Get auth token from localStorage
 const getToken = () => localStorage.getItem('token')
 
-// Auto-logout on 401 — clear token and redirect to login
+// Auto-logout on 401/403 — clear token and redirect to login
+// 401 = expired/invalid token; 403 = FastAPI HTTPBearer returns this for missing auth
 const handleUnauthorized = (response: Response) => {
-  if (response.status === 401) {
+  if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token')
     localStorage.removeItem('username')
     window.location.href = '/login'

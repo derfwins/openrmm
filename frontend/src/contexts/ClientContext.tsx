@@ -19,6 +19,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [selectedSite, setSelectedSite] = useState<Site | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authFailed, setAuthFailed] = useState(false)
 
   // Refs so load() can read current selection without capturing stale closures
   const selectedClientRef = useRef(selectedClient)
@@ -27,10 +28,19 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   selectedSiteRef.current = selectedSite
 
   const load = useCallback(async () => {
+    // Don't poll if we have no token — avoid 401 flood
+    const token = localStorage.getItem('token')
+    if (!token) {
+      setLoading(false)
+      setAuthFailed(true)
+      return
+    }
+
     setLoading(true)
     try {
       const data = await getClients()
       setClients(data)
+      setAuthFailed(false)  // Reset on success
       // Preserve selection if client still exists (reading from refs)
       const currentClient = selectedClientRef.current
       const currentSite = selectedSiteRef.current
@@ -49,15 +59,19 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) {
       console.error('Failed to load clients:', e)
+      // handleUnauthorized in clientService will redirect to login on 401/403
+      // Stop polling to avoid hammering the server
+      setAuthFailed(true)
     }
     setLoading(false)
   }, [])
 
   useEffect(() => {
+    if (authFailed) return  // Stop polling if auth failed
     load()
     const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
-  }, [load])
+  }, [load, authFailed])
 
   const selectClient = useCallback((client: Client | null) => {
     setSelectedClient(client)

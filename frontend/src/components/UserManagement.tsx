@@ -200,13 +200,13 @@ const UserManagement = () => {
       setUsers(Array.isArray(usersData) ? usersData : [])
       setRoles(Array.isArray(rolesData) ? rolesData : [])
       if (!usersResp.ok) {
-        if (usersResp.status === 401) {
+        if (usersResp.status === 401 || usersResp.status === 403) {
           setError('Session expired — please log out and log back in')
         } else {
           setError(`Failed to load users (HTTP ${usersResp.status})`)
         }
       } else if (!rolesResp.ok) {
-        if (rolesResp.status === 401) {
+        if (rolesResp.status === 401 || rolesResp.status === 403) {
           setError('Session expired — please log out and log back in')
         } else {
           setError(`Failed to load roles (HTTP ${rolesResp.status})`)
