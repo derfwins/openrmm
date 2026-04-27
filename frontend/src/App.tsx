@@ -119,15 +119,25 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
   )
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  state = { error: null as string | null }
-  static getDerivedStateFromError(e: Error) { return { error: e.message + '\n' + (e.stack || '') } }
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; errorInfo: string | null }> {
+  state = { error: null as string | null, errorInfo: null as string | null }
+  static getDerivedStateFromError(e: Error) { return { error: e.message + '\n' + (e.stack || ''), errorInfo: null } }
+  componentDidCatch(e: Error, info: any) {
+    console.error('[OpenRMM ErrorBoundary]', e, info)
+    this.setState({ errorInfo: info?.componentStack || '' })
+  }
   render() {
     if (this.state.error) return (
       <div className="p-8 text-red-500 bg-gray-900 min-h-screen">
         <h1 className="text-xl font-bold mb-4">Component Error</h1>
-        <pre className="whitespace-pre-wrap text-sm bg-black p-4 rounded overflow-auto">{this.state.error}</pre>
-        <button onClick={() => { this.setState({ error: null }); window.location.reload() }} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">Reload</button>
+        <pre className="whitespace-pre-wrap text-sm bg-black p-4 rounded overflow-auto max-h-[50vh]">{this.state.error}</pre>
+        {this.state.errorInfo && (
+          <>
+            <h2 className="text-lg font-bold mt-4 mb-2">Component Stack</h2>
+            <pre className="whitespace-pre-wrap text-sm bg-black p-4 rounded overflow-auto max-h-[30vh]">{this.state.errorInfo}</pre>
+          </>
+        )}
+        <button onClick={() => { this.setState({ error: null, errorInfo: null }); window.location.reload() }} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">Reload</button>
       </div>
     )
     return this.props.children
