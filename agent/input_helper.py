@@ -31,6 +31,7 @@ KEYEVENTF_KEYUP = 0x0002
 
 kernel32 = ctypes.windll.kernel32
 user32 = ctypes.windll.user32
+advapi32 = ctypes.windll.advapi32
 
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [
@@ -99,6 +100,20 @@ def inject_keyboard(event):
     inp = INPUT(type=INPUT_KEYBOARD)
     inp.input.ki = ki
     user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+def inject_sas(event):
+    """Handle Secure Attention Sequence events: lock, sas (Ctrl+Alt+Del), signout."""
+    action = event.get("action", "lock")
+    if action == "lock":
+        user32.LockWorkStation()
+    elif action == "sas":
+        # Try sas.dll EventCreateSAS (Win10+), fall back to LockWorkStation
+        try:
+            sas_dll = ctypes.windll.sas
+            sas_dll.EventCreateSAS()
+        except Exception:
+            user32.LockWorkStation()
+    elif action == "signout":
+        advapi32.ExitWindowsEx(0, 0)  # EWX_LOGOFF = 0
 
 def main():
     log(f"Input helper starting, PID={os.getpid()}")
@@ -165,6 +180,8 @@ def main():
                     inject_mouse(event)
                 elif etype in ("keydown", "keyup"):
                     inject_keyboard(event)
+                elif etype == "sas":
+                    inject_sas(event)
             except Exception as e:
                 log(f"Failed to process: {e}")
     

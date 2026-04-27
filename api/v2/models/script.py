@@ -20,3 +20,19 @@ class Script(Base):
     created_by = Column(String(255), default="", server_default="")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ScriptExecution(Base):
+    __tablename__ = "scripts_execution"
+
+    id = Column(Integer, primary_key=True, index=True)
+    script_id = Column(Integer, ForeignKey("scripts_script.id", ondelete="SET NULL"), nullable=True)
+    agent_id = Column(String(255), nullable=False)
+    session_id = Column(String(255), default="", server_default="")
+    status = Column(String(50), default="pending", server_default="pending")  # pending, running, completed, failed, timeout
+    output = Column(Text, default="", server_default="")
+    return_code = Column(Integer, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_by = Column(String(255), default="", server_default="")
+    created_at = Column(DateTime, server_default=func.now())

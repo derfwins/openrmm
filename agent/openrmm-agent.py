@@ -2465,6 +2465,253 @@ async def ws_agent_connect(server: str, agent_id: str):
                             except Exception as e:
                                 log.debug("PTY resize failed: %s", e)
 
+                    # --- Script execution ---
+                    elif msg_type == "run_script":
+                        script_id = data.get("script_id", "adhoc")
+                        script_body = data.get("script_body", "")
+                        shell = data.get("shell", "powershell")
+                        timeout = data.get("timeout", 300)
+                        session_id = data.get("session_id", f"script-{script_id}")
+
+                        log.info("Running script id=%s shell=%s", script_id, shell)
+
+                        def _run_script():
+                            import tempfile
+                            if shell == "powershell":
+                                suffix, cmd_prefix = ".ps1", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+                            elif shell == "bash":
+                                suffix, cmd_prefix = ".sh", ["bash"]
+                            elif shell == "python":
+                                suffix, cmd_prefix = ".py", [sys.executable]
+                            else:
+                                suffix, cmd_prefix = ".ps1", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+
+                            tmp = tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8')
+                            tmp.write(script_body)
+                            tmp.close()
+
+                            try:
+                                result = subprocess.run(cmd_prefix + [tmp.name], capture_output=True, text=True, timeout=timeout)
+                                output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nRETURN CODE: {result.returncode}"
+                                return output, result.returncode
+                            except subprocess.TimeoutExpired:
+                                return f"TIMEOUT: Script exceeded {timeout} seconds", -1
+                            except Exception as e:
+                                return f"ERROR: {str(e)}", -1
+                            finally:
+                                try:
+                                    os.unlink(tmp.name)
+                                except Exception:
+                                    pass
+
+                        try:
+                            output, rc = await asyncio.to_thread(_run_script)
+                            await ws.send(json.dumps({
+                                "type": "script_result",
+                                "session_id": session_id,
+                                "script_id": script_id,
+                                "success": rc == 0,
+                                "output": output[:50000],
+                                "return_code": rc,
+                            }))
+                        except Exception as e:
+                            log.error("run_script error: %s", e, exc_info=True)
+                            await ws.send(json.dumps({
+                                "type": "script_result",
+                                "session_id": session_id,
+                                "script_id": script_id,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}",
+                            }))
+
+                    # --- Package management (winget / chocolatey) ---
+                    elif msg_type == "package_search":
+                        query = data.get("query", "")
+                        manager = data.get("manager", "winget")
+                        session_id = data.get("session_id", "pkg-search")
+
+                        log.info("Package search: query=%s manager=%s", query, manager)
+
+                        def _search():
+                            if manager == "winget":
+                                cmd = f'winget search "{query}" --accept-source-agreements'
+                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                                lines = result.stdout.strip().split('\n')
+                                packages = []
+                                header_passed = False
+                                for line in lines:
+                                    if not header_passed:
+                                        if '---' in line:
+                                            header_passed = True
+                                        continue
+                                    parts = line.split()
+                                    if len(parts) >= 3:
+                                        name_parts = []
+                                        id_found = version_found = source_found = None
+                                        for i, p in enumerate(parts):
+                                            if '.' in p and not p[0].isdigit():
+                                                id_found = p
+                                                name_parts = parts[:i]
+                                                version_found = parts[i + 1] if i + 1 < len(parts) else ""
+                                                source_found = parts[i + 2] if i + 2 < len(parts) else "winget"
+                                                break
+                                        if id_found:
+                                            packages.append({
+                                                "name": " ".join(name_parts),
+                                                "id": id_found,
+                                                "version": version_found or "",
+                                                "source": source_found or "winget",
+                                                "manager": "winget",
+                                            })
+                                return packages, result.stdout, result.returncode
+                            else:  # chocolatey
+                                cmd = f'choco search "{query}" --limit-output --no-color'
+                                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                                packages = []
+                                for line in result.stdout.strip().split('\n'):
+                                    if '|' in line:
+                                        p = line.split('|')
+                                        if len(p) >= 2:
+                                            packages.append({"name": p[0], "id": p[0], "version": p[1], "source": "chocolatey", "manager": "chocolatey"})
+                                if result.returncode != 0 and "not recognized" in (result.stderr + result.stdout).lower():
+                                    return packages, "Chocolatey not installed. Install it first or use winget.", result.returncode
+                                return packages, result.stdout, result.returncode
+
+                        try:
+                            packages, raw_output, rc = await asyncio.to_thread(_search)
+                            await ws.send(json.dumps({
+                                "type": "package_search_result",
+                                "session_id": session_id,
+                                "query": query,
+                                "manager": manager,
+                                "packages": packages,
+                                "success": True,
+                                "raw_output": raw_output[:10000],
+                            }))
+                        except Exception as e:
+                            log.error("package_search error: %s", e, exc_info=True)
+                            await ws.send(json.dumps({
+                                "type": "package_search_result",
+                                "session_id": session_id,
+                                "query": query,
+                                "manager": manager,
+                                "packages": [],
+                                "success": False,
+                                "raw_output": f"ERROR: {str(e)}",
+                            }))
+
+                    elif msg_type == "package_install":
+                        package_id = data.get("package_id", "")
+                        manager = data.get("manager", "winget")
+                        session_id = data.get("session_id", "pkg-install")
+                        install_args = data.get("install_args", "")
+
+                        log.info("Package install: id=%s manager=%s", package_id, manager)
+
+                        def _install():
+                            if manager == "winget":
+                                cmd = f'winget install "{package_id}" -h --accept-package-agreements --accept-source-agreements {install_args}'
+                            else:  # chocolatey — auto-bootstrap if needed
+                                chk = subprocess.run("choco --version", shell=True, capture_output=True, text=True, timeout=10)
+                                if chk.returncode != 0:
+                                    bootstrap = 'Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString(\'https://community.chocolatey.org/install.ps1\'))'
+                                    subprocess.run(f'powershell -NoProfile -Command "{bootstrap}"', shell=True, capture_output=True, text=True, timeout=120)
+                                cmd = f'choco install {package_id} -y {install_args}'.strip()
+                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
+                            output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
+                            return output, result.returncode
+
+                        try:
+                            output, rc = await asyncio.to_thread(_install)
+                            await ws.send(json.dumps({
+                                "type": "package_install_result",
+                                "session_id": session_id,
+                                "package_id": package_id,
+                                "manager": manager,
+                                "success": rc == 0,
+                                "output": output[:50000],
+                                "return_code": rc,
+                            }))
+                        except Exception as e:
+                            await ws.send(json.dumps({
+                                "type": "package_install_result",
+                                "session_id": session_id,
+                                "package_id": package_id,
+                                "manager": manager,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}",
+                            }))
+
+                    elif msg_type == "package_uninstall":
+                        package_id = data.get("package_id", "")
+                        manager = data.get("manager", "winget")
+                        session_id = data.get("session_id", "pkg-uninstall")
+
+                        log.info("Package uninstall: id=%s manager=%s", package_id, manager)
+
+                        def _uninstall():
+                            if manager == "winget":
+                                cmd = f'winget uninstall "{package_id}" -h'
+                            else:
+                                cmd = f'choco uninstall {package_id} -y'
+                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+                            output = f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nEXIT: {result.returncode}"
+                            return output, result.returncode
+
+                        try:
+                            output, rc = await asyncio.to_thread(_uninstall)
+                            await ws.send(json.dumps({
+                                "type": "package_uninstall_result",
+                                "session_id": session_id,
+                                "package_id": package_id,
+                                "manager": manager,
+                                "success": rc == 0,
+                                "output": output[:50000],
+                                "return_code": rc,
+                            }))
+                        except Exception as e:
+                            await ws.send(json.dumps({
+                                "type": "package_uninstall_result",
+                                "session_id": session_id,
+                                "package_id": package_id,
+                                "manager": manager,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}",
+                            }))
+
+                    elif msg_type == "package_list":
+                        manager = data.get("manager", "winget")
+                        session_id = data.get("session_id", "pkg-list")
+
+                        log.info("Package list: manager=%s", manager)
+
+                        def _list():
+                            if manager == "winget":
+                                cmd = 'winget list --accept-source-agreements'
+                            else:
+                                cmd = 'choco list --local-only'
+                            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                            return result.stdout, result.stderr, result.returncode
+
+                        try:
+                            stdout, stderr, rc = await asyncio.to_thread(_list)
+                            await ws.send(json.dumps({
+                                "type": "package_list_result",
+                                "session_id": session_id,
+                                "manager": manager,
+                                "success": rc == 0,
+                                "output": stdout[:50000],
+                                "raw_output": f"{stdout}\n{stderr}"[:50000],
+                            }))
+                        except Exception as e:
+                            await ws.send(json.dumps({
+                                "type": "package_list_result",
+                                "session_id": session_id,
+                                "manager": manager,
+                                "success": False,
+                                "output": f"ERROR: {str(e)}",
+                            }))
+
                 except Exception as e:
                     log.error("WebSocket message error: %s", e)
         finally:

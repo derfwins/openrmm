@@ -4,6 +4,7 @@ import asyncio
 import uuid
 import logging
 import json
+from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import (
@@ -116,6 +117,63 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                     logger.info(f"Pong from agent {agent_id}")
                 elif msg_type == "restart_agent":
                     logger.warning(f"Agent {agent_id} acknowledges restart")
+
+                # --- Script execution results ---
+                elif msg_type == "script_result":
+                    session_id = parsed.get("session_id", "")
+                    status = "completed" if parsed.get("success") else "failed"
+                    output = parsed.get("output", "")
+                    return_code = parsed.get("return_code")
+                    logger.info(f"Script result session={session_id} status={status}")
+                    # Update database record
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            from v2.models.script import ScriptExecution
+                            result = await db.execute(select(ScriptExecution).where(ScriptExecution.session_id == session_id))
+                            execution = result.scalar_one_or_none()
+                            if execution:
+                                execution.status = status
+                                execution.output = output[:50000]
+                                execution.return_code = return_code
+                                execution.completed_at = datetime.utcnow()
+                                await db.commit()
+                    except Exception as e:
+                        logger.error(f"Failed to update script execution: {e}")
+                    # Relay to browser if connected
+                    session = terminal_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception:
+                            pass
+
+                # --- Package management results ---
+                elif msg_type in ("package_search_result", "package_install_result", "package_uninstall_result", "package_list_result"):
+                    session_id = parsed.get("session_id", "")
+                    success = parsed.get("success", False)
+                    logger.info(f"Package result type={msg_type} session={session_id} success={success}")
+                    # Update PackageExecution for install results
+                    if msg_type == "package_install_result":
+                        try:
+                            async with AsyncSessionLocal() as db:
+                                from v2.models.package import PackageExecution
+                                result = await db.execute(select(PackageExecution).where(PackageExecution.session_id == session_id))
+                                execution = result.scalar_one_or_none()
+                                if execution:
+                                    execution.status = "completed" if success else "failed"
+                                    execution.output = parsed.get("output", "")[:50000]
+                                    execution.return_code = parsed.get("return_code")
+                                    execution.completed_at = datetime.utcnow()
+                                    await db.commit()
+                        except Exception as e:
+                            logger.error(f"Failed to update package execution: {e}")
+                    # Relay to browser if connected
+                    session = terminal_sessions.get(session_id)
+                    if session and session.get("browser_ws"):
+                        try:
+                            await session["browser_ws"].send_json(parsed)
+                        except Exception:
+                            pass
 
                 elif msg_type == "resize":
                     pass

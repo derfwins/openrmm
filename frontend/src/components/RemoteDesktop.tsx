@@ -417,6 +417,13 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     sendInput({ type: 'keyup', vk, scan: 0, modifiers })
   }, [viewOnly, sendInput])
 
+  // Send SAS (Secure Attention Sequence) via DataChannel
+  const sendSas = useCallback((action: string) => {
+    if (dcRef.current?.readyState === 'open') {
+      dcRef.current.send(JSON.stringify({ type: 'sas', action }))
+    }
+  }, [])
+
   // Clipboard sync
   const sendClipboardToAgent = useCallback((text: string) => {
     if (text) {
@@ -530,6 +537,31 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             <option value="medium">Medium (24fps)</option>
             <option value="high">High (30fps)</option>
           </select>
+
+          {/* SAS Actions */}
+          <div className="flex items-center gap-1 border-l border-gray-600 pl-2">
+            <button
+              onClick={() => sendSas('lock')}
+              className="px-2 py-1 text-xs rounded bg-orange-600 text-white hover:bg-orange-500"
+              title="Lock remote screen"
+            >
+              🔒 Lock
+            </button>
+            <button
+              onClick={() => sendSas('sas')}
+              className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-500"
+              title="Send Ctrl+Alt+Del"
+            >
+              ⌨️ Ctrl+Alt+Del
+            </button>
+            <button
+              onClick={() => sendSas('signout')}
+              className="px-2 py-1 text-xs rounded bg-gray-600 text-white hover:bg-gray-500"
+              title="Sign out remote user"
+            >
+              🚪 Sign Out
+            </button>
+          </div>
 
           {/* Fullscreen */}
           <button

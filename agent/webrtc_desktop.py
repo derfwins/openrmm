@@ -1848,6 +1848,11 @@ class WebRTCDesktopSession:
             self._inject_keyboard(event)
         elif etype == "clipboard":
             self._inject_clipboard(event)
+        elif etype == "sas":
+            # SAS (Secure Attention Sequence) events are forwarded via the named pipe
+            # by _send_input_pipe above; this is a fallback for direct handling
+            if not self._send_input_pipe(event):
+                log.warning(f"SAS event could not be sent to input helper: {event}")
 
     def _send_input_pipe(self, event):
         """Send input event to Session 1 helper via named pipe."""

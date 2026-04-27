@@ -8,8 +8,8 @@ import Dashboard from './components/Dashboard'
 import DeviceList from './components/DeviceList'
 import DeviceDetail from './components/DeviceDetail'
 import ScriptLibrary from './components/ScriptLibrary'
-import AlertPanel from './components/AlertPanel'
 import PatchManager from './components/PatchManager'
+import PackageManager from './components/PackageManager'
 import AutomationBuilder from './components/AutomationBuilder'
 import Reports from './components/Reports'
 import SoftwareManager from './components/SoftwareManager'
@@ -161,7 +161,7 @@ function App() {
               <Route path="/desktop/:id" element={<DesktopPage />} />
               <Route path="/scripts" element={<AppLayout><ScriptLibrary /></AppLayout>} />
               <Route path="/alerts" element={<AppLayout><AlertPanel /></AppLayout>} />
-              <Route path="/software" element={<AppLayout><SoftwareManager /></AppLayout>} />
+              <Route path="/software" element={<AppLayout><PackageManager /></AppLayout>} />
               <Route path="/patches" element={<AppLayout><PatchManager /></AppLayout>} />
               <Route path="/automation" element={<AppLayout><AutomationBuilder /></AppLayout>} />
               <Route path="/reports" element={<AppLayout><Reports /></AppLayout>} />

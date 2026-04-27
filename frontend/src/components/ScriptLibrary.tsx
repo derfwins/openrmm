@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import apiService from '../services/apiService'
 
 type ShellType = 'powershell' | 'bash' | 'python'
-type CategoryType = 'Community' | 'Custom' | 'AI-Generated'
+type CategoryType = 'Community' | 'Custom' | 'AI-Generated' | 'Diagnostics' | 'Network' | 'Cleanup' | 'Repair' | 'Security' | 'Power Management'
 
 interface Script {
   id: number
@@ -22,7 +22,7 @@ interface Device {
 }
 
 const SHELLS: ShellType[] = ['powershell', 'bash', 'python']
-const CATEGORIES: CategoryType[] = ['Community', 'Custom', 'AI-Generated']
+const CATEGORIES: CategoryType[] = ['Community', 'Custom', 'AI-Generated', 'Diagnostics', 'Network', 'Cleanup', 'Repair', 'Security', 'Power Management']
 
 const shellIcon = (shell: string) => {
   switch (shell) {
@@ -37,7 +37,28 @@ const categoryColor = (cat: string) => {
   switch (cat) {
     case 'Community': return 'bg-blue-900/50 text-blue-300'
     case 'AI-Generated': return 'bg-purple-900/50 text-purple-300'
+    case 'Diagnostics': return 'bg-amber-900/50 text-amber-300'
+    case 'Network': return 'bg-cyan-900/50 text-cyan-300'
+    case 'Cleanup': return 'bg-green-900/50 text-green-300'
+    case 'Repair': return 'bg-orange-900/50 text-orange-300'
+    case 'Security': return 'bg-red-900/50 text-red-300'
+    case 'Power Management': return 'bg-yellow-900/50 text-yellow-300'
     default: return 'bg-gray-700 text-gray-300'
+  }
+}
+
+const categoryEmoji = (cat: string) => {
+  switch (cat) {
+    case 'Community': return '👥'
+    case 'Custom': return '✏️'
+    case 'AI-Generated': return '🤖'
+    case 'Diagnostics': return '🔍'
+    case 'Network': return '🌐'
+    case 'Cleanup': return '🧹'
+    case 'Repair': return '🔧'
+    case 'Security': return '🛡️'
+    case 'Power Management': return '⚡'
+    default: return '📦'
   }
 }
 
@@ -175,18 +196,18 @@ const ScriptLibrary = () => {
     if (!runScript || selectedAgents.length === 0) return
     setRunLoading(true)
     setRunOutput('')
-    const results: string[] = []
-    for (const agentId of selectedAgents) {
-      try {
-        await apiService.runScript(agentId, String(runScript.id))
-        const agent = devices.find(d => d.id === agentId)
-        results.push(`✅ ${agent?.hostname || agentId}: Script queued`)
-      } catch {
-        const agent = devices.find(d => d.id === agentId)
-        results.push(`❌ ${agent?.hostname || agentId}: Failed to run`)
-      }
+    try {
+      const result = await apiService.runScriptOnAgents(runScript.id, selectedAgents)
+      const online = result.dispatched || 0
+      const offline = result.offline?.length || 0
+      const lines: string[] = []
+      if (online > 0) lines.push(`✅ Dispatched to ${online} agent${online !== 1 ? 's' : ''}`)
+      if (offline > 0) lines.push(`⚠️ ${offline} agent${offline !== 1 ? 's' : ''} offline`)
+      if (result.session_ids?.length) lines.push(`Session IDs: ${result.session_ids.join(', ')}`)
+      setRunOutput(lines.join('\n'))
+    } catch (e: any) {
+      setRunOutput(`❌ Failed: ${e.message}`)
     }
-    setRunOutput(results.join('\n'))
     setRunLoading(false)
   }
 
@@ -245,7 +266,7 @@ const ScriptLibrary = () => {
           className="px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-lg text-gray-300 focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Categories</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          {CATEGORIES.map(c => <option key={c} value={c}>{categoryEmoji(c)} {c}</option>)}
         </select>
       </div>
 
@@ -277,7 +298,7 @@ const ScriptLibrary = () => {
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-medium text-white truncate">{script.name}</h3>
                           <span className={`px-2 py-0.5 text-xs rounded ${categoryColor(script.category)}`}>
-                            {script.category || 'Custom'}
+                            {categoryEmoji(script.category || 'Custom')} {script.category || 'Custom'}
                           </span>
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{script.description || 'No description'}</p>
@@ -382,7 +403,7 @@ const ScriptLibrary = () => {
                     onChange={e => setForm({ ...form, category: e.target.value as CategoryType })}
                     className="w-full px-3 py-2 text-sm bg-gray-900 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-blue-500"
                   >
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {CATEGORIES.map(c => <option key={c} value={c}>{categoryEmoji(c)} {c}</option>)}
                   </select>
                 </div>
                 <div className="w-24">

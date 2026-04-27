@@ -57,6 +57,8 @@ async def lifespan(app: FastAPI):
     from v2.database import AsyncSessionLocal
     from v2.models.user import User, Role
     from v2.models.settings import CoreSettings
+    from v2.models.script import Script, ScriptExecution
+    from v2.models.package import Package, PackageExecution
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(User).where(User.is_superuser == True))
@@ -79,6 +81,12 @@ async def lifespan(app: FastAPI):
 
             await db.commit()
             print("✅ Created default admin user, roles, and settings")
+
+    # Seed built-in scripts
+    from v2.routers.scripts_builtin import seed_builtin_scripts
+    async with AsyncSessionLocal() as db:
+        await seed_builtin_scripts(db)
+        print("✅ Built-in scripts seeded")
 
     print(f"🚀 OpenRMM v{settings.APP_VERSION} starting...")
 

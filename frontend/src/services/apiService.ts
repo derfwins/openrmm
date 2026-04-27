@@ -170,6 +170,84 @@ export const apiService = {
     return response.json()
   },
 
+  // Script execution (v2 API)
+  async runScriptOnAgents(scriptId: number, agentIds: string[]): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/scripts/${scriptId}/run/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_ids: agentIds }),
+    })
+    if (!response.ok) throw new Error('Failed to run script on agents')
+    return response.json()
+  },
+
+  async runAdhocScript(body: string, shell: string, agentIds: string[]): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/scripts/run-adhoc/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ body, shell, agent_ids: agentIds }),
+    })
+    if (!response.ok) throw new Error('Failed to run adhoc script')
+    return response.json()
+  },
+
+  async getScriptExecutions(): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/scripts/executions/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch script executions')
+    return response.json()
+  },
+
+  async getScriptExecution(sessionId: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/scripts/executions/${sessionId}/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch script execution')
+    return response.json()
+  },
+
+  // Package management
+  async searchPackages(agentId: string, query: string, manager: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/packages/search/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, query, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to search packages')
+    return response.json()
+  },
+
+  async installPackage(agentId: string, packageId: string, manager: string, installArgs?: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/packages/install/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager, install_args: installArgs }),
+    })
+    if (!response.ok) throw new Error('Failed to install package')
+    return response.json()
+  },
+
+  async uninstallPackage(agentId: string, packageId: string, manager: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/packages/uninstall/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to uninstall package')
+    return response.json()
+  },
+
+  async listPackages(agentId: string, manager: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/v2/packages/list/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to list packages')
+    return response.json()
+  },
+
   // Remote commands
   async sendCommand(agentId: string, command: string, shell: string = 'powershell') {
     const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/cmd/`, {
@@ -301,6 +379,84 @@ export const apiService = {
       headers: authHeaders(),
     })
     if (!response.ok) throw new Error('Failed to delete agent')
+    return response.json()
+  },
+
+  // --- Script Execution ---
+  async runScriptOnAgents(scriptId: number, agentIds: string[], timeout: number = 300): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/scripts/${scriptId}/run/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_ids: agentIds, timeout }),
+    })
+    if (!response.ok) throw new Error('Failed to run script')
+    return response.json()
+  },
+
+  async runAdhocScript(scriptBody: string, shell: string, agentIds: string[], timeout: number = 300): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/scripts/run-adhoc/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ script_body: scriptBody, shell, agent_ids: agentIds, timeout }),
+    })
+    if (!response.ok) throw new Error('Failed to run ad-hoc script')
+    return response.json()
+  },
+
+  async getScriptExecutions(): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/scripts/executions/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch script executions')
+    return response.json()
+  },
+
+  async getScriptExecution(sessionId: string): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/scripts/executions/${sessionId}/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch script execution')
+    return response.json()
+  },
+
+  // --- Package Management ---
+  async searchPackages(agentId: string, query: string, manager: string = 'winget'): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/packages/search/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, query, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to search packages')
+    return response.json()
+  },
+
+  async installPackage(agentId: string, packageId: string, manager: string = 'winget', installArgs: string = ''): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/packages/install/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager, install_args: installArgs }),
+    })
+    if (!response.ok) throw new Error('Failed to install package')
+    return response.json()
+  },
+
+  async uninstallPackage(agentId: string, packageId: string, manager: string = 'winget'): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/packages/uninstall/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, package_id: packageId, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to uninstall package')
+    return response.json()
+  },
+
+  async listPackages(agentId: string, manager: string = 'winget'): Promise<any> {
+    const response = await authFetch(`${API_BASE_URL}/packages/list/`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ agent_id: agentId, manager }),
+    })
+    if (!response.ok) throw new Error('Failed to list packages')
     return response.json()
   },
 }
