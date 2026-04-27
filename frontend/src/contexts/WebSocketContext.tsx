@@ -28,10 +28,26 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
       setLastEvent(data)
     })
 
+    // Listen for login event to connect WebSocket after auth
+    const onLogin = () => {
+      const token = localStorage.getItem('token')
+      if (token) wsService.connect(token)
+    }
+
+    // Listen for logout event to disconnect
+    const onLogout = () => {
+      wsService.disconnect()
+    }
+
+    window.addEventListener('auth-login', onLogin)
+    window.addEventListener('auth-logout', onLogout)
+
     return () => {
       unsubConnect()
       unsubWildcard()
       wsService.disconnect()
+      window.removeEventListener('auth-login', onLogin)
+      window.removeEventListener('auth-logout', onLogout)
     }
   }, [])
 

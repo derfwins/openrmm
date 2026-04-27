@@ -19,7 +19,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
   const [selectedSite, setSelectedSite] = useState<Site | null>(null)
   const [loading, setLoading] = useState(true)
-  const [authFailed, setAuthFailed] = useState(false)
 
   // Refs so load() can read current selection without capturing stale closures
   const selectedClientRef = useRef(selectedClient)
@@ -28,11 +27,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   selectedSiteRef.current = selectedSite
 
   const load = useCallback(async () => {
-    // Don't poll if we have no token — avoid 401 flood
+    // Don't fetch if we have no token — skip silently
     const token = localStorage.getItem('token')
     if (!token) {
       setLoading(false)
-      setAuthFailed(true)
       return
     }
 
@@ -40,7 +38,6 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     try {
       const data = await getClients()
       setClients(data)
-      setAuthFailed(false)  // Reset on success
       // Preserve selection if client still exists (reading from refs)
       const currentClient = selectedClientRef.current
       const currentSite = selectedSiteRef.current
@@ -60,18 +57,37 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.error('Failed to load clients:', e)
       // handleUnauthorized in clientService will redirect to login on 401/403
-      // Stop polling to avoid hammering the server
-      setAuthFailed(true)
     }
     setLoading(false)
   }, [])
 
+  // Poll every 30s. load() will skip if no token, so this is safe even when logged out.
+  // When login sets the token, the next interval or navigation-triggered refresh will pick it up.
   useEffect(() => {
-    if (authFailed) return  // Stop polling if auth failed
     load()
     const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
-  }, [load, authFailed])
+  }, [load])
+
+  // Also listen for storage events (cross-tab) and custom login event (same-tab)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'token') {
+        // Token changed (login/logout in another tab, or set by login page)
+        if (e.newValue) load()  // Token appeared — refresh
+        else setClients([])     // Token removed — clear data
+      }
+    }
+    // Custom event fired by Login after setting token
+    const onLogin = () => load()
+
+    window.addEventListener('storage', onStorage)
+    window.addEventListener('auth-login', onLogin)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('auth-login', onLogin)
+    }
+  }, [load])
 
   const selectClient = useCallback((client: Client | null) => {
     setSelectedClient(client)
