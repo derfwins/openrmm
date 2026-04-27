@@ -598,7 +598,7 @@ const DeviceDetail = () => {
                     onChange={e => setPkgManager(e.target.value as 'winget' | 'chocolatey')}
                     className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
                   >
-                    <option value="winget">{<><IconWindows size={14} /> Winget</>}</option>
+                    <option value="winget">Winget</option>
                     <option value="chocolatey">Chocolatey</option>
                   </select>
                   <button
