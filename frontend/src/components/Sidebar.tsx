@@ -3,7 +3,7 @@ import { useLocation, Link } from 'react-router-dom'
 import { useClient } from '../contexts/ClientContext'
 import {
   IconDashboard, IconDevices, IconAlerts, IconAudit, IconAutomation,
-  IconSoftware, IconPatches, IconInstall, IconAI, IconReports,
+  IconPatches, IconInstall, IconAI, IconReports,
   IconScripts, IconUsers, IconSettings, IconClients, IconMonitor,
   IconChevronLeft, IconChevronRight, IconLogout
 } from './Icons'
@@ -109,7 +109,6 @@ const Sidebar = () => {
         { icon: <IconAlerts size={18} />, label: 'Alerts', path: '/alerts' },
         { icon: <IconScripts size={18} />, label: 'Scripts', path: '/scripts' },
         { icon: <IconAutomation size={18} />, label: 'Automation', path: '/automation' },
-        { icon: <IconSoftware size={18} />, label: 'Software', path: '/software' },
         { icon: <IconPatches size={18} />, label: 'Patches', path: '/patches' },
         { icon: <IconInstall size={18} />, label: 'Install Agent', path: '/install' },
       ]

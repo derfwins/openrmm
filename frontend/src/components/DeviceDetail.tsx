@@ -12,7 +12,7 @@ const DeviceDetail = () => {
   // Agent is "active" (reachable) if online or overdue (recently heartbeated)
   const isActive = agent?.status === 'online' || agent?.status === 'overdue' || agent?.status === 'warning'
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events' | 'services'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'checks' | 'scripts' | 'events' | 'services' | 'software'>('overview')
   const [commandInput, setCommandInput] = useState('')
   const [commandOutput, setCommandOutput] = useState<string | null>(null)
   const [commandRunning, setCommandRunning] = useState(false)
@@ -21,6 +21,20 @@ const DeviceDetail = () => {
   const [token] = useState(() => localStorage.getItem('token') || '')
   const [serviceFilter, setServiceFilter] = useState('')
   const [serviceActionLoading, setServiceActionLoading] = useState<string | null>(null)
+
+  // Software tab state
+  const [pkgManager, setPkgManager] = useState<'winget' | 'chocolatey'>('winget')
+  const [pkgSearchQuery, setPkgSearchQuery] = useState('')
+  const [pkgSearchResults, setPkgSearchResults] = useState<any[]>([])
+  const [pkgSearchLoading, setPkgSearchLoading] = useState(false)
+  const [pkgSearchError, setPkgSearchError] = useState('')
+  const [pkgInstalled, setPkgInstalled] = useState<any[]>([])
+  const [pkgInstalledLoading, setPkgInstalledLoading] = useState(false)
+  const [pkgInstalling, setPkgInstalling] = useState<string | null>(null)
+  const [pkgUninstalling, setPkgUninstalling] = useState<string | null>(null)
+  const [pkgActionOutput, setPkgActionOutput] = useState<{ pkg: string; output: string; success: boolean } | null>(null)
+  const [pkgInstallArgs, setPkgInstallArgs] = useState('')
+  const [pkgShowArgsModal, setPkgShowArgsModal] = useState<string | null>(null)
 
   useEffect(() => {
     if (id) loadAgent()
@@ -113,6 +127,104 @@ const DeviceDetail = () => {
       alert('Failed to send service command')
     } finally {
       setServiceActionLoading(null)
+    }
+  }
+
+  // Software tab handlers
+  const handlePkgSearch = async () => {
+    if (!id || !pkgSearchQuery.trim() || !isActive) return
+    setPkgSearchLoading(true)
+    setPkgSearchError('')
+    setPkgSearchResults([])
+    try {
+      const result = await apiService.searchPackages(id, pkgSearchQuery.trim(), pkgManager)
+      if (result.packages?.length) {
+        setPkgSearchResults(result.packages)
+      } else if (result.raw_output) {
+        setPkgSearchError(result.raw_output)
+      } else {
+        setPkgSearchError('No packages found')
+      }
+    } catch (e: any) {
+      setPkgSearchError(e.message || 'Search failed')
+    } finally {
+      setPkgSearchLoading(false)
+    }
+  }
+
+  const handlePkgListInstalled = async () => {
+    if (!id || !isActive) return
+    setPkgInstalledLoading(true)
+    setPkgInstalled([])
+    try {
+      const result = await apiService.listPackages(id, pkgManager)
+      if (result.output) {
+        // Parse table output
+        const lines = result.output.split('\n')
+        const packages: any[] = []
+        let headerPassed = false
+        for (const line of lines) {
+          if (!headerPassed) { if (line.includes('---')) headerPassed = true; continue }
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          const parts = trimmed.split(/\s{2,}/)
+          if (parts.length >= 2) {
+            packages.push({
+              name: parts[0] || '',
+              id: parts[1] || parts[0],
+              version: parts[2] || '',
+              source: parts[3] || pkgManager,
+              manager: pkgManager,
+            })
+          }
+        }
+        setPkgInstalled(packages)
+      }
+    } catch (e: any) {
+      setPkgSearchError(e.message || 'Failed to list packages')
+    } finally {
+      setPkgInstalledLoading(false)
+    }
+  }
+
+  const handlePkgInstall = async (pkg: any, args: string = '') => {
+    if (!id || !isActive) return
+    setPkgInstalling(pkg.id)
+    setPkgActionOutput(null)
+    try {
+      const result = await apiService.installPackage(id, pkg.id, pkg.manager, args)
+      setPkgActionOutput({
+        pkg: pkg.id,
+        success: result.success ?? true,
+        output: result.output || `Install completed (session: ${result.session_id || 'done'})`,
+      })
+      // Refresh installed list after install
+      setTimeout(() => handlePkgListInstalled(), 3000)
+    } catch (e: any) {
+      setPkgActionOutput({ pkg: pkg.id, success: false, output: `Failed: ${e.message}` })
+    } finally {
+      setPkgInstalling(null)
+      setPkgShowArgsModal(null)
+    }
+  }
+
+  const handlePkgUninstall = async (pkg: any) => {
+    if (!id || !isActive) return
+    if (!confirm(`Uninstall "${pkg.name || pkg.id}"?`)) return
+    setPkgUninstalling(pkg.id)
+    setPkgActionOutput(null)
+    try {
+      const result = await apiService.uninstallPackage(id, pkg.id || pkg.name, pkg.manager)
+      setPkgActionOutput({
+        pkg: pkg.id || pkg.name,
+        success: result.success ?? true,
+        output: result.output || `Uninstall completed`,
+      })
+      setTimeout(() => handlePkgListInstalled(), 3000)
+    } catch (e: any) {
+      setPkgActionOutput({ pkg: pkg.id || pkg.name, success: false, output: `Failed: ${e.message}` })
+    } finally {
+      setPkgUninstalling(null)
     }
   }
 
@@ -350,7 +462,7 @@ const DeviceDetail = () => {
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          {(['overview', 'services', 'checks', 'scripts', 'events'] as const).map(tab => (
+          {(['overview', 'services', 'software', 'checks', 'scripts', 'events'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -428,6 +540,196 @@ const DeviceDetail = () => {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === 'software' && (
+            <div className="space-y-4">
+              {/* Manager selector + list installed */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Software Management</h3>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={pkgManager}
+                    onChange={e => setPkgManager(e.target.value as 'winget' | 'chocolatey')}
+                    className="px-3 py-1.5 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white"
+                  >
+                    <option value="winget">🪟 Winget</option>
+                    <option value="chocolatey">🍫 Chocolatey</option>
+                  </select>
+                  <button
+                    onClick={handlePkgListInstalled}
+                    disabled={!isActive || pkgInstalledLoading}
+                    className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {pkgInstalledLoading ? 'Loading...' : '📋 List Installed'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Installed packages */}
+              {pkgInstalled.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                    Installed Packages ({pkgInstalled.length})
+                  </h4>
+                  <div className="max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0">
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Name</th>
+                          <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">ID</th>
+                          <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Version</th>
+                          <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Source</th>
+                          <th className="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pkgInstalled.map((pkg: any, i: number) => (
+                          <tr key={`${pkg.id}-${i}`} className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                            <td className="py-1.5 px-3 text-gray-700 dark:text-gray-300">{pkg.name}</td>
+                            <td className="py-1.5 px-3 font-mono text-xs text-gray-500 dark:text-gray-400">{pkg.id}</td>
+                            <td className="py-1.5 px-3 text-gray-500 dark:text-gray-400 text-xs">{pkg.version}</td>
+                            <td className="py-1.5 px-3 text-xs text-gray-400">{pkg.source}</td>
+                            <td className="py-1.5 px-3">
+                              <button
+                                onClick={() => handlePkgUninstall(pkg)}
+                                disabled={pkgUninstalling === pkg.id}
+                                className="px-2 py-0.5 text-xs rounded bg-red-600/20 text-red-400 hover:bg-red-600/30 disabled:opacity-50"
+                              >{pkgUninstalling === pkg.id ? 'Removing...' : '🗑️ Remove'}</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Search bar */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                  <input
+                    value={pkgSearchQuery}
+                    onChange={e => setPkgSearchQuery(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handlePkgSearch()}
+                    placeholder={`Search ${pkgManager} packages...`}
+                    disabled={!isActive}
+                    className="w-full pl-9 pr-4 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  />
+                </div>
+                <button
+                  onClick={handlePkgSearch}
+                  disabled={!isActive || pkgSearchLoading || !pkgSearchQuery.trim()}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                >
+                  {pkgSearchLoading ? 'Searching...' : 'Search'}
+                </button>
+              </div>
+
+              {/* Popular quick-search */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-gray-400">Quick:</span>
+                {['Firefox', 'Chrome', '7zip', 'Notepad++', 'VSCode', 'VLC'].map(q => (
+                  <button
+                    key={q}
+                    onClick={() => { setPkgSearchQuery(q); setPkgSearchResults([]); setPkgSearchError('') }}
+                    className="px-2 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs rounded-md transition-colors"
+                  >{q}</button>
+                ))}
+              </div>
+
+              {/* Search error */}
+              {pkgSearchError && (
+                <div className="p-3 rounded-lg border bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-300 text-sm whitespace-pre-wrap">
+                  {pkgSearchError}
+                </div>
+              )}
+
+              {/* Search results */}
+              {pkgSearchResults.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                    Search Results ({pkgSearchResults.length} packages)
+                  </h4>
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700/50">
+                    {pkgSearchResults.map((pkg: any) => (
+                      <div key={pkg.id} className="flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{pkg.name}</span>
+                            {pkg.version && (
+                              <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">{pkg.version}</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5 font-mono">{pkg.id} · {pkg.source}</p>
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                          <button
+                            onClick={() => handlePkgInstall(pkg)}
+                            disabled={pkgInstalling === pkg.id}
+                            className="px-3 py-1 text-xs bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                          >{pkgInstalling === pkg.id ? 'Installing...' : '⬇ Install'}</button>
+                          <button
+                            onClick={() => setPkgShowArgsModal(pkg.id)}
+                            className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            title="Install with custom arguments"
+                          >⚙️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action output */}
+              {pkgActionOutput && (
+                <div className={`p-3 rounded-lg border ${pkgActionOutput.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                      {pkgActionOutput.success ? '✅' : '❌'} {pkgActionOutput.pkg}
+                    </span>
+                    <button onClick={() => setPkgActionOutput(null)} className="text-gray-400 hover:text-gray-200 text-xs">✕</button>
+                  </div>
+                  <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono overflow-x-auto max-h-40 overflow-y-auto">{pkgActionOutput.output}</pre>
+                </div>
+              )}
+
+              {/* Not online notice */}
+              {!isActive && (
+                <div className="p-3 rounded-lg border bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 text-sm text-center">
+                  Device must be online to manage software
+                </div>
+              )}
+
+              {/* Custom install args modal */}
+              {pkgShowArgsModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setPkgShowArgsModal(null)}>
+                  <div className="fixed inset-0 bg-black/60" />
+                  <div className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-md w-full mx-4 p-6" onClick={e => e.stopPropagation()}>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">⚙️ Custom Install Arguments</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Package: <span className="text-gray-900 dark:text-white font-mono">{pkgShowArgsModal}</span></p>
+                    <input
+                      value={pkgInstallArgs}
+                      onChange={e => setPkgInstallArgs(e.target.value)}
+                      placeholder="e.g. --override /S /D=C:\CustomPath"
+                      className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg dark:text-white mb-4"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setPkgShowArgsModal(null)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-300">Cancel</button>
+                      <button
+                        onClick={() => {
+                          const pkg = pkgSearchResults.find((p: any) => p.id === pkgShowArgsModal)
+                          if (pkg) handlePkgInstall(pkg, pkgInstallArgs)
+                          setPkgInstallArgs('')
+                        }}
+                        className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >Install</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
