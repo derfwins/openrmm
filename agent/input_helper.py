@@ -33,6 +33,42 @@ kernel32 = ctypes.windll.kernel32
 user32 = ctypes.windll.user32
 advapi32 = ctypes.windll.advapi32
 
+# --- Desktop switching for lock screen input support ---
+# When the workstation is locked, the active desktop switches from "Default"
+# to "Winlogon". SendInput only delivers to the thread's current desktop, so
+# we must switch to the current input desktop before each injection.
+_DESKTOP_SWITCH = True  # enable desktop switching
+_desktop_switch_count = 0
+
+def _switch_to_input_desktop():
+    """Switch the thread's desktop to the current input desktop.
+    
+    When unlocked: OpenInputDesktop returns "Default".
+    When locked:   OpenInputDesktop returns "Winlogon" (the lock screen).
+    This allows SendInput to reach whichever desktop is active.
+    """
+    global _desktop_switch_count
+    if not _DESKTOP_SWITCH:
+        return
+    try:
+        # OpenInputDesktop opens whatever desktop currently has input focus
+        hdesk = user32.OpenInputDesktop(0, False, 0x003F)  # MAXIMUM_ALLOWED
+        if hdesk:
+            ok = user32.SetThreadDesktop(hdesk)
+            user32.CloseDesktop(hdesk)
+            if not ok:
+                err = kernel32.GetLastError()
+                log(f"WARNING: SetThreadDesktop failed: error {err}")
+            else:
+                _desktop_switch_count += 1
+                if _desktop_switch_count <= 3:
+                    log(f"Switched to input desktop (switch #{_desktop_switch_count})")
+        else:
+            err = kernel32.GetLastError()
+            log(f"WARNING: OpenInputDesktop failed: error {err}")
+    except Exception as e:
+        log(f"WARNING: desktop switch exception: {e}")
+
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [
         ("dx", ctypes.c_long), ("dy", ctypes.c_long),
@@ -61,6 +97,7 @@ class SECURITY_ATTRIBUTES(ctypes.Structure):
     ]
 
 def inject_mouse(event):
+    _switch_to_input_desktop()
     x = event.get("x", 0)
     y = event.get("y", 0)
     screen_w = user32.GetSystemMetrics(0)
@@ -90,6 +127,7 @@ def inject_mouse(event):
     user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 def inject_keyboard(event):
+    _switch_to_input_desktop()
     vk = event.get("vk", 0)
     scan = event.get("scan", 0)
     flags = 0
@@ -121,6 +159,10 @@ def inject_sas(event):
 
 def main():
     log(f"Input helper starting, PID={os.getpid()}")
+    
+    # Switch to the current input desktop at startup
+    _switch_to_input_desktop()
+    log("Switched to input desktop at startup")
     
     # Parse --session N
     session_id = 0

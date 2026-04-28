@@ -2507,7 +2507,7 @@ class WebRTCDesktopSession:
         try:
             hDupToken = wintypes.HANDLE()
             if not advapi32.DuplicateTokenEx(
-                hUserToken, 0x000F00FF, None, 2, 1,
+                hUserToken, 0x000F00FF, None, 3, 1,
                 ctypes.byref(hDupToken)
             ):
                 log.warning("Input helper: DuplicateTokenEx failed")
