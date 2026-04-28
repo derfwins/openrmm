@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { getIcon } from '../utils/iconMap'
 import type { Device } from '../types/device'
 import apiService from '../services/apiService'
-import { IconMonitor, IconKeyboard, IconTerminal, IconRefresh, IconPower, IconZap } from './Icons'
 
 interface DeviceActionMenuProps {
   device: Device

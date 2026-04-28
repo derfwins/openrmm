@@ -7,37 +7,39 @@ import {
   IconDesktop, IconSearch, IconTerminal, IconUsers, IconCopy
 } from '../components/Icons'
 
-const iconMap: Record<string, ReactNode> = {
-  dashboard: <IconDashboard size={18} />,
-  devices: <IconDevices size={18} />,
-  clients: <IconClients size={18} />,
-  install: <IconInstall size={18} />,
-  alerts: <IconAlerts size={18} />,
-  scripts: <IconScripts size={18} />,
-  automation: <IconAutomation size={18} />,
-  software: <IconSoftware size={18} />,
-  patches: <IconPatches size={18} />,
-  reports: <IconReports size={18} />,
-  ai: <IconAI size={18} />,
-  audit: <IconAudit size={18} />,
-  lock: <IconLock size={18} />,
-  monitor: <IconMonitor size={18} />,
-  desktop: <IconDesktop size={18} />,
-  bell: <IconBell size={18} />,
-  wrench: <IconWrench size={18} />,
-  clipboard: <IconClipboardList size={18} />,
-  gear: <IconGear size={18} />,
-  chart: <IconChartBar size={18} />,
-  check: <IconCheck size={18} />,
-  keyboard: <IconKeyboard size={18} />,
-  search: <IconSearch size={18} />,
-  terminal: <IconTerminal size={18} />,
-  users: <IconUsers size={18} />,
-  copy: <IconCopy size={18} />,
+// Map of icon name → component factory (size param for flexibility)
+const iconComponents: Record<string, ({ size }: { size: number }) => ReactNode> = {
+  dashboard: ({ size }) => <IconDashboard size={size} />,
+  devices: ({ size }) => <IconDevices size={size} />,
+  clients: ({ size }) => <IconClients size={size} />,
+  install: ({ size }) => <IconInstall size={size} />,
+  alerts: ({ size }) => <IconAlerts size={size} />,
+  scripts: ({ size }) => <IconScripts size={size} />,
+  automation: ({ size }) => <IconAutomation size={size} />,
+  software: ({ size }) => <IconSoftware size={size} />,
+  patches: ({ size }) => <IconPatches size={size} />,
+  reports: ({ size }) => <IconReports size={size} />,
+  ai: ({ size }) => <IconAI size={size} />,
+  audit: ({ size }) => <IconAudit size={size} />,
+  lock: ({ size }) => <IconLock size={size} />,
+  monitor: ({ size }) => <IconMonitor size={size} />,
+  desktop: ({ size }) => <IconDesktop size={size} />,
+  bell: ({ size }) => <IconBell size={size} />,
+  wrench: ({ size }) => <IconWrench size={size} />,
+  clipboard: ({ size }) => <IconClipboardList size={size} />,
+  gear: ({ size }) => <IconGear size={size} />,
+  chart: ({ size }) => <IconChartBar size={size} />,
+  check: ({ size }) => <IconCheck size={size} />,
+  keyboard: ({ size }) => <IconKeyboard size={size} />,
+  search: ({ size }) => <IconSearch size={size} />,
+  terminal: ({ size }) => <IconTerminal size={size} />,
+  users: ({ size }) => <IconUsers size={size} />,
+  copy: ({ size }) => <IconCopy size={size} />,
 }
 
 export function getIcon(name: string, size: number = 18): ReactNode {
-  return iconMap[name] || name
+  const factory = iconComponents[name]
+  return factory ? factory({ size }) : name
 }
 
-export default iconMap
+export default iconComponents

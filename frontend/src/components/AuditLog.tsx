@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getIcon } from '../utils/iconMap'
 
 interface AuditLogEntry {
   id: number

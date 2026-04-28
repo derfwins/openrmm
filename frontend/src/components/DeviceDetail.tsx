@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import Terminal from './Terminal'
-import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconPower, IconWrench, IconSettings, IconCpu, IconZap, IconUserIcon } from './Icons'
+import { IconMonitor, IconTerminal as IconTerminalSVG, IconRefresh, IconTrash, IconSearch, IconWindows, IconLinux, IconApple, IconChevronRight, IconInfo, IconPower, IconWrench, IconSettings, IconGear, IconCpu, IconZap, IconUserIcon } from './Icons'
 import RemoteDesktop from './RemoteDesktop'
 import { useEscapeKey } from '../hooks/useEscapeKey'
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
-import { IconChartBar, IconBell, IconWrench, IconMonitor, IconClipboardList, IconGear, IconDashboard, IconDevices, IconScripts, IconAutomation, IconTerminal, IconCopy, IconReports, IconUsers, IconSoftware, IconClients, IconAI, IconInstall, IconAntenna } from './Icons'
+import { IconChartBar, IconBell, IconWrench, IconMonitor, IconClipboardList, IconGear, IconDashboard, IconDevices, IconScripts, IconAutomation, IconTerminal, IconReports, IconUsers, IconSoftware, IconClients, IconAI, IconInstall, IconLock } from './Icons'
 
 const iconMap: Record<string, ReactNode> = {
   chart: <IconChartBar size={18} />,
