@@ -22,6 +22,9 @@ pending_sessions: dict[str, object] = {}
 # Desktop sessions: session_id -> { "browser_ws": WebSocket, "agent_id": str }
 desktop_sessions: dict[str, dict] = {}
 
+# Pending list_sessions requests (REST API): request_id -> asyncio.Future
+pending_list_sessions: dict[str, object] = {}
+
 # Browser connections: set of authenticated browser WebSockets for real-time updates
 browser_connections: set = asyncio.Queue.__new__(type('S', (), {}))  # placeholder
 # Use a set of (user_id, websocket) tuples

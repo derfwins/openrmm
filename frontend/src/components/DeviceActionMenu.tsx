@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { getIcon } from '../utils/iconMap'
 import type { Device } from '../types/device'
 import apiService from '../services/apiService'
+import { IconMonitor, IconKeyboard, IconTerminal, IconRefresh, IconPower, IconZap } from './Icons'
 
 interface DeviceActionMenuProps {
   device: Device
@@ -12,8 +14,8 @@ const DeviceActionMenu = ({ device, onAction }: DeviceActionMenuProps) => {
   const [loading, setLoading] = useState(false)
 
   const actions = [
-    { id: 'remote', label: 'Remote Control', icon: '🖥️' },
-    { id: 'command', label: 'Send Command', icon: '⌨️' },
+    { id: 'remote', label: 'Remote Control', icon: 'monitor' },
+    { id: 'command', label: 'Send Command', icon: 'keyboard' },
     { id: 'script', label: 'Run Script', icon: '📜' },
     { id: 'reboot', label: 'Reboot', icon: '🔄' },
     { id: 'shutdown', label: 'Shutdown', icon: '⏻️' },
@@ -69,7 +71,7 @@ const DeviceActionMenu = ({ device, onAction }: DeviceActionMenuProps) => {
                 className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2"
                 disabled={loading}
               >
-                <span>{action.icon}</span>
+                <span>{getIcon(action.icon as string)}</span>
                 <span>{action.label}</span>
               </button>
             ))}

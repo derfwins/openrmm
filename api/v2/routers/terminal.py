@@ -9,7 +9,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from v2.routers.ws_state import (
     agent_connections, terminal_sessions, desktop_sessions,
-    pending_sessions, verify_token, lookup_agent_id,
+    pending_sessions, pending_list_sessions, verify_token, lookup_agent_id,
     browser_connections, broadcast_to_browsers,
 )
 
@@ -237,6 +237,24 @@ async def agent_ws(websocket: WebSocket, agent_id: str):
                             await session["browser_ws"].send_json(parsed)
                         except Exception:
                             pass
+
+                elif msg_type == "list_sessions_result":
+                    # Agent responded with Windows Terminal Services session list
+                    # 1) Relay to browser desktop session if connected
+                    session_id = parsed.get("session_id")
+                    if session_id:
+                        session = desktop_sessions.get(session_id)
+                        if session and session.get("browser_ws"):
+                            try:
+                                await session["browser_ws"].send_json(parsed)
+                            except Exception:
+                                pass
+                    # 2) Resolve pending REST API future if present
+                    request_id = parsed.get("request_id")
+                    if request_id and request_id in pending_list_sessions:
+                        future = pending_list_sessions.get(request_id)
+                        if future and not future.done():
+                            future.set_result(parsed.get("sessions", []))
 
                 # --- Legacy desktop messages (kept for backward compat during transition) ---
                 elif msg_type == "desktop_frame":

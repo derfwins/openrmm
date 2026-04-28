@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { IconCheck } from './Icons'
 import apiService from '../services/apiService'
 
 const AlertPanel = () => {
@@ -61,7 +62,7 @@ const AlertPanel = () => {
         ) : filtered.length === 0 && alerts.length === 0 ? (
           <div className="flex items-center justify-center py-16 animate-[fadeIn_0.5s_ease-out]">
             <div className="w-64 rounded-2xl bg-white/[0.03] border border-white/[0.06] backdrop-blur-xl p-8 space-y-3 text-center dark:bg-gray-900/50">
-              <div className="text-5xl text-emerald-400">✅</div>
+              <div className="text-5xl text-emerald-400"><IconCheck size={48} /></div>
               <h2 className="text-lg font-semibold text-white">All clear!</h2>
               <p className="text-sm text-gray-400">No active alerts. Everything looks good.</p>
             </div>

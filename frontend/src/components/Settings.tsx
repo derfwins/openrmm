@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { getIcon } from '../utils/iconMap'
 
 interface CoreSettings {
   id: number
@@ -118,10 +119,10 @@ const Settings = () => {
 
   const tabs = [
     { id: 'domain', label: 'Domain', icon: '🌐' },
-    { id: 'general', label: 'General', icon: '⚙️' },
+    { id: 'general', label: 'General', icon: 'gear' },
     { id: 'email', label: 'Email', icon: '📧' },
-    { id: 'notifications', label: 'Notifications', icon: '🔔' },
-    { id: 'security', label: 'Security', icon: '🔒' },
+    { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'security', label: 'Security', icon: 'lock' },
     { id: 'ai', label: 'AI', icon: '🤖' },
   ]
 
@@ -169,7 +170,7 @@ const Settings = () => {
                     : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
               >
-                <span>{tab.icon}</span>
+                <span>{getIcon(tab.icon as string)}</span>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -190,7 +191,7 @@ const Settings = () => {
               <div className="space-y-5">
                 {/* API Domain */}
                 <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 space-y-3">
-                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">🖥️ API Backend</h3>
+                  <h3 className="text-sm font-medium text-blue-700 dark:text-blue-400">API Backend</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400">FastAPI backend and REST API. Remote agents connect here.</p>
                   <input
                     type="text"
@@ -223,7 +224,7 @@ const Settings = () => {
                       <li>Go to <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener" className="text-blue-500 hover:underline">Cloudflare Zero Trust</a> → Networks → Tunnels</li>
                       <li>Create a tunnel and install the connector (<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">cloudflared</code>) on this server</li>
                       <li>Add a <strong>Public Hostname</strong> for each service, pointing to the localhost URL</li>
-                      <li>SSL is handled automatically — no certbot needed ✅</li>
+                      <li>SSL is handled automatically — no certbot needed</li>
                     </ol>
                   </div>
                 </div>
@@ -339,7 +340,7 @@ const Settings = () => {
             <div className="mt-6 pt-5 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
               <button onClick={fetchSettings} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">Reset</button>
               <button onClick={saveSettings} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save Changes'}
+                {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
               </button>
             </div>
           )}

@@ -3,7 +3,7 @@ Input injection helper for OpenRMM WebRTC.
 Runs in Session 1 to bypass Windows session isolation for SendInput.
 Receives input events as JSON lines over a named pipe.
 
-Named pipe: \\.\pipe\openrmm_input
+Named pipe: \\\\.\\pipe\\openrmm_input_{session_id}
 """
 import json, sys, ctypes, os
 
@@ -117,7 +117,18 @@ def inject_sas(event):
 
 def main():
     log(f"Input helper starting, PID={os.getpid()}")
-    pipe_name = r"\\.\pipe\openrmm_input"
+    
+    # Parse --session N
+    session_id = 0
+    for i, arg in enumerate(sys.argv):
+        if arg == '--session' and i + 1 < len(sys.argv):
+            try:
+                session_id = int(sys.argv[i + 1])
+            except ValueError:
+                pass
+    
+    pipe_name = rf"\\.\pipe\openrmm_input_{session_id}"
+    log(f"Using pipe: {pipe_name} (session={session_id})")
     
     # Create SECURITY_ATTRIBUTES with NULL DACL (allow everyone)
     sa = SECURITY_ATTRIBUTES()

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
-import { IconDesktop, IconSearch, IconCheck, IconClose } from './Icons'
+import { IconDesktop, IconSearch, IconCheck, IconClose, IconClock, IconWindows, IconLinux, IconApple } from './Icons'
 
 
 const DeviceList = () => {
@@ -201,7 +201,7 @@ const DeviceList = () => {
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
-              {s === 'all' ? `${agents.length}` : s === 'pending' ? `⏳ ${pendingCount}` : s === 'online' ? `🟢 ${onlineCount}` : s === 'overdue' ? `🟡 ${overdueCount}` : `🔴 ${offlineCount}`}
+              {s === 'all' ? `${agents.length}` : s === 'pending' ? <><IconClock size={12} className="inline -mt-0.5" /> {pendingCount}</> : s === 'online' ? <><span className="inline-block w-2 h-2 rounded-full bg-green-500 -mt-0.5" /> {onlineCount}</> : s === 'overdue' ? <><span className="inline-block w-2 h-2 rounded-full bg-yellow-500 -mt-0.5" /> {overdueCount}</> : <><span className="inline-block w-2 h-2 rounded-full bg-red-500 -mt-0.5" /> {offlineCount}</>}
             </button>
           ))}
         </div>
@@ -215,7 +215,7 @@ const DeviceList = () => {
           >
             <option value="all">All Platforms</option>
             {platforms.map(p => (
-              <option key={p} value={p}>{p === 'windows' ? '🪟 Windows' : p === 'linux' ? '🐧 Linux' : p === 'darwin' ? '🍎 macOS' : p}</option>
+              <option key={p} value={p}>{p === 'windows' ? <IconWindows size={12} className="inline" /> : p === 'linux' ? <IconLinux size={12} className="inline" /> : p === 'darwin' ? <IconApple size={12} className="inline" /> : p} {p === 'windows' ? 'Windows' : p === 'linux' ? 'Linux' : p === 'darwin' ? 'macOS' : p}</option>
             ))}
           </select>
         )}
@@ -275,8 +275,8 @@ const DeviceList = () => {
                 <tr key={agent.agent_id || agent.id} className={`table-row-hover hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors ${isPending ? 'border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/10' : ''}`}>
                   <td className="px-4 py-3">
                     {isPending ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                        ⏳ Pending
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        <IconClock size={12} /> Pending
                       </span>
                     ) : (
                       <div className={`w-2.5 h-2.5 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : agent.status === 'overdue' || agent.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
@@ -356,13 +356,14 @@ const DeviceList = () => {
 }
 
 const PlatformIcon = ({ plat }: { plat: string }) => {
-  const icons: Record<string, { icon: string; label: string }> = {
-    windows: { icon: '🪟', label: 'Windows' },
-    linux: { icon: '🐧', label: 'Linux' },
-    darwin: { icon: '🍎', label: 'macOS' },
+  const iconMap: Record<string, { Icon: any; label: string }> = {
+    windows: { Icon: IconWindows, label: 'Windows' },
+    linux: { Icon: IconLinux, label: 'Linux' },
+    darwin: { Icon: IconApple, label: 'macOS' },
   }
-  const info = icons[plat] || { icon: '💻', label: plat }
-  return <span title={info.label}>{info.icon} <span className="text-gray-500 dark:text-gray-400">{info.label}</span></span>
+  const info = iconMap[plat] || { Icon: IconDesktop, label: plat }
+  const { Icon, label } = info
+  return <span title={label} className="inline-flex items-center gap-1"><Icon size={14} className="inline -mt-0.5" /> <span className="text-gray-500 dark:text-gray-400">{label}</span></span>
 }
 
 const timeAgo = (dateStr: string): string => {

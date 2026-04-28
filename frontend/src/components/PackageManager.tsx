@@ -211,12 +211,12 @@ const PackageManager = () => {
             <option value="">Select an agent...</option>
             {onlineDevices.map(d => (
               <option key={d.id} value={d.id}>
-                🟢 {d.hostname} {d.operating_system ? `(${d.operating_system})` : ''}
+                {d.hostname} {d.operating_system ? `(${d.operating_system})` : ''}
               </option>
             ))}
             {devices.filter(d => d.status !== 'online' && d.status !== 'Online').map(d => (
               <option key={d.id} value={d.id} disabled>
-                🔴 {d.hostname} (offline)
+                {d.hostname} (offline)
               </option>
             ))}
           </select>

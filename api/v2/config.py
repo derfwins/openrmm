@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "OpenRMM"
     APP_VERSION: str = "0.1.0"
-    DEBUG: bool = True
+    DEBUG: bool = os.environ.get("OPENRMM_DEBUG", "false").lower() == "true"
     
     # Database
     POSTGRES_HOST: str = "localhost"

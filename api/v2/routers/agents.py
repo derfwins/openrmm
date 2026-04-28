@@ -1,4 +1,6 @@
 """Agents endpoints"""
+import asyncio
+import time
 from datetime import datetime, timezone
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -93,6 +95,16 @@ def _build_windows_installer(api_url: str, client_id: int, site_id: int, agent_t
         'Write-Host "Downloading agent from: $AgentUrl" -ForegroundColor Cyan',
         'Invoke-WebRequest -Uri $AgentUrl -OutFile "$InstallDir\\openrmm-agent.py" -UseBasicParsing',
         "",
+        "# Download WebRTC desktop module",
+        '$WebrtcUrl = "$Server/agents/download/webrtc_desktop.py"',
+        'Write-Host "Downloading WebRTC module from: $WebrtcUrl" -ForegroundColor Cyan',
+        'Invoke-WebRequest -Uri $WebrtcUrl -OutFile "$InstallDir\\webrtc_desktop.py" -UseBasicParsing',
+        "",
+        "# Download input helper for remote desktop",
+        '$InputHelperUrl = "$Server/agents/download/input_helper.py"',
+        'Write-Host "Downloading input helper from: $InputHelperUrl" -ForegroundColor Cyan',
+        'Invoke-WebRequest -Uri $InputHelperUrl -OutFile "$InstallDir\\input_helper.py" -UseBasicParsing',
+        "",
         "# Create launcher batch file",
         '$LaunchBat = "$InstallDir\\launch.bat"',
         '$BatContent = "@echo off" + [Environment]::NewLine + $pythonExe + " " + [char]34 + "$InstallDir\\openrmm-agent.py" + [char]34 + " --server $Server --client-id $ClientId --site-id $SiteId --agent-type $AgentType"',
@@ -156,6 +168,16 @@ def _build_linux_installer(api_url: str, client_id: int, site_id: int, agent_typ
         'AGENT_URL="$SERVER/agents/download/openrmm-agent.py"',
         'echo "Downloading agent from: $AGENT_URL"',
         'curl -sfL "$AGENT_URL" -o "$INSTALL_DIR/openrmm-agent.py" || wget -q "$AGENT_URL" -O "$INSTALL_DIR/openrmm-agent.py"',
+        "",
+        "# Download WebRTC desktop module",
+        'WEBRTC_URL="$SERVER/agents/download/webrtc_desktop.py"',
+        'echo "Downloading WebRTC module from: $WEBRTC_URL"',
+        'curl -sfL "$WEBRTC_URL" -o "$INSTALL_DIR/webrtc_desktop.py" || wget -q "$WEBRTC_URL" -O "$INSTALL_DIR/webrtc_desktop.py"',
+        "",
+        "# Download input helper for remote desktop",
+        'INPUT_HELPER_URL="$SERVER/agents/download/input_helper.py"',
+        'echo "Downloading input helper from: $INPUT_HELPER_URL"',
+        'curl -sfL "$INPUT_HELPER_URL" -o "$INSTALL_DIR/input_helper.py" || wget -q "$INPUT_HELPER_URL" -O "$INSTALL_DIR/input_helper.py"',
         "",
         "# Create systemd service",
         "cat > /etc/systemd/system/openrmm-agent.service << EOF",
@@ -317,6 +339,23 @@ async def download_webrtc_desktop():
             return FileResponse(path, media_type="text/x-python", filename="webrtc_desktop.py")
     from fastapi import HTTPException
     raise HTTPException(status_code=404, detail="webrtc_desktop.py not found")
+
+
+@router.get("/download/input_helper.py")
+async def download_input_helper():
+    """Download the input helper module for remote desktop input injection."""
+    import os
+    possible_paths = [
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent", "input_helper.py")),
+        "/app/agent/input_helper.py",
+        "/opt/openrmm/agent/input_helper.py",
+    ]
+    for path in possible_paths:
+        if os.path.isfile(path):
+            from fastapi.responses import FileResponse
+            return FileResponse(path, media_type="text/x-python", filename="input_helper.py")
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="input_helper.py not found")
 
 
 @router.get("/download/openrmm-agent.py")
@@ -602,6 +641,40 @@ async def delete_agent(
     if uninstall_sent:
         message += " and uninstall command sent"
     return {"status": "ok", "message": message}
+
+
+@router.get("/{agent_id}/sessions/")
+async def list_sessions(agent_id: str, user: User = Depends(get_current_user)):
+    """Ask agent to enumerate Windows Terminal Services sessions."""
+    from v2.routers.ws_state import agent_connections, lookup_agent_id
+    from v2.routers.ws_state import pending_list_sessions as ws_pending_list_sessions
+
+    agent_uuid = await lookup_agent_id(agent_id)
+    if not agent_uuid:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    agent_ws = agent_connections.get(agent_uuid)
+    if not agent_ws:
+        raise HTTPException(status_code=503, detail="Agent not connected via WebSocket")
+
+    # Use a future to wait for the agent's response
+    request_id = f"ls_{int(time.time() * 1000)}_{id(agent_ws)}"
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    ws_pending_list_sessions[request_id] = future
+
+    try:
+        await agent_ws.send_json({
+            "type": "list_sessions",
+            "request_id": request_id,
+        })
+        # Wait up to 10 seconds for response
+        result = await asyncio.wait_for(future, timeout=10.0)
+        return {"sessions": result}
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Agent did not respond in time")
+    finally:
+        ws_pending_list_sessions.pop(request_id, None)
 
 
 @router.post("/run-command/")

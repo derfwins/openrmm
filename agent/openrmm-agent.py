@@ -2282,15 +2282,44 @@ async def ws_agent_connect(server: str, agent_id: str):
                             "session_id": session_id,
                         }))
 
+                    elif msg_type == "list_sessions":
+                        request_id = data.get("request_id", "")
+                        relay_session_id = data.get("session_id")
+                        try:
+                            from webrtc_desktop import enumerate_sessions
+                            sessions_list = enumerate_sessions()
+                            result = {
+                                "type": "list_sessions_result",
+                                "sessions": sessions_list,
+                                "agent_id": agent_id,
+                                "request_id": request_id,
+                            }
+                            if relay_session_id:
+                                result["session_id"] = relay_session_id
+                            await ws.send(json.dumps(result))
+                        except Exception as e:
+                            log.error("list_sessions failed: %s", e, exc_info=True)
+                            result = {
+                                "type": "list_sessions_result",
+                                "sessions": [],
+                                "agent_id": agent_id,
+                                "request_id": request_id,
+                                "error": str(e),
+                            }
+                            if relay_session_id:
+                                result["session_id"] = relay_session_id
+                            await ws.send(json.dumps(result))
+
                     # --- WebRTC desktop session handling ---
                     elif msg_type == "webrtc_start":
                         session_id = data.get("session_id")
                         turn_config = data.get("turn", {})
                         fps = data.get("fps", 30)
+                        target_session = data.get("target_session", -1)
                         log.info("WebRTC desktop session starting: %s", session_id)
                         try:
                             from webrtc_desktop import WebRTCDesktopSession
-                            webrtc_sess = WebRTCDesktopSession(session_id, turn_config, ws)
+                            webrtc_sess = WebRTCDesktopSession(session_id, turn_config, ws, target_session=target_session)
                             # Store session for later reference (answer/ICE)
                             sessions["_webrtc_" + session_id] = {"session": webrtc_sess}
                             asyncio.create_task(webrtc_sess.start(fps=fps))

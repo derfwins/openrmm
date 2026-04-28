@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { getIcon } from '../utils/iconMap'
 import { ReportType } from '../types/report'
 import type { Report, ReportSchedule, ReportDateRange, ReportFilters } from '../types/report'
 import {
@@ -13,8 +14,8 @@ import {
 
 const REPORT_CARDS: { type: ReportType; label: string; desc: string; icon: string }[] = [
   { type: ReportType.SystemHealth, label: 'System Health', desc: 'CPU, memory, disk across all devices', icon: '❤️' },
-  { type: ReportType.PatchCompliance, label: 'Patch Compliance', desc: 'Update status and missing patches', icon: '🔧' },
-  { type: ReportType.AuditLog, label: 'Audit Log', desc: 'User actions and system events', icon: '📋' },
+  { type: ReportType.PatchCompliance, label: 'Patch Compliance', desc: 'Update status and missing patches', icon: 'wrench' },
+  { type: ReportType.AuditLog, label: 'Audit Log', desc: 'User actions and system events', icon: 'clipboard' },
   { type: ReportType.DeviceInventory, label: 'Device Inventory', desc: 'Complete managed device listing', icon: '💻' },
   { type: ReportType.AgentActivity, label: 'Agent Activity', desc: 'Agent connectivity and check-ins', icon: '📡' },
 ]
@@ -109,14 +110,14 @@ export default function Reports() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Reports', value: reports.length, icon: '📊' },
-          { label: 'Completed', value: completedReports, icon: '✅' },
+          { label: 'Total Reports', value: reports.length, icon: 'chart' },
+          { label: 'Completed', value: completedReports, icon: 'check' },
           { label: 'Scheduled', value: schedules.length, icon: '📅' },
           { label: 'Active Schedules', value: activeSchedules, icon: '⏰' },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
             <div className="flex items-center gap-3">
-              <span className="text-2xl">{s.icon}</span>
+              <span className="text-2xl">{getIcon(s.icon as string, 24)}</span>
               <div>
                 <p className="text-2xl font-bold text-gray-900 dark:text-white">{s.value}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">{s.label}</p>
@@ -164,7 +165,7 @@ export default function Reports() {
                       : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600'
                   }`}
                 >
-                  <div className="text-2xl mb-2">{rc.icon}</div>
+                  <div className="text-2xl mb-2">{getIcon(rc.icon as string, 24)}</div>
                   <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{rc.label}</h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{rc.desc}</p>
                 </button>

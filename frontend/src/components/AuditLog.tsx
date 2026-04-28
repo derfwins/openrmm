@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { getIcon } from '../utils/iconMap'
 
 interface AuditLogEntry {
   id: number
@@ -60,9 +61,9 @@ const AuditLog = () => {
       case 'user': return '👤'
       case 'device': case 'agent': return '💻'
       case 'script': return '📜'
-      case 'patch': return '🔧'
+      case 'patch': return 'wrench'
       case 'automation': return '⚡'
-      case 'settings': return '⚙️'
+      case 'settings': return 'gear'
       case 'client': return '🏢'
       default: return '📌'
     }

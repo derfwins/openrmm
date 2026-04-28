@@ -61,7 +61,7 @@ async def get_turn_credentials(user: User = Depends(get_current_user)):
 
 
 @router.websocket("/ws/desktop/{agent_id}/")
-async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...)):
+async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...), target_session: int = Query(-1)):
     """Browser connects here for WebRTC remote desktop signaling.
 
     Flow:
@@ -119,6 +119,7 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
         "type": "webrtc_start",
         "session_id": session_id,
         "turn": turn_creds,
+        "target_session": target_session,
     })
 
     logger.info(f"Desktop session {session_id} started for agent {agent_uuid}")
@@ -182,6 +183,15 @@ async def desktop_ws(websocket: WebSocket, agent_id: str, token: str = Query(...
                         parsed["session_id"] = session_id
                         await agent_ws.send_json(parsed)
                     break
+
+                elif msg_type == "list_sessions":
+                    # Browser requests session list — relay to agent
+                    agent_ws = agent_connections.get(agent_uuid)
+                    if agent_ws:
+                        parsed["session_id"] = session_id
+                        await agent_ws.send_json(parsed)
+                    else:
+                        await websocket.send_json({"type": "list_sessions_result", "sessions": [], "error": "Agent disconnected"})
 
                 elif msg_type == "ping":
                     pass  # browser keepalive response

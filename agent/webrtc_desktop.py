@@ -1,10 +1,13 @@
 """WebRTC Remote Desktop Agent Module
 
 Provides screen capture with a **layered capture strategy**:
-  1. Direct BitBlt — works on physical machines and VMs with an active display
-  2. RDP Loopback Session — for headless VMs: auto-spawns an RDP connection to
+  1. DXGI Desktop Duplication (via dxcam) — fastest, uses GPU-accelerated
+     frame acquisition; works on physical machines and VMs with a WDDM driver
+  2. BitBlt (GDI) via helper subprocess — works on physical machines and VMs
+     with an active display
+  3. RDP Loopback Session — for headless VMs: auto-spawns an RDP connection to
      localhost so the display adapter holds a real framebuffer, then BitBlt works
-  3. Fallback black frames — if nothing else works
+  4. Fallback black frames — if nothing else works
 
 Signaling flows over the existing agent WebSocket connection:
 - Backend sends webrtc_start -> agent creates PeerConnection + offer
@@ -199,6 +202,155 @@ def test_bitblt_available():
     except Exception as e:
         log.warning(f"BitBlt test exception: {e}")
         return False
+
+
+def enumerate_sessions():
+    """Enumerate all Windows Terminal Services sessions.
+
+    Returns a list of dicts:
+    [
+        {
+            "session_id": int,
+            "session_name": str,        # e.g. "Console", "RDP-Tcp#0"
+            "state": str,               # "Active", "Connected", "Disconnected", etc.
+            "username": str,            # logged-on user or ""
+            "client_name": str,         # RDP client name or ""
+            "is_console": bool,         # True if this is the console session
+        },
+        ...
+    ]
+    """
+    if sys.platform != "win32":
+        return []
+
+    import ctypes
+    import ctypes.wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    wtsapi32 = ctypes.windll.wtsapi32
+
+    # WTS_SESSION_INFO structure
+    class WTS_SESSION_INFO(ctypes.Structure):
+        _fields_ = [
+            ("SessionId", ctypes.wintypes.DWORD),
+            ("pWinStationName", ctypes.c_wchar_p),
+            ("State", ctypes.wintypes.INT),
+        ]
+
+    WTS_CURRENT_SERVER_HANDLE = ctypes.c_void_p(0)
+
+    # WTS_CONNECTSTATE_CLASS enum values
+    WTS_STATE_MAP = {
+        0: "Inactive",
+        1: "Active",
+        2: "Connected",
+        3: "Disconnected",
+        4: "Listen",
+        5: "Reset",
+        6: "Down",
+        7: "Init",
+    }
+
+    # Session info class constants for WTSQuerySessionInformationW
+    WTSUserName = 5
+    WTSClientName = 9
+
+    ppSessionInfo = ctypes.c_void_p()
+    pCount = ctypes.wintypes.DWORD()
+
+    # Set up WTSEnumerateSessionsW
+    wtsapi32.WTSEnumerateSessionsW.argtypes = [
+        ctypes.c_void_p,       # hServer
+        ctypes.wintypes.DWORD,  # Reserved
+        ctypes.wintypes.DWORD,  # Version
+        ctypes.POINTER(ctypes.c_void_p),  # ppSessionInfo
+        ctypes.POINTER(ctypes.wintypes.DWORD),  # pCount
+    ]
+    wtsapi32.WTSEnumerateSessionsW.restype = ctypes.wintypes.BOOL
+
+    # Set up WTSQuerySessionInformationW
+    wtsapi32.WTSQuerySessionInformationW.argtypes = [
+        ctypes.c_void_p,       # hServer
+        ctypes.wintypes.DWORD,  # SessionId
+        ctypes.wintypes.DWORD,  # WTSInfoClass
+        ctypes.POINTER(ctypes.c_wchar_p),  # ppBuffer
+        ctypes.POINTER(ctypes.wintypes.DWORD),  # pBytesReturned
+    ]
+    wtsapi32.WTSQuerySessionInformationW.restype = ctypes.wintypes.BOOL
+
+    # Set up WTSFreeMemory
+    wtsapi32.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+    wtsapi32.WTSFreeMemory.restype = None
+
+    console_session_id = 0
+    try:
+        kernel32.WTSGetActiveConsoleSessionId.restype = ctypes.wintypes.UINT
+        console_session_id = kernel32.WTSGetActiveConsoleSessionId()
+    except Exception:
+        pass
+
+    if not wtsapi32.WTSEnumerateSessionsW(
+        WTS_CURRENT_SERVER_HANDLE, 0, 1,
+        ctypes.byref(ppSessionInfo), ctypes.byref(pCount)
+    ):
+        log.warning(f"WTSEnumerateSessionsW failed: {kernel32.GetLastError()}")
+        return []
+
+    results = []
+    try:
+        # Cast the buffer to an array of WTS_SESSION_INFO
+        session_array = ctypes.cast(
+            ppSessionInfo,
+            ctypes.POINTER(WTS_SESSION_INFO * pCount.value)
+        )
+
+        for i in range(pCount.value):
+            si = session_array.contents[i]
+            session_id = si.SessionId
+            session_name = si.pWinStationName or ""
+            state = WTS_STATE_MAP.get(si.State, f"Unknown({si.State})")
+
+            # Skip services (SessionId=0) and idle sessions
+            if session_id == 0 or state in ("Listen", "Init", "Reset", "Down"):
+                continue
+
+            # Query username
+            username = ""
+            ppBuffer = ctypes.c_wchar_p()
+            bytes_returned = ctypes.wintypes.DWORD()
+            if wtsapi32.WTSQuerySessionInformationW(
+                WTS_CURRENT_SERVER_HANDLE, session_id, WTSUserName,
+                ctypes.byref(ppBuffer), ctypes.byref(bytes_returned)
+            ):
+                username = ppBuffer.value or ""
+                wtsapi32.WTSFreeMemory(ppBuffer)
+
+            # Query client name
+            client_name = ""
+            ppBuffer2 = ctypes.c_wchar_p()
+            if wtsapi32.WTSQuerySessionInformationW(
+                WTS_CURRENT_SERVER_HANDLE, session_id, WTSClientName,
+                ctypes.byref(ppBuffer2), ctypes.byref(bytes_returned)
+            ):
+                client_name = ppBuffer2.value or ""
+                wtsapi32.WTSFreeMemory(ppBuffer2)
+
+            is_console = (session_id == console_session_id)
+
+            results.append({
+                "session_id": session_id,
+                "session_name": session_name,
+                "state": state,
+                "username": username,
+                "client_name": client_name,
+                "is_console": is_console,
+            })
+    finally:
+        wtsapi32.WTSFreeMemory(ppSessionInfo)
+
+    # Sort: console first, then Active, then by session_id
+    results.sort(key=lambda s: (0 if s["is_console"] else 1, 0 if s["state"] == "Active" else 1, s["session_id"]))
+    return results
 
 
 # ──────────────────────── RDP Loopback Session ────────────────────────
@@ -1048,23 +1200,24 @@ class RDPLoopbackSession:
 # ──────────────────────── Screen Capture ────────────────────────
 
 import base64
-_HELPER_B64 = "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJTY3JlZW4gY2FwdHVyZSBoZWxwZXIgZm9yIFdlYlJUQyAtIHNwYXduZWQgaW4gdGhlIHVzZXIncyBpbnRlcmFjdGl2ZSBzZXNzaW9uLgoKT3V0cHV0cyByYXcgUkdCIGZyYW1lcyBvdmVyIHN0ZG91dCBhczoKICBoZWFkZXI6IDggYnl0ZXMgKHdpZHRoOjQgTEUgdWludDMyLCBoZWlnaHQ6NCBMRSB1aW50MzIpCiAgZm9sbG93ZWQgYnkgcmF3IFJHQiBwaXhlbCBkYXRhICh3aWR0aCAqIGhlaWdodCAqIDMgYnl0ZXMpCiAgVGhpcyByZXBlYXRzIGZvciBlYWNoIGZyYW1lIHJlcXVlc3QuCgpSZWFkcyBhIHNpbmdsZSBieXRlIGZyb20gc3RkaW4gdG8gdHJpZ2dlciBlYWNoIGNhcHR1cmUgKGZsb3cgY29udHJvbCkuCk9uIGVycm9yOiB3cml0ZXMgd2lkdGg9MCwgaGVpZ2h0PTAgZm9sbG93ZWQgYnkgZXJyb3IgbWVzc2FnZSBieXRlcy4KClRoZSBwcm9jZXNzIGlzIGxhdW5jaGVkIHZpYSBXVFNRdWVyeVVzZXJUb2tlbiArIENyZWF0ZVByb2Nlc3NBc1VzZXJXIGZyb20gdGhlClNZU1RFTSBhZ2VudCwgc28gaXQgcnVucyBpbiB0aGUgaW50ZXJhY3RpdmUgZGVza3RvcCBzZXNzaW9uIGFuZCBjYW4gY2FwdHVyZSB0aGUgc2NyZWVuLgoiIiIKaW1wb3J0IHN5cywgc3RydWN0LCBjdHlwZXMsIGN0eXBlcy53aW50eXBlcywgb3MKCkxPR19GSUxFID0gcidDOlxVc2Vyc1xQdWJsaWNcaGVscGVyX2RlYnVnLmxvZycKCmRlZiBsb2cobXNnKToKICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oTE9HX0ZJTEUsICdhJykgYXMgZjoKICAgICAgICAgICAgaW1wb3J0IHRpbWUKICAgICAgICAgICAgZi53cml0ZShmJ3t0aW1lLnRpbWUoKTouMWZ9OiB7bXNnfVxuJykKICAgICAgICAgICAgZi5mbHVzaCgpCiAgICBleGNlcHQ6CiAgICAgICAgcGFzcwoKZGVmIG1haW4oKToKICAgIGxvZygnSGVscGVyIHN0YXJ0aW5nJykKICAgIHVzZXIzMiA9IGN0eXBlcy53aW5kbGwudXNlcjMyCiAgICBnZGkzMiA9IGN0eXBlcy53aW5kbGwuZ2RpMzIKICAgIGtlcm5lbDMyID0gY3R5cGVzLndpbmRsbC5rZXJuZWwzMgoKICAgIFNSQ0NPUFkgPSAweDAwQ0MwMDIwCgogICAgIyBTZXQgYmluYXJ5IG1vZGUgZm9yIHN0ZGluL3N0ZG91dAogICAgaW1wb3J0IG1zdmNydAogICAgbXN2Y3J0LnNldG1vZGUoc3lzLnN0ZGluLmZpbGVubygpLCBvcy5PX0JJTkFSWSkKICAgIG1zdmNydC5zZXRtb2RlKHN5cy5zdGRvdXQuZmlsZW5vKCksIG9zLk9fQklOQVJZKQogICAgbG9nKCdCaW5hcnkgbW9kZSBzZXQnKQoKICAgIHRyeToKICAgICAgICB3ID0gdXNlcjMyLkdldFN5c3RlbU1ldHJpY3MoMCkKICAgICAgICBoID0gdXNlcjMyLkdldFN5c3RlbU1ldHJpY3MoMSkKICAgICAgICBsb2coZidTY3JlZW46IHt3fXh7aH0nKQogICAgICAgIGlmIHcgPD0gMCBvciBoIDw9IDA6CiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiQmFkIGRpbWVuc2lvbnMiKQogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgIHJldHVybgoKICAgICAgICBoZGMgPSB1c2VyMzIuR2V0REMoMCkKICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQogICAgICAgIGxvZyhmJ0dldERDOiBoZGM9e2hkY30gZXJyPXtlcnJ9JykKICAgICAgICBpZiBub3QgaGRjOgogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci53cml0ZShzdHJ1Y3QucGFjaygnPElJJywgMCwgMCkgKyBiIkdldERDIGZhaWxlZCIpCiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLmZsdXNoKCkKICAgICAgICAgICAgcmV0dXJuCgogICAgICAgIG1lbSA9IGdkaTMyLkNyZWF0ZUNvbXBhdGlibGVEQyhoZGMpCiAgICAgICAgZXJyID0ga2VybmVsMzIuR2V0TGFzdEVycm9yKCkKICAgICAgICBsb2coZidDcmVhdGVDb21wYXRpYmxlREM6IG1lbT17bWVtfSBlcnI9e2Vycn0nKQogICAgICAgIAogICAgICAgIGJtcCA9IGdkaTMyLkNyZWF0ZUNvbXBhdGlibGVCaXRtYXAoaGRjLCB3LCBoKQogICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgbG9nKGYnQ3JlYXRlQ29tcGF0aWJsZUJpdG1hcDogYm1wPXtibXB9IGVycj17ZXJyfScpCiAgICAgICAgCiAgICAgICAgb2xkID0gZ2RpMzIuU2VsZWN0T2JqZWN0KG1lbSwgYm1wKQogICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgbG9nKGYnU2VsZWN0T2JqZWN0OiBvbGQ9e29sZH0gZXJyPXtlcnJ9JykKCiAgICAgICAgIyBUcnkgb25lIGluaXRpYWwgQml0Qmx0IHRvIHZlcmlmeQogICAgICAgIHJldCA9IGdkaTMyLkJpdEJsdChtZW0sIDAsIDAsIHcsIGgsIGhkYywgMCwgMCwgU1JDQ09QWSkKICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQogICAgICAgIGxvZyhmJ0luaXRpYWwgQml0Qmx0OiByZXQ9e3JldH0gZXJyPXtlcnJ9JykKICAgICAgICAKICAgICAgICBpbXBvcnQgbnVtcHkgYXMgbnAKICAgICAgICBmcmFtZV9udW0gPSAwCiAgICAgICAgd2hpbGUgVHJ1ZToKICAgICAgICAgICAgIyBXYWl0IGZvciBzaWduYWwgdG8gY2FwdHVyZSBuZXh0IGZyYW1lCiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIGNtZCA9IHN5cy5zdGRpbi5idWZmZXIucmVhZCgxKQogICAgICAgICAgICAgICAgaWYgbm90IGNtZCBvciBjbWQgPT0gYidceDAwJzoKICAgICAgICAgICAgICAgICAgICBsb2coJ0dvdCBzdG9wIHNpZ25hbCcpCiAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgICAgICAgICAgbG9nKGYnc3RkaW4gcmVhZCBlcnJvcjoge2V9JykKICAgICAgICAgICAgICAgIGJyZWFrCgogICAgICAgICAgICAjIFJlLWNhcHR1cmUgc2NyZWVuCiAgICAgICAgICAgIGtlcm5lbDMyLlNldExhc3RFcnJvcigwKQogICAgICAgICAgICByZXQgPSBnZGkzMi5CaXRCbHQobWVtLCAwLCAwLCB3LCBoLCBoZGMsIDAsIDAsIFNSQ0NPUFkpCiAgICAgICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgICAgIGlmIG5vdCByZXQ6CiAgICAgICAgICAgICAgICBsb2coZidCaXRCbHQgZmFpbGVkOiByZXQ9e3JldH0gZXJyPXtlcnJ9JykKICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiQml0Qmx0IGZhaWxlZCIpCiAgICAgICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgY2xhc3MgQklIKGN0eXBlcy5TdHJ1Y3R1cmUpOgogICAgICAgICAgICAgICAgX2ZpZWxkc18gPSBbCiAgICAgICAgICAgICAgICAgICAgKCJiaVNpemUiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlXaWR0aCIsIGN0eXBlcy53aW50eXBlcy5MT05HKSwKICAgICAgICAgICAgICAgICAgICAoImJpSGVpZ2h0IiwgY3R5cGVzLndpbnR5cGVzLkxPTkcpLAogICAgICAgICAgICAgICAgICAgICgiYmlQbGFuZXMiLCBjdHlwZXMud2ludHlwZXMuV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaUJpdENvdW50IiwgY3R5cGVzLndpbnR5cGVzLldPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlDb21wcmVzc2lvbiIsIGN0eXBlcy53aW50eXBlcy5EV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaVNpemVJbWFnZSIsIGN0eXBlcy53aW50eXBlcy5EV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaVhQZWxzUGVyTWV0ZXIiLCBjdHlwZXMud2ludHlwZXMuTE9ORyksCiAgICAgICAgICAgICAgICAgICAgKCJiaVlQZWxzUGVyTWV0ZXIiLCBjdHlwZXMud2ludHlwZXMuTE9ORyksCiAgICAgICAgICAgICAgICAgICAgKCJiaUNsclVzZWQiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlDbHJJbXBvcnRhbnQiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgXQoKICAgICAgICAgICAgYm1pID0gQklIKCkKICAgICAgICAgICAgYm1pLmJpU2l6ZSA9IGN0eXBlcy5zaXplb2YoQklIKQogICAgICAgICAgICBibWkuYmlXaWR0aCA9IHcKICAgICAgICAgICAgYm1pLmJpSGVpZ2h0ID0gLWggICMgdG9wLWRvd24KICAgICAgICAgICAgYm1pLmJpUGxhbmVzID0gMQogICAgICAgICAgICBibWkuYmlCaXRDb3VudCA9IDMyICAjIEJHUkEKCgogICAgICAgICAgICBidWYgPSBjdHlwZXMuY3JlYXRlX3N0cmluZ19idWZmZXIodyAqIGggKiA0KQogICAgICAgICAgICByb3dzID0gZ2RpMzIuR2V0RElCaXRzKG1lbSwgYm1wLCAwLCBoLCBidWYsIGN0eXBlcy5ieXJlZihibWkpLCAwKQogICAgICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQoKICAgICAgICAgICAgaWYgcm93cyA9PSAwOgogICAgICAgICAgICAgICAgbG9nKGYnR2V0RElCaXRzIDAgcm93cywgZXJyPXtlcnJ9JykKICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiR2V0RElCaXRzIDAgcm93cyIpCiAgICAgICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgIyBDb252ZXJ0IEJHUkEgLT4gUkdCIGluLXBsYWNlCiAgICAgICAgICAgIGFyciA9IG5wLmZyb21idWZmZXIoYnVmLCBkdHlwZT1ucC51aW50OCkucmVzaGFwZShoLCB3LCA0KQogICAgICAgICAgICByZ2IgPSBucC5hc2NvbnRpZ3VvdXNhcnJheShhcnJbOiwgOiwgMjo6LTFdKSAgIyBCR1JBLT5SR0I6IGNoYW5uZWxzIDIsMSwwCiAgICAgICAgICAgIAogICAgICAgICAgICBpZiBmcmFtZV9udW0gPT0gMDoKICAgICAgICAgICAgICAgIHNhbXBsZSA9IGFyclswLCAwXS50b2xpc3QoKQogICAgICAgICAgICAgICAgbG9nKGYnRmlyc3QgZnJhbWU6IHJvd3M9e3Jvd3N9LCBwaXhlbD17c2FtcGxlfScpCgogICAgICAgICAgICBoZWFkZXIgPSBzdHJ1Y3QucGFjaygnPElJJywgdywgaCkKICAgICAgICAgICAgc3lzLnN0ZG91dC5idWZmZXIud3JpdGUoaGVhZGVyICsgcmdiLnRvYnl0ZXMoKSkKICAgICAgICAgICAgc3lzLnN0ZG91dC5idWZmZXIuZmx1c2goKQogICAgICAgICAgICBmcmFtZV9udW0gKz0gMQoKICAgICAgICAjIENsZWFudXAKICAgICAgICBnZGkzMi5TZWxlY3RPYmplY3QobWVtLCBvbGQpCiAgICAgICAgZ2RpMzIuRGVsZXRlT2JqZWN0KGJtcCkKICAgICAgICBnZGkzMi5EZWxldGVEQyhtZW0pCiAgICAgICAgdXNlcjMyLlJlbGVhc2VEQygwLCBoZGMpCiAgICAgICAgbG9nKGYnQ2xlYW5lZCB1cCBhZnRlciB7ZnJhbWVfbnVtfSBmcmFtZXMnKQoKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICBsb2coZidFeGNlcHRpb246IHtlfScpCiAgICAgICAgdHJ5OgogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci53cml0ZShzdHJ1Y3QucGFjaygnPElJJywgMCwgMCkgKyBzdHIoZSkuZW5jb2RlKCd1dGYtOCcpKQogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgZXhjZXB0OgogICAgICAgICAgICBwYXNzCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg=="
+_HELPER_B64 = "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJTY3JlZW4gY2FwdHVyZSBoZWxwZXIgZm9yIFdlYlJUQyAtIHNwYXduZWQgaW4gdGhlIHVzZXIncyBpbnRlcmFjdGl2ZSBzZXNzaW9uLgoKT3V0cHV0cyByYXcgUkdCIGZyYW1lcyBvdmVyIHN0ZG91dCBhczoKICBoZWFkZXI6IDggYnl0ZXMgKHdpZHRoOjQgTEUgdWludDMyLCBoZWlnaHQ6NCBMRSB1aW50MzIpCiAgZm9sbG93ZWQgYnkgcmF3IFJHQiBwaXhlbCBkYXRhICh3aWR0aCAqIGhlaWdodCAqIDMgYnl0ZXMpCiAgVGhpcyByZXBlYXRzIGZvciBlYWNoIGZyYW1lIHJlcXVlc3QuCgpSZWFkcyBhIHNpbmdsZSBieXRlIGZyb20gc3RkaW4gdG8gdHJpZ2dlciBlYWNoIGNhcHR1cmUgKGZsb3cgY29udHJvbCkuCk9uIGVycm9yOiB3cml0ZXMgd2lkdGg9MCwgaGVpZ2h0PTAgZm9sbG93ZWQgYnkgZXJyb3IgbWVzc2FnZSBieXRlcy4KClRoZSBwcm9jZXNzIGlzIGxhdW5jaGVkIHZpYSBXVFNRdWVyeVVzZXJUb2tlbiArIENyZWF0ZVByb2Nlc3NBc1VzZXJXIGZyb20gdGhlClNZU1RFTSBhZ2VudCwgc28gaXQgcnVucyBpbiB0aGUgaW50ZXJhY3RpdmUgZGVza3RvcCBzZXNzaW9uIGFuZCBjYW4gY2FwdHVyZSB0aGUgc2NyZWVuLgoiIiIKaW1wb3J0IHN5cywgc3RydWN0LCBjdHlwZXMsIGN0eXBlcy53aW50eXBlcywgb3MKCkxPR19GSUxFID0gcidDOlxVc2Vyc1xQdWJsaWNcaGVscGVyX2RlYnVnLmxvZycKCmRlZiBsb2cobXNnKToKICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oTE9HX0ZJTEUsICdhJykgYXMgZjoKICAgICAgICAgICAgaW1wb3J0IHRpbWUKICAgICAgICAgICAgZi53cml0ZShmJ3t0aW1lLnRpbWUoKTouMWZ9OiB7bXNnfVxuJykKICAgICAgICAgICAgZi5mbHVzaCgpCiAgICBleGNlcHQ6CiAgICAgICAgcGFzcwoKZGVmIG1haW4oKToKICAgIGxvZygnSGVscGVyIHN0YXJ0aW5nJykKICAgIHVzZXIzMiA9IGN0eXBlcy53aW5kbGwudXNlcjMyCiAgICBnZGkzMiA9IGN0eXBlcy53aW5kbGwuZ2RpMzIKICAgIGtlcm5lbDMyID0gY3R5cGVzLndpbmRsbC5rZXJuZWwzMgoKICAgIFNSQ0NPUFkgPSAweDAwQ0MwMDIwCgogICAgIyBTZXQgYmluYXJ5IG1vZGUgZm9yIHN0ZGluL3N0ZG91dAogICAgaW1wb3J0IG1zdmNydAogICAgbXN2Y3J0LnNldG1vZGUoc3lzLnN0ZGluLmZpbGVubygpLCBvcy5PX0JJTkFSWSkKICAgIG1zdmNydC5zZXRtb2RlKHN5cy5zdGRvdXQuZmlsZW5vKCksIG9zLk9fQklOQVJZKQogICAgbG9nKCdCaW5hcnkgbW9kZSBzZXQnKQoKICAgICMgLS0tIFdpbmRvdyBTdGF0aW9uIC8gRGVza3RvcCBzd2l0Y2hpbmcgLS0tCiAgICAjIEV2ZW4gd2hlbiBsYXVuY2hlZCB2aWEgQ3JlYXRlUHJvY2Vzc0FzVXNlclcgaW4gdGhlIGNvcnJlY3Qgc2Vzc2lvbiwKICAgICMgdGhlIHByb2Nlc3MgbWF5IG5vdCBiZSBhdHRhY2hlZCB0byB0aGUgcmlnaHQgd2luZG93IHN0YXRpb24vZGVza3RvcC4KICAgICMgRXhwbGljaXRseSBzd2l0Y2ggdG8gV2luU3RhMCBhbmQgdHJ5IERlZmF1bHQgdGhlbiBXaW5sb2dvbiBkZXNrdG9wcy4KICAgIHRyeToKICAgICAgICBXSU5TVEFfQUxMID0gMHgwMzdGCiAgICAgICAgREVTS1RPUF9BTEwgPSAweDAxRkYKCiAgICAgICAgIyBPcGVuIFdpblN0YTAgKHRoZSBpbnRlcmFjdGl2ZSB3aW5kb3cgc3RhdGlvbikKICAgICAgICB1c2VyMzIuT3BlbldpbmRvd1N0YXRpb25XLnJlc3R5cGUgPSBjdHlwZXMuY192b2lkX3AKICAgICAgICB1c2VyMzIuT3BlbldpbmRvd1N0YXRpb25XLmFyZ3R5cGVzID0gW2N0eXBlcy5jX3djaGFyX3AsIGN0eXBlcy5jX2Jvb2wsIGN0eXBlcy5jX3Vsb25nXQogICAgICAgIGhXaW5TdGEgPSB1c2VyMzIuT3BlbldpbmRvd1N0YXRpb25XKCJXaW5TdGEwIiwgRmFsc2UsIFdJTlNUQV9BTEwpCiAgICAgICAgaWYgaFdpblN0YToKICAgICAgICAgICAgbG9nKGYnT3BlbmVkIFdpblN0YTA6IHtoV2luU3RhfScpCiAgICAgICAgICAgIGlmIHVzZXIzMi5TZXRQcm9jZXNzV2luZG93U3RhdGlvbihoV2luU3RhKToKICAgICAgICAgICAgICAgIGxvZygnU2V0UHJvY2Vzc1dpbmRvd1N0YXRpb24oV2luU3RhMCkgT0snKQogICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgbG9nKGYnU2V0UHJvY2Vzc1dpbmRvd1N0YXRpb24gZmFpbGVkOiB7a2VybmVsMzIuR2V0TGFzdEVycm9yKCl9JykKCiAgICAgICAgICAgICMgVHJ5IERlZmF1bHQgZGVza3RvcCBmaXJzdCAodXNlciBkZXNrdG9wKSwgdGhlbiBXaW5sb2dvbiAobG9naW4gc2NyZWVuKQogICAgICAgICAgICB1c2VyMzIuT3BlbkRlc2t0b3BXLnJlc3R5cGUgPSBjdHlwZXMuY192b2lkX3AKICAgICAgICAgICAgdXNlcjMyLk9wZW5EZXNrdG9wVy5hcmd0eXBlcyA9IFtjdHlwZXMuY193Y2hhcl9wLCBjdHlwZXMuY191bG9uZywgY3R5cGVzLmNfYm9vbCwgY3R5cGVzLmNfdWxvbmddCiAgICAgICAgICAgIGZvciBkZXNrX25hbWUgaW4gWyJEZWZhdWx0IiwgIldpbmxvZ29uIl06CiAgICAgICAgICAgICAgICBoRGVzayA9IHVzZXIzMi5PcGVuRGVza3RvcFcoZGVza19uYW1lLCAwLCBGYWxzZSwgREVTS1RPUF9BTEwpCiAgICAgICAgICAgICAgICBpZiBoRGVzazoKICAgICAgICAgICAgICAgICAgICBpZiB1c2VyMzIuU2V0VGhyZWFkRGVza3RvcChoRGVzayk6CiAgICAgICAgICAgICAgICAgICAgICAgIGxvZyhmJ1NldFRocmVhZERlc2t0b3Aoe2Rlc2tfbmFtZX0pIE9LJykKICAgICAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgICAgICAgICBsb2coZidTZXRUaHJlYWREZXNrdG9wKHtkZXNrX25hbWV9KSBmYWlsZWQ6IHtrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKX0nKQogICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICBsb2coZidPcGVuRGVza3RvcCh7ZGVza19uYW1lfSkgZmFpbGVkOiB7a2VybmVsMzIuR2V0TGFzdEVycm9yKCl9JykKICAgICAgICBlbHNlOgogICAgICAgICAgICBsb2coZidPcGVuV2luZG93U3RhdGlvbihXaW5TdGEwKSBmYWlsZWQ6IHtrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKX0nKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIGxvZyhmJ1dpblN0YS9EZXNrdG9wIHN3aXRjaCBlcnJvcjoge2V9JykKICAgICMgLS0tIEVuZCBXaW5kb3cgU3RhdGlvbiAvIERlc2t0b3Agc3dpdGNoaW5nIC0tLQoKICAgIHRyeToKICAgICAgICB3ID0gdXNlcjMyLkdldFN5c3RlbU1ldHJpY3MoMCkKICAgICAgICBoID0gdXNlcjMyLkdldFN5c3RlbU1ldHJpY3MoMSkKICAgICAgICBsb2coZidTY3JlZW46IHt3fXh7aH0nKQogICAgICAgIGlmIHcgPD0gMCBvciBoIDw9IDA6CiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiQmFkIGRpbWVuc2lvbnMiKQogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgIHJldHVybgoKICAgICAgICBoZGMgPSB1c2VyMzIuR2V0REMoMCkKICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQogICAgICAgIGxvZyhmJ0dldERDOiBoZGM9e2hkY30gZXJyPXtlcnJ9JykKICAgICAgICBpZiBub3QgaGRjOgogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci53cml0ZShzdHJ1Y3QucGFjaygnPElJJywgMCwgMCkgKyBiIkdldERDIGZhaWxlZCIpCiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLmZsdXNoKCkKICAgICAgICAgICAgcmV0dXJuCgogICAgICAgIG1lbSA9IGdkaTMyLkNyZWF0ZUNvbXBhdGlibGVEQyhoZGMpCiAgICAgICAgZXJyID0ga2VybmVsMzIuR2V0TGFzdEVycm9yKCkKICAgICAgICBsb2coZidDcmVhdGVDb21wYXRpYmxlREM6IG1lbT17bWVtfSBlcnI9e2Vycn0nKQogICAgICAgIAogICAgICAgIGJtcCA9IGdkaTMyLkNyZWF0ZUNvbXBhdGlibGVCaXRtYXAoaGRjLCB3LCBoKQogICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgbG9nKGYnQ3JlYXRlQ29tcGF0aWJsZUJpdG1hcDogYm1wPXtibXB9IGVycj17ZXJyfScpCiAgICAgICAgCiAgICAgICAgb2xkID0gZ2RpMzIuU2VsZWN0T2JqZWN0KG1lbSwgYm1wKQogICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgbG9nKGYnU2VsZWN0T2JqZWN0OiBvbGQ9e29sZH0gZXJyPXtlcnJ9JykKCiAgICAgICAgIyBUcnkgb25lIGluaXRpYWwgQml0Qmx0IHRvIHZlcmlmeQogICAgICAgIHJldCA9IGdkaTMyLkJpdEJsdChtZW0sIDAsIDAsIHcsIGgsIGhkYywgMCwgMCwgU1JDQ09QWSkKICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQogICAgICAgIGxvZyhmJ0luaXRpYWwgQml0Qmx0OiByZXQ9e3JldH0gZXJyPXtlcnJ9JykKICAgICAgICAKICAgICAgICBpbXBvcnQgbnVtcHkgYXMgbnAKICAgICAgICBmcmFtZV9udW0gPSAwCiAgICAgICAgd2hpbGUgVHJ1ZToKICAgICAgICAgICAgIyBXYWl0IGZvciBzaWduYWwgdG8gY2FwdHVyZSBuZXh0IGZyYW1lCiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIGNtZCA9IHN5cy5zdGRpbi5idWZmZXIucmVhZCgxKQogICAgICAgICAgICAgICAgaWYgbm90IGNtZCBvciBjbWQgPT0gYidceDAwJzoKICAgICAgICAgICAgICAgICAgICBsb2coJ0dvdCBzdG9wIHNpZ25hbCcpCiAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgICAgICAgICAgbG9nKGYnc3RkaW4gcmVhZCBlcnJvcjoge2V9JykKICAgICAgICAgICAgICAgIGJyZWFrCgogICAgICAgICAgICAjIFJlLWNhcHR1cmUgc2NyZWVuCiAgICAgICAgICAgIGtlcm5lbDMyLlNldExhc3RFcnJvcigwKQogICAgICAgICAgICByZXQgPSBnZGkzMi5CaXRCbHQobWVtLCAwLCAwLCB3LCBoLCBoZGMsIDAsIDAsIFNSQ0NPUFkpCiAgICAgICAgICAgIGVyciA9IGtlcm5lbDMyLkdldExhc3RFcnJvcigpCiAgICAgICAgICAgIGlmIG5vdCByZXQ6CiAgICAgICAgICAgICAgICBsb2coZidCaXRCbHQgZmFpbGVkOiByZXQ9e3JldH0gZXJyPXtlcnJ9JykKICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiQml0Qmx0IGZhaWxlZCIpCiAgICAgICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgY2xhc3MgQk1JKGN0eXBlcy5TdHJ1Y3R1cmUpOgogICAgICAgICAgICAgICAgX2ZpZWxkc18gPSBbCiAgICAgICAgICAgICAgICAgICAgKCJiaVNpemUiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlXaWR0aCIsIGN0eXBlcy53aW50eXBlcy5MT05HKSwKICAgICAgICAgICAgICAgICAgICAoImJpSGVpZ2h0IiwgY3R5cGVzLndpbnR5cGVzLkxPTkcpLAogICAgICAgICAgICAgICAgICAgICgiYmlQbGFuZXMiLCBjdHlwZXMud2ludHlwZXMuV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaUJpdENvdW50IiwgY3R5cGVzLndpbnR5cGVzLldPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlDb21wcmVzc2lvbiIsIGN0eXBlcy53aW50eXBlcy5EV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaVNpemVJbWFnZSIsIGN0eXBlcy53aW50eXBlcy5EV09SRCksCiAgICAgICAgICAgICAgICAgICAgKCJiaVhQZWxzUGVyTWV0ZXIiLCBjdHlwZXMud2ludHlwZXMuTE9ORyksCiAgICAgICAgICAgICAgICAgICAgKCJiaVlQZWxzUGVyTWV0ZXIiLCBjdHlwZXMud2ludHlwZXMuTE9ORyksCiAgICAgICAgICAgICAgICAgICAgKCJiaUNsclVzZWQiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgICAgICgiYmlDbHJJbXBvcnRhbnQiLCBjdHlwZXMud2ludHlwZXMuRFdPUkQpLAogICAgICAgICAgICAgICAgXQoKICAgICAgICAgICAgYm1pID0gQk1JKCkKICAgICAgICAgICAgYm1pLmJpU2l6ZSA9IGN0eXBlcy5zaXplb2YoQk1JKQogICAgICAgICAgICBibWkuYmlXaWR0aCA9IHcKICAgICAgICAgICAgYm1pLmJpSGVpZ2h0ID0gLWggICMgdG9wLWRvd24KICAgICAgICAgICAgYm1pLmJpUGxhbmVzID0gMQogICAgICAgICAgICBibWkuYmlCaXRDb3VudCA9IDMyICAjIEJHUkEKCgogICAgICAgICAgICBidWYgPSBjdHlwZXMuY3JlYXRlX3N0cmluZ19idWZmZXIodyAqIGggKiA0KQogICAgICAgICAgICByb3dzID0gZ2RpMzIuR2V0RElCaXRzKG1lbSwgYm1wLCAwLCBoLCBidWYsIGN0eXBlcy5ieXJlZihibWkpLCAwKQogICAgICAgICAgICBlcnIgPSBrZXJuZWwzMi5HZXRMYXN0RXJyb3IoKQoKICAgICAgICAgICAgaWYgcm93cyA9PSAwOgogICAgICAgICAgICAgICAgbG9nKGYnR2V0RElCaXRzIDAgcm93cywgZXJyPXtlcnJ9JykKICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIGIiR2V0RElCaXRzIDAgcm93cyIpCiAgICAgICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgIyBDb252ZXJ0IEJHUkEgLT4gUkdCIGluLXBsYWNlCiAgICAgICAgICAgIGFyciA9IG5wLmZyb21idWZmZXIoYnVmLCBkdHlwZT1ucC51aW50OCkucmVzaGFwZShoLCB3LCA0KQogICAgICAgICAgICByZ2IgPSBucC5hc2NvbnRpZ3VvdXNhcnJheShhcnJbOiwgOiwgMjo6LTFdKSAgIyBCR1JBLT5SR0I6IGNoYW5uZWwgaW5kaWNlcyAyLDEsMCAoc2tpcCBhbHBoYSkKICAgICAgICAgICAgCiAgICAgICAgICAgIGlmIGZyYW1lX251bSA9PSAwOgogICAgICAgICAgICAgICAgc2FtcGxlID0gYXJyWzAsIDBdLnRvbGlzdCgpCiAgICAgICAgICAgICAgICBsb2coZidGaXJzdCBmcmFtZTogcm93cz17cm93c30sIHBpeGVsPXtzYW1wbGV9JykKCiAgICAgICAgICAgIGhlYWRlciA9IHN0cnVjdC5wYWNrKCc8SUknLCB3LCBoKQogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci53cml0ZShoZWFkZXIgKyByZ2IudG9ieXRlcygpKQogICAgICAgICAgICBzeXMuc3Rkb3V0LmJ1ZmZlci5mbHVzaCgpCiAgICAgICAgICAgIGZyYW1lX251bSArPSAxCgogICAgICAgICMgQ2xlYW51cAogICAgICAgIGdkaTMyLlNlbGVjdE9iamVjdChtZW0sIG9sZCkKICAgICAgICBnZGkzMi5EZWxldGVPYmplY3QoYm1wKQogICAgICAgIGdkaTMyLkRlbGV0ZURDKG1lbSkKICAgICAgICB1c2VyMzIuUmVsZWFzZURDKDAsIGhkYykKICAgICAgICBsb2coZidDbGVhbmVkIHVwIGFmdGVyIHtmcmFtZV9udW19IGZyYW1lcycpCgogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIGxvZyhmJ0V4Y2VwdGlvbjoge2V9JykKICAgICAgICB0cnk6CiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKHN0cnVjdC5wYWNrKCc8SUknLCAwLCAwKSArIHN0cihlKS5lbmNvZGUoJ3V0Zi04JykpCiAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLmZsdXNoKCkKICAgICAgICBleGNlcHQ6CiAgICAgICAgICAgIHBhc3MKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK"
 _WEBCAPTURE_HELPER_SCRIPT = base64.b64decode(_HELPER_B64).decode("utf-8")
 
 
 class ScreenCapture:
-    """Screen capture using subprocess helper in interactive session.
+    """Screen capture with layered capture strategy.
     
     Layered capture strategy:
-      1. Test BitBlt directly — if real pixels, proceed with helper
-      2. If all-black and in VM → start RDP loopback session → retry
-      3. If RDP loopback fails → fall back to black frames
+      1. DXGI Desktop Duplication (via dxcam) — fastest, GPU-accelerated
+      2. BitBlt helper subprocess in interactive session (fallback)
+      3. RDP loopback + BitBlt (for headless VMs)
+      4. Fallback black frames
     
     The helper process runs via WTSQueryUserToken + CreateProcessAsUserW in the
     user's interactive desktop session where BitBlt captures real pixels.
     """
 
-    def __init__(self, rdp_user: str = "", rdp_pass: str = ""):
+    def __init__(self, rdp_user: str = "", rdp_pass: str = "", target_session: int = -1):
         self._method = None
         self._started = False
         self.width = 1920
@@ -1074,7 +1227,9 @@ class ScreenCapture:
         self._last_frame = None
         self._frame_count = 0
         self._rdp_session = None
-        self._capture_mode = "unknown"  # For logging: "direct", "rdp_loopback", "failed"
+        self._capture_mode = "unknown"  # For logging: "dxcam_direct", "helper", "direct", "rdp_loopback", "dxcam", "failed"
+        self._target_session = target_session
+        self._dxcam = None  # dxcam camera instance for DXGI Desktop Duplication
         
         # RDP credentials: from args, then env vars, then config file
         self._rdp_user = rdp_user or os.environ.get("OPENRMM_RDP_USER", "")
@@ -1119,35 +1274,63 @@ class ScreenCapture:
                 log.error(f"Failed to write capture helper to fallback: {e2}")
                 return
         
-        # ── Layer 0: Try capture helper in interactive session first ──
+        # ── Layer 0: DXGI Desktop Duplication (via dxcam) — fastest, primary method ──
+        # dxcam wraps DXGI Desktop Duplication API which uses GPU-accelerated
+        # frame acquisition. It must be created and used from the same process,
+        # and must run in the user's interactive session (not SYSTEM/Session 0).
+        # Since this agent runs in the user's session (launched via
+        # CreateProcessAsUserW or from the user's desktop), dxcam works directly.
+        log.info("Attempting DXGI Desktop Duplication capture (dxcam)...")
+        try:
+            import dxcam
+            cam = dxcam.create(output_idx=0, output_color="rgb")
+            frame = cam.grab()
+            if frame is not None:
+                self.height, self.width = frame.shape[:2]
+                self._dxcam = cam
+                self._method = "dxcam_direct"
+                self._started = True
+                self._capture_mode = "dxcam_direct"
+                log.info(f"Screen capture started: DXGI Desktop Duplication (dxcam) {self.width}x{self.height}")
+                return
+            else:
+                # dxcam created but grab returned None — display may not be ready
+                cam.release()
+                log.warning("dxcam created but grab() returned None — display may not be active")
+        except ImportError:
+            log.info("dxcam not installed — DXGI Desktop Duplication unavailable")
+        except Exception as e:
+            log.warning(f"DXGI Desktop Duplication (dxcam) failed: {e}")
+        
+        # ── Layer 1: BitBlt capture helper in interactive session ──
         # BitBlt test from Session 0 is unreliable on headless VMs — it returns
         # all-black even when VDD (Virtual Display Driver) provides a real display
         # to Session 1. The helper process runs via CreateProcessAsUserW in the
         # user's interactive desktop where BitBlt captures real pixels.
-        log.info("Attempting launch of capture helper in interactive session...")
-        if self._launch_helper():
+        log.info("Attempting launch of BitBlt capture helper in interactive session...")
+        if self._launch_helper(target_session_id=self._target_session):
             self._method = "subprocess"
             self._started = True
             self._capture_mode = "helper"
-            log.info("Screen capture started: helper mode (interactive session)")
+            log.info("Screen capture started: BitBlt helper mode (interactive session)")
             return
         else:
             log.warning("Capture helper launch failed, trying fallback methods...")
         
-        # ── Layer 1: Fallback — test direct BitBlt from this process ──
+        # ── Layer 2: Fallback — test direct BitBlt from this process ──
         log.info("Testing direct BitBlt capture...")
         bitblt_ok = test_bitblt_available()
         
         if bitblt_ok:
             log.info("Direct BitBlt works — retrying helper launch")
-            if self._launch_helper():
+            if self._launch_helper(target_session_id=self._target_session):
                 self._method = "subprocess"
                 self._started = True
                 self._capture_mode = "direct"
-                log.info("Screen capture started: direct mode")
+                log.info("Screen capture started: BitBlt direct mode")
                 return
         
-        # ── Layer 2: RDP loopback fallback ──
+        # ── Layer 3: RDP loopback fallback ──
         vm = is_virtual_machine()
         log.info(f"BitBlt returned all-black. VM detected: {vm}")
         
@@ -1162,28 +1345,12 @@ class ScreenCapture:
             
             if bitblt_ok2:
                 log.info("BitBlt works with RDP loopback — retrying helper")
-                if self._launch_helper():
+                if self._launch_helper(target_session_id=self._target_session):
                     self._method = "subprocess"
                     self._started = True
                     self._capture_mode = "rdp_loopback"
                     log.info("Screen capture started: RDP loopback mode")
                     return
-        
-        # ── Layer 3: dxcam fallback ──
-        try:
-            import dxcam
-            cam = dxcam.create(output_idx=0, output_color="rgb")
-            frame = cam.grab()
-            if frame is not None:
-                self.height, self.width = frame.shape[:2]
-                cam.release()
-                self._method = "dxcam_direct"
-                self._started = True
-                self._capture_mode = "dxcam_direct"
-                log.info(f"Screen capture: dxcam direct {self.width}x{self.height}")
-                return
-        except Exception as e:
-            log.warning(f"dxcam not available: {e}")
         
         # ── Nothing worked ──
         self._capture_mode = "failed"
@@ -1217,7 +1384,75 @@ class ScreenCapture:
         if self._rdp_session and self._rdp_session.is_connected:
             await self._rdp_session.start_watchdog()
     
-    def _launch_helper(self):
+    def configure_auto_logon(self):
+        """Configure Windows auto-logon so the console session always has a logged-in user.
+        
+        Checks if auto-logon is already configured via registry key
+        HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon.
+        If AutoAdminLogon != "1", sets the required values using credentials
+        from OPENRMM_RDP_USER and OPENRMM_RDP_PASS environment variables.
+        
+        Returns True if auto-logon is already set or was just configured, 
+        False if credentials are missing or configuration failed.
+        """
+        try:
+            import winreg
+        except ImportError:
+            log.error("configure_auto_logon: winreg module not available (not Windows?)")
+            return False
+        
+        reg_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+        
+        try:
+            # Check if auto-logon is already configured
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path, 0, winreg.KEY_READ) as key:
+                try:
+                    auto_logon_val, _ = winreg.QueryValueEx(key, "AutoAdminLogon")
+                    if str(auto_logon_val) == "1":
+                        log.info("Auto-logon is already configured (AutoAdminLogon=1)")
+                        return True
+                except FileNotFoundError:
+                    pass
+            
+            # Auto-logon not configured — check for credentials
+            username = os.environ.get("OPENRMM_RDP_USER", "")
+            password = os.environ.get("OPENRMM_RDP_PASS", "")
+            
+            if not username or not password:
+                log.warning(
+                    "Auto-logon not configured and credentials missing: "
+                    "set OPENRMM_RDP_USER and OPENRMM_RDP_PASS environment variables"
+                )
+                return False
+            
+            # Get domain (hostname) for DefaultDomainName
+            domain = os.environ.get("COMPUTERNAME", "")
+            
+            log.info(f"Configuring auto-logon for user '{username}' on domain '{domain}'")
+            
+            # Write auto-logon registry values
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path, 0, 
+                                     winreg.KEY_WRITE) as key:
+                    winreg.SetValueEx(key, "AutoAdminLogon", 0, winreg.REG_SZ, "1")
+                    winreg.SetValueEx(key, "DefaultUserName", 0, winreg.REG_SZ, username)
+                    winreg.SetValueEx(key, "DefaultPassword", 0, winreg.REG_SZ, password)
+                    winreg.SetValueEx(key, "DefaultDomainName", 0, winreg.REG_SZ, domain)
+                
+                log.info("Auto-logon configured successfully — reboot required for it to take effect")
+                return True
+            except PermissionError as e:
+                log.error(f"configure_auto_logon: permission denied writing registry: {e}")
+                return False
+            except Exception as e:
+                log.error(f"configure_auto_logon: failed to write registry: {e}")
+                return False
+            
+        except Exception as e:
+            log.error(f"configure_auto_logon: unexpected error: {e}", exc_info=True)
+            return False
+    
+    def _launch_helper(self, target_session_id: int = -1):
         """Launch a persistent capture helper process in the interactive session.
         
         Uses WTSQueryUserToken to get the logged-on user's token, then
@@ -1232,27 +1467,72 @@ class ScreenCapture:
         userenv = ctypes.windll.userenv
         
         try:
-            kernel32.WTSGetActiveConsoleSessionId.restype = ctypes.wintypes.UINT
-            console_session_id = kernel32.WTSGetActiveConsoleSessionId()
-            log.info(f"Capture helper: console session ID = {console_session_id}")
-            
             hUserToken = ctypes.wintypes.HANDLE()
             target_session = None
             
-            for sid in [console_session_id, 1, 2, 3, 4, 5]:
-                if sid == 0xFFFFFFFF or sid == 0:
-                    continue
-                if wtsapi32.WTSQueryUserToken(sid, ctypes.byref(hUserToken)):
-                    target_session = sid
-                    log.info(f"WTSQueryUserToken({sid}) succeeded, token={hUserToken.value}")
-                    break
-                else:
-                    err = kernel32.GetLastError()
-                    log.debug(f"WTSQueryUserToken({sid}) failed: {err}")
-            
-            if target_session is None:
-                log.error("WTSQueryUserToken failed for all sessions - no logged-in user?")
-                return False
+            if target_session_id >= 0:
+                # Use the explicitly specified session
+                sessions = enumerate_sessions()
+                for s in sessions:
+                    if s['session_id'] == target_session_id:
+                        target_session = target_session_id
+                        log.info(f"Using explicit target session: {target_session_id}")
+                        if not wtsapi32.WTSQueryUserToken(target_session_id, ctypes.byref(hUserToken)):
+                            err = kernel32.GetLastError()
+                            log.warning(f"WTSQueryUserToken({target_session_id}) failed: {err}, falling back to SYSTEM launch")
+                            # Fall back to launching as SYSTEM with desktop assignment
+                            # The helper script handles window station switching internally
+                            return self._launch_helper_as_system(target_session_id)
+                        break
+                if target_session is None:
+                    log.error(f"Session {target_session_id} not found in enumerate_sessions()")
+                    return False
+            else:
+                # Auto-detect: find a session with a logged-in user
+                kernel32.WTSGetActiveConsoleSessionId.restype = ctypes.wintypes.UINT
+                console_session_id = kernel32.WTSGetActiveConsoleSessionId()
+                log.info(f"Capture helper: console session ID = {console_session_id}")
+                
+                # First, try WTSQueryUserToken on the console session
+                if console_session_id != 0 and console_session_id != 0xFFFFFFFF:
+                    if wtsapi32.WTSQueryUserToken(console_session_id, ctypes.byref(hUserToken)):
+                        target_session = console_session_id
+                        log.info(f"WTSQueryUserToken({console_session_id}) succeeded, token={hUserToken.value}")
+                    else:
+                        err = kernel32.GetLastError()
+                        log.debug(f"WTSQueryUserToken({console_session_id}) failed: {err}")
+                
+                # If console session has no user, try other sessions
+                if target_session is None:
+                    for sid in [1, 2, 3, 4, 5]:
+                        if sid == console_session_id:
+                            continue  # Already tried
+                        if wtsapi32.WTSQueryUserToken(sid, ctypes.byref(hUserToken)):
+                            target_session = sid
+                            log.info(f"WTSQueryUserToken({sid}) succeeded, token={hUserToken.value}")
+                            break
+                        else:
+                            err = kernel32.GetLastError()
+                            log.debug(f"WTSQueryUserToken({sid}) failed: {err}")
+                
+                if target_session is None:
+                    # No logged-in user found in any session
+                    # Check auto-logon configuration before falling through to SYSTEM
+                    auto_logon_ok = self.configure_auto_logon()
+                    if auto_logon_ok:
+                        log.warning(
+                            "No logged-in user on console session and auto-logon is configured. "
+                            "The machine needs rebooting for auto-logon to take effect and enable console capture."
+                        )
+                    else:
+                        log.warning(
+                            "No logged-in user on console session and auto-logon could not be configured. "
+                            "Set OPENRMM_RDP_USER and OPENRMM_RDP_PASS environment variables and reboot "
+                            "for reliable console session capture."
+                        )
+                    # Do NOT fall through to _launch_helper_as_system for console capture —
+                    # SYSTEM fallback cannot capture screens without a logged-in user
+                    return False
             
             try:
                 MAXIMUM_ALLOWED = 0x2000000
@@ -1473,15 +1753,293 @@ class ScreenCapture:
             log.error(f"Failed to launch capture helper: {e}", exc_info=True)
             return False
 
+    def _launch_helper_as_system(self, target_session_id: int):
+        """Launch capture helper as SYSTEM process in the target session's desktop.
+        
+        Used when WTSQueryUserToken fails (no logged-in user in the session).
+        The helper script handles window station/desktop switching internally,
+        so we just need to launch it in the right session with the right desktop.
+        
+        Strategy: Use CreateProcessAsUserW with the SYSTEM token itself,
+        but set STARTUPINFO.lpDesktop = "WinSta0\\Default" and the session ID
+        via SetTokenInformation(TokenSessionId).
+        """
+        import ctypes
+        import ctypes.wintypes
+        import struct
+        
+        log.warning(
+            "SYSTEM fallback capture: screen capture without a logged-in user is not "
+            "supported by most display adapters. Configure auto-logon for reliable "
+            "console capture."
+        )
+        log.info(f"_launch_helper_as_system: launching in session {target_session_id}")
+        
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+        
+        # Get current process token (SYSTEM token)
+        # GetCurrentProcess() returns a pseudo-handle; OpenProcessToken needs proper types
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        hCurrentProcess = kernel32.GetCurrentProcess()
+        
+        advapi32.OpenProcessToken.argtypes = [ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.POINTER(ctypes.wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = ctypes.wintypes.BOOL
+        
+        hToken = ctypes.wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(hCurrentProcess, 0x0002 | 0x0008, ctypes.byref(hToken)):  # TOKEN_DUPLICATE | TOKEN_QUERY
+            err = kernel32.GetLastError()
+            log.error(f"OpenProcessToken failed: {err}")
+            return False
+        
+        try:
+            # Duplicate the token so we can modify it
+            MAXIMUM_ALLOWED = 0x2000000
+            TOKEN_PRIMARY = 1
+            SECURITY_DELEGATION = 3
+            
+            hDupToken = ctypes.wintypes.HANDLE()
+            advapi32.DuplicateTokenEx.argtypes = [
+                ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.c_void_p,
+                ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
+                ctypes.POINTER(ctypes.wintypes.HANDLE)
+            ]
+            advapi32.DuplicateTokenEx.restype = ctypes.wintypes.BOOL
+            
+            if not advapi32.DuplicateTokenEx(
+                hToken.value, MAXIMUM_ALLOWED, None,
+                SECURITY_DELEGATION, TOKEN_PRIMARY,
+                ctypes.byref(hDupToken)
+            ):
+                err = kernel32.GetLastError()
+                log.error(f"DuplicateTokenEx for SYSTEM fallback failed: {err}")
+                return False
+            
+            log.info(f"Duplicated SYSTEM token: {hDupToken.value}")
+            
+            try:
+                # Set the session ID on the token so the process runs in the target session
+                # TokenSessionInformation class
+                TOKEN_SESSION_ID = 12  # TokenSessionId info class
+                
+                # Set the session ID in the duplicated token
+                session_id_val = ctypes.wintypes.ULONG(target_session_id)
+                advapi32.SetTokenInformation.argtypes = [
+                    ctypes.c_void_p, ctypes.wintypes.DWORD,
+                    ctypes.c_void_p, ctypes.wintypes.DWORD
+                ]
+                advapi32.SetTokenInformation.restype = ctypes.wintypes.BOOL
+                
+                if not advapi32.SetTokenInformation(
+                    hDupToken.value, TOKEN_SESSION_ID,
+                    ctypes.byref(session_id_val), ctypes.sizeof(session_id_val)
+                ):
+                    err = kernel32.GetLastError()
+                    log.warning(f"SetTokenInformation(TokenSessionId={target_session_id}) failed: {err} - process may run in session 0")
+                    # Not fatal - the helper's internal WinSta switching may still work
+                else:
+                    log.info(f"Set token session ID to {target_session_id}")
+                
+                # Create pipes for stdin/stdout
+                SECURITY_ATTRIBUTES = type("SECURITY_ATTRIBUTES", (ctypes.Structure,), {
+                    "_fields_": [
+                        ("nLength", ctypes.wintypes.DWORD),
+                        ("lpSecurityDescriptor", ctypes.c_void_p),
+                        ("bInheritHandle", ctypes.wintypes.BOOL),
+                    ]
+                })
+                
+                sa = SECURITY_ATTRIBUTES()
+                sa.nLength = ctypes.sizeof(SECURITY_ATTRIBUTES)
+                sa.lpSecurityDescriptor = None
+                sa.bInheritHandle = True
+                
+                h_stdin_read = ctypes.wintypes.HANDLE()
+                h_stdin_write = ctypes.wintypes.HANDLE()
+                h_stdout_read = ctypes.wintypes.HANDLE()
+                h_stdout_write = ctypes.wintypes.HANDLE()
+                
+                kernel32.CreatePipe(ctypes.byref(h_stdin_read), ctypes.byref(h_stdin_write), ctypes.byref(sa), 0)
+                kernel32.CreatePipe(ctypes.byref(h_stdout_read), ctypes.byref(h_stdout_write), ctypes.byref(sa), 0)
+                
+                # Make read/write handles non-inheritable
+                kernel32.SetHandleInformation(h_stdin_write, 1, 0)  # HANDLE_FLAG_INHERIT=1
+                kernel32.SetHandleInformation(h_stdout_read, 1, 0)
+                
+                # Write the helper script if not already present
+                if not self._helper_path or not os.path.exists(self._helper_path):
+                    self._helper_path = os.path.join(
+                        os.environ.get('PUBLIC', r'C:\Users\Public'), 'openrmm_webrtc_helper.py'
+                    )
+                    try:
+                        with open(self._helper_path, 'w') as f:
+                            f.write(_WEBCAPTURE_HELPER_SCRIPT)
+                        log.info(f"Wrote helper to {self._helper_path}")
+                    except Exception as e:
+                        log.error(f"Failed to write helper: {e}")
+                        import tempfile
+                        self._helper_path = os.path.join(tempfile.gettempdir(), 'openrmm_webrtc_helper.py')
+                        with open(self._helper_path, 'w') as f:
+                            f.write(_WEBCAPTURE_HELPER_SCRIPT)
+                
+                class STARTUPINFOW(ctypes.Structure):
+                    _fields_ = [
+                        ("cb", ctypes.wintypes.DWORD),
+                        ("lpReserved", ctypes.c_wchar_p),
+                        ("lpDesktop", ctypes.c_wchar_p),
+                        ("lpTitle", ctypes.c_wchar_p),
+                        ("dwX", ctypes.wintypes.DWORD), ("dwY", ctypes.wintypes.DWORD),
+                        ("dwXSize", ctypes.wintypes.DWORD), ("dwYSize", ctypes.wintypes.DWORD),
+                        ("dwXCountChars", ctypes.wintypes.DWORD), ("dwYCountChars", ctypes.wintypes.DWORD),
+                        ("dwFillAttribute", ctypes.wintypes.DWORD),
+                        ("dwFlags", ctypes.wintypes.DWORD),
+                        ("wShowWindow", ctypes.wintypes.WORD),
+                        ("cbReserved2", ctypes.wintypes.WORD),
+                        ("lpReserved2", ctypes.c_void_p),
+                        ("hStdInput", ctypes.c_void_p),
+                        ("hStdOutput", ctypes.c_void_p),
+                        ("hStdError", ctypes.c_void_p),
+                    ]
+                
+                class PROCESS_INFORMATION(ctypes.Structure):
+                    _fields_ = [
+                        ("hProcess", ctypes.c_void_p),
+                        ("hThread", ctypes.c_void_p),
+                        ("dwProcessId", ctypes.wintypes.DWORD),
+                        ("dwThreadId", ctypes.wintypes.DWORD),
+                    ]
+                
+                si = STARTUPINFOW()
+                si.cb = ctypes.sizeof(STARTUPINFOW)
+                # Critical: assign to the interactive desktop in the target session
+                si.lpDesktop = "WinSta0\\Default"
+                si.dwFlags = 0x100  # STARTF_USESTDHANDLES
+                si.hStdInput = h_stdin_read.value
+                si.hStdOutput = h_stdout_write.value
+                si.hStdError = h_stdout_write.value
+                
+                pi = PROCESS_INFORMATION()
+                
+                cmdline = f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{self._helper_path}"'
+                
+                CREATE_NO_WINDOW = 0x08000000
+                CREATE_UNICODE_ENVIRONMENT = 0x00000400
+                
+                log.info(f"Launching SYSTEM capture helper for session {target_session_id}: {cmdline[:80]}")
+                
+                advapi32.CreateProcessAsUserW.argtypes = [
+                    ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                    ctypes.c_void_p, ctypes.c_void_p, ctypes.wintypes.BOOL,
+                    ctypes.wintypes.DWORD, ctypes.c_void_p, ctypes.c_wchar_p,
+                    ctypes.c_void_p, ctypes.c_void_p,
+                ]
+                advapi32.CreateProcessAsUserW.restype = ctypes.wintypes.BOOL
+                
+                result = advapi32.CreateProcessAsUserW(
+                    hDupToken.value,
+                    None,
+                    cmdline,
+                    None, None, True,  # inherit handles
+                    CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                    None, None,
+                    ctypes.byref(si),
+                    ctypes.byref(pi),
+                )
+                
+                err = kernel32.GetLastError()
+                
+                if not result:
+                    log.error(f"CreateProcessAsUserW (SYSTEM fallback) failed: {err}")
+                    return False
+                
+                log.info(f"SYSTEM helper launched: PID={pi.dwProcessId}")
+                
+                # Close unneeded handles
+                kernel32.CloseHandle(h_stdin_read)
+                kernel32.CloseHandle(h_stdout_write)
+                kernel32.CloseHandle(pi.hProcess)
+                kernel32.CloseHandle(pi.hThread)
+                
+                self._helper_proc = True  # Mark as subprocess mode
+                self._h_stdin_write = h_stdin_write
+                self._h_stdout_read = h_stdout_read
+                
+                # Signal first capture and read response
+                signal = ctypes.create_string_buffer(b'\x01')
+                written = ctypes.wintypes.DWORD()
+                kernel32.WriteFile(h_stdin_write, signal, 1, ctypes.byref(written), None)
+                
+                header_buf = ctypes.create_string_buffer(8)
+                bytes_read = ctypes.wintypes.DWORD()
+                if not kernel32.ReadFile(h_stdout_read, header_buf, 8, ctypes.byref(bytes_read), None) or bytes_read.value != 8:
+                    log.error("Failed to read initial frame header from SYSTEM helper")
+                    return False
+                
+                w, h = struct.unpack('<II', header_buf.raw[:8])
+                if w == 0 or h == 0:
+                    error_msg = ctypes.create_string_buffer(256)
+                    kernel32.ReadFile(h_stdout_read, error_msg, 256, ctypes.byref(bytes_read), None)
+                    err_text = error_msg.raw[:bytes_read.value].decode('utf-8', errors='replace')
+                    log.error(f"SYSTEM capture helper error: {err_text}")
+                    return False
+                
+                self.width = w
+                self.height = h
+                
+                frame_size = w * h * 3
+                frame_buf = ctypes.create_string_buffer(frame_size)
+                if not kernel32.ReadFile(h_stdout_read, frame_buf, frame_size, ctypes.byref(bytes_read), None) or bytes_read.value != frame_size:
+                    log.error(f"Failed to read initial frame data: got {bytes_read.value}/{frame_size}")
+                    return False
+                
+                import numpy as np
+                self._last_frame = np.frombuffer(frame_buf.raw[:frame_size], dtype=np.uint8).reshape(h, w, 3)
+                self._frame_count = 1
+                log.info(f"SYSTEM helper started: {w}x{h}, first frame captured OK")
+                return True
+                
+            finally:
+                kernel32.CloseHandle(hDupToken)
+        finally:
+            kernel32.CloseHandle(hToken)
+
     def grab(self):
         """Capture a frame and return as numpy RGB array (height, width, 3)."""
         if not self._started:
             self.start()
         
+        if self._method == "dxcam_direct":
+            return self._grab_dxcam()
+        
         if self._method == "subprocess" and self._helper_proc:
             return self._grab_subprocess()
         
         return None
+
+    def _grab_dxcam(self):
+        """Grab a frame using DXGI Desktop Duplication via dxcam.
+        
+        dxcam.grab() returns a numpy array in RGB format (height, width, 3)
+        or None if no new frame is available. We reuse the camera instance
+        stored in self._dxcam for efficient frame acquisition.
+        """
+        try:
+            if self._dxcam is None:
+                log.warning("dxcam camera instance is None, cannot grab")
+                return self._last_frame
+            
+            frame = self._dxcam.grab()
+            if frame is not None:
+                self.height, self.width = frame.shape[:2]
+                self._last_frame = frame
+                self._frame_count += 1
+                return self._last_frame
+            else:
+                # No new frame since last grab — return the previous one
+                return self._last_frame
+        except Exception as e:
+            log.error(f"dxcam grab failed: {e}")
+            return self._last_frame
 
     def _grab_subprocess(self):
         """Grab a frame from the persistent helper process."""
@@ -1532,7 +2090,16 @@ class ScreenCapture:
             return self._last_frame
 
     def stop(self):
-        """Stop capture and terminate helper process."""
+        """Stop capture, release resources, and terminate helper process."""
+        # Release dxcam DXGI Desktop Duplication instance
+        if self._dxcam is not None:
+            try:
+                self._dxcam.release()
+                log.info("dxcam camera released")
+            except Exception as e:
+                log.warning(f"Error releasing dxcam: {e}")
+            self._dxcam = None
+        
         if self._helper_proc:
             import ctypes
             kernel32 = ctypes.windll.kernel32
@@ -1571,14 +2138,15 @@ class ScreenCapture:
 class WebRTCDesktopSession:
     """Manages a WebRTC remote desktop session: capture → encode → send."""
 
-    def __init__(self, session_id: str, turn_config: dict, agent_ws):
+    def __init__(self, session_id: str, turn_config: dict, agent_ws, target_session: int = -1):
         self.session_id = session_id
         self.turn_config = turn_config
         self.agent_ws = agent_ws
         self.pc = None
         self.video_track = None
         self.input_channel = None
-        self.capture = ScreenCapture()
+        self._target_session = target_session
+        self.capture = ScreenCapture(target_session=target_session)
         self._running = False
 
     async def start(self, fps: int = 30):
@@ -1598,7 +2166,7 @@ class WebRTCDesktopSession:
         # Start screen capture (with layered strategy)
         self.capture.start()
         # Launch input injection helper in Session 1
-        self._launch_input_helper()
+        self._launch_input_helper(self._target_session)
         log.warning(f"Screen capture started: _started={self.capture._started}, method={self.capture._method}, mode={self.capture._capture_mode}")
         await self._send_log(f"Screen capture started: _started={self.capture._started}, method={self.capture._method}, mode={self.capture._capture_mode}")
         if not self.capture._started:
@@ -1863,7 +2431,7 @@ class WebRTCDesktopSession:
             try:
                 import ctypes
                 kernel32 = ctypes.windll.kernel32
-                pipe_name = "\\\\.\pipe\openrmm_input"
+                pipe_name = f"\\\\.\pipe\openrmm_input_{self._target_session if self._target_session >= 0 else 0}"
                 kernel32.WaitNamedPipeW(pipe_name, 5000)
                 GENERIC_WRITE = 0x40000000
                 OPEN_EXISTING = 3
@@ -1896,9 +2464,9 @@ class WebRTCDesktopSession:
             self._input_pipe_handle = None
             return False
 
-    def _launch_input_helper(self):
+    def _launch_input_helper(self, target_session: int = -1):
         """Launch input injection helper in Session 1 via CreateProcessAsUserW.
-        Uses named pipe \\.\\pipe\\openrmm_input for communication.
+        Uses named pipe \\\\.\\pipe\\openrmm_input for communication.
         """
         if sys.platform != "win32":
             return False
@@ -1912,16 +2480,26 @@ class WebRTCDesktopSession:
         
         hUserToken = wintypes.HANDLE()
         found_session = None
-        for sid in [1, 2, 3, 4, 5]:
-            if wtsapi32.WTSQueryUserToken(sid, ctypes.byref(hUserToken)):
-                found_session = sid
-                log.info(f"Input helper: WTSQueryUserToken({sid}) succeeded")
-                break
-        if found_session is None:
-            console = kernel32.WTSGetActiveConsoleSessionId()
-            if console not in [0, 0xFFFFFFFF] and wtsapi32.WTSQueryUserToken(console, ctypes.byref(hUserToken)):
-                found_session = console
-                log.info(f"Input helper: WTSQueryUserToken(console={console}) succeeded")
+        
+        if target_session >= 0:
+            # Use the explicitly specified session
+            if wtsapi32.WTSQueryUserToken(target_session, ctypes.byref(hUserToken)):
+                found_session = target_session
+                log.info(f"Input helper: WTSQueryUserToken({target_session}) succeeded (explicit)")
+            else:
+                err = kernel32.GetLastError()
+                log.error(f"Input helper: WTSQueryUserToken({target_session}) failed: {err}")
+        else:
+            for sid in [1, 2, 3, 4, 5]:
+                if wtsapi32.WTSQueryUserToken(sid, ctypes.byref(hUserToken)):
+                    found_session = sid
+                    log.info(f"Input helper: WTSQueryUserToken({sid}) succeeded")
+                    break
+            if found_session is None:
+                console = kernel32.WTSGetActiveConsoleSessionId()
+                if console not in [0, 0xFFFFFFFF] and wtsapi32.WTSQueryUserToken(console, ctypes.byref(hUserToken)):
+                    found_session = console
+                    log.info(f"Input helper: WTSQueryUserToken(console={console}) succeeded")
         if found_session is None:
             log.error("Input helper: WTSQueryUserToken failed for all sessions")
             return False
@@ -1937,7 +2515,8 @@ class WebRTCDesktopSession:
             
             try:
                 script_path = r"C:\Program Files\OpenRMM\input_helper.py"
-                cmdline = f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{script_path}"'
+                session_arg = target_session if target_session >= 0 else 0
+                cmdline = f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{script_path}" --session {session_arg}'
                 
                 class SIW(ctypes.Structure):
                     _fields_ = [
@@ -2137,7 +2716,11 @@ class WebRTCDesktopSession:
 
 
 class ScreenCaptureTrack(MediaStreamTrack):
-    """WebRTC VideoStreamTrack that captures the screen via BitBlt helper."""
+    """WebRTC VideoStreamTrack that captures the screen.
+    
+    Uses the ScreenCapture instance which prioritizes DXGI Desktop Duplication
+    (dxcam) and falls back to BitBlt helper subprocess.
+    """
 
     kind = "video"
 

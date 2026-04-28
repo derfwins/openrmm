@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { getIcon } from '../utils/iconMap'
 import type {
   AutomationTask,
   AutomationTriggerType,
@@ -14,18 +15,18 @@ import type {
 type Tab = 'tasks' | 'history'
 
 const TRIGGER_OPTIONS: { type: AutomationTriggerType; label: string; icon: string }[] = [
-  { type: 'schedule', label: 'Schedule', icon: '📅' },
-  { type: 'alert', label: 'Alert', icon: '🔔' },
-  { type: 'event', label: 'Event', icon: '⚡' },
-  { type: 'threshold', label: 'Threshold', icon: '📊' },
+  { type: 'schedule', label: 'Schedule', icon: 'gear' },
+  { type: 'alert', label: 'Alert', icon: 'bell' },
+  { type: 'event', label: 'Event', icon: 'wrench' },
+  { type: 'threshold', label: 'Threshold', icon: 'chart' },
 ]
 
 const ACTION_OPTIONS: { type: AutomationActionType; label: string; icon: string }[] = [
-  { type: 'reboot', label: 'Reboot Device', icon: '🔄' },
-  { type: 'run_script', label: 'Run Script', icon: '📜' },
-  { type: 'patch', label: 'Install Patches', icon: '🛡️' },
-  { type: 'send_email', label: 'Send Email', icon: '📧' },
-  { type: 'create_ticket', label: 'Create Ticket', icon: '🎫' },
+  { type: 'reboot', label: 'Reboot Device', icon: 'wrench' },
+  { type: 'run_script', label: 'Run Script', icon: 'clipboard' },
+  { type: 'patch', label: 'Install Patches', icon: 'lock' },
+  { type: 'send_email', label: 'Send Email', icon: 'bell' },
+  { type: 'create_ticket', label: 'Create Ticket', icon: 'clipboard' },
 ]
 
 const TARGET_OPTIONS: { type: AutomationTargets['type']; label: string }[] = [
@@ -138,7 +139,7 @@ const AutomationBuilder = () => {
             <div key={task.id} className="bg-gray-800 rounded-xl border border-gray-700 p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="text-xl">{TRIGGER_OPTIONS.find(t => t.type === task.trigger.type)?.icon}</span>
+                  <span className="text-xl">{getIcon(TRIGGER_OPTIONS.find(t => t.type === task.trigger.type)?.icon as string)}</span>
                   <div>
                     <h3 className="text-white font-medium">{task.name}</h3>
                     <p className="text-gray-400 text-xs mt-0.5">{task.description}</p>
@@ -163,7 +164,7 @@ const AutomationBuilder = () => {
               {/* Task details */}
               <div className="flex flex-wrap gap-4 text-xs text-gray-400">
                 <span className="flex items-center gap-1">
-                  {TRIGGER_OPTIONS.find(t => t.type === task.trigger.type)?.icon}
+                  {getIcon(TRIGGER_OPTIONS.find(t => t.type === task.trigger.type)?.icon as string)}
                   {task.trigger.type === 'schedule' ? task.trigger.schedule?.label || task.trigger.schedule?.cron : task.trigger.type}
                 </span>
                 <span className="flex items-center gap-1">
@@ -340,7 +341,7 @@ const TaskBuilderModal = ({ task, onClose, onSave }: { task: AutomationTask | nu
                   className={`p-3 rounded-lg text-center transition-colors ${
                     triggerType === opt.type ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}>
-                  <div className="text-xl mb-1">{opt.icon}</div>
+                  <div className="text-xl mb-1">{getIcon(opt.icon as string)}</div>
                   <div className="text-xs">{opt.label}</div>
                 </button>
               ))}
@@ -422,7 +423,7 @@ const TaskBuilderModal = ({ task, onClose, onSave }: { task: AutomationTask | nu
               {actions.map((action, idx) => (
                 <div key={action.id} className="flex items-center gap-3 bg-gray-900 rounded-lg p-3 border border-gray-700">
                   <span className="text-gray-500 text-xs font-mono w-6">{idx + 1}.</span>
-                  <span className="text-lg">{ACTION_OPTIONS.find(o => o.type === action.type)?.icon}</span>
+                  <span className="text-lg">{getIcon(ACTION_OPTIONS.find(o => o.type === action.type)?.icon as string)}</span>
                   <span className="text-white text-sm flex-1">{ACTION_OPTIONS.find(o => o.type === action.type)?.label}</span>
                   <label className="flex items-center gap-1.5 text-xs text-gray-400">
                     <input type="checkbox" checked={action.continueOnError} onChange={e => updateAction(action.id, { continueOnError: e.target.checked })}
@@ -436,7 +437,7 @@ const TaskBuilderModal = ({ task, onClose, onSave }: { task: AutomationTask | nu
                 {ACTION_OPTIONS.map(opt => (
                   <button key={opt.type} onClick={() => addAction(opt.type)}
                     className="px-3 py-1.5 text-xs rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 flex items-center gap-1.5">
-                    <span>{opt.icon}</span> {opt.label}
+                    <span>{getIcon(opt.icon as string)}</span> {opt.label}
                   </button>
                 ))}
               </div>

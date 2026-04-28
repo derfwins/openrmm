@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { IconChartBar, IconBell, IconWrench, IconMonitor, IconClipboardList, IconGear, IconDashboard, IconDevices, IconScripts, IconAutomation, IconTerminal, IconCopy, IconReports, IconUsers, IconSoftware, IconClients, IconAI, IconInstall, IconAntenna } from './Icons'
+
+const iconMap: Record<string, ReactNode> = {
+  chart: <IconChartBar size={18} />,
+  bell: <IconBell size={18} />,
+  wrench: <IconWrench size={18} />,
+  monitor: <IconMonitor size={18} />,
+  clipboard: <IconClipboardList size={18} />,
+  gear: <IconGear size={18} />,
+  dashboard: <IconDashboard size={18} />,
+  devices: <IconDevices size={18} />,
+  scripts: <IconScripts size={18} />,
+  automation: <IconAutomation size={18} />,
+  terminal: <IconTerminal size={18} />,
+  install: <IconInstall size={18} />,
+  reports: <IconReports size={18} />,
+  users: <IconUsers size={18} />,
+  software: <IconSoftware size={18} />,
+  clients: <IconClients size={18} />,
+  ai: <IconAI size={18} />,
+  lock: <IconLock size={18} />,
+}
 
 interface Action {
   id: string
@@ -12,22 +35,22 @@ interface Action {
 }
 
 const actions: Action[] = [
-  { id: 'dashboard', label: 'Go to Dashboard', description: 'View system overview', icon: '📊', path: '/dashboard', category: 'Navigation' },
-  { id: 'devices', label: 'View All Devices', description: 'List and manage devices', icon: '💻', path: '/devices', category: 'Navigation' },
-  { id: 'alerts', label: 'View Alerts', description: 'Check system alerts', icon: '🔔', path: '/alerts', category: 'Navigation' },
-  { id: 'scripts', label: 'Script Library', description: 'Manage and run scripts', icon: '📜', path: '/scripts', category: 'Navigation' },
-  { id: 'patches', label: 'Patch Manager', description: 'Manage patches and updates', icon: '🔧', path: '/patches', category: 'Navigation' },
-  { id: 'automation', label: 'Automation Builder', description: 'Create automated tasks', icon: '⚡', path: '/automation', category: 'Navigation' },
-  { id: 'remote', label: 'Remote Desktop', description: 'Connect to a device remotely', icon: '🖥️', path: '/remote', category: 'Tools' },
-  { id: 'terminal', label: 'Open Terminal', description: 'Start a remote shell session', icon: '💻', path: '/terminal', category: 'Tools' },
-  { id: 'ai', label: 'AI Copilot', description: 'Ask AI for help', icon: '🤖', path: '/ai', category: 'Tools' },
-  { id: 'install', label: 'Deploy Agent', description: 'Install agent on new device', icon: '📥', path: '/install', category: 'Actions' },
-  { id: 'reports', label: 'Generate Report', description: 'Create system report', icon: '📈', path: '/reports', category: 'Actions' },
-  { id: 'audit', label: 'Audit Log', description: 'View system audit trail', icon: '📋', path: '/audit', category: 'Navigation' },
-  { id: 'users', label: 'Manage Users', description: 'User and role management', icon: '👥', path: '/users', category: 'Navigation' },
-  { id: 'settings', label: 'Settings', description: 'System configuration', icon: '⚙️', path: '/settings', category: 'Navigation' },
-  { id: 'software', label: 'Software Manager', description: 'Manage installed software', icon: '📦', path: '/software', category: 'Navigation' },
-  { id: 'clients', label: 'Clients & Sites', description: 'Manage clients and sites', icon: '🏢', path: '/clients', category: 'Navigation' },
+  { id: 'dashboard', label: 'Go to Dashboard', description: 'View system overview', icon: 'chart', path: '/dashboard', category: 'Navigation' },
+  { id: 'devices', label: 'View All Devices', description: 'List and manage devices', icon: 'devices', path: '/devices', category: 'Navigation' },
+  { id: 'alerts', label: 'View Alerts', description: 'Check system alerts', icon: 'bell', path: '/alerts', category: 'Navigation' },
+  { id: 'scripts', label: 'Script Library', description: 'Manage and run scripts', icon: 'scripts', path: '/scripts', category: 'Navigation' },
+  { id: 'patches', label: 'Patch Manager', description: 'Manage patches and updates', icon: 'wrench', path: '/patches', category: 'Navigation' },
+  { id: 'automation', label: 'Automation Builder', description: 'Create automated tasks', icon: 'automation', path: '/automation', category: 'Navigation' },
+  { id: 'remote', label: 'Remote Desktop', description: 'Connect to a device remotely', icon: 'monitor', path: '/remote', category: 'Tools' },
+  { id: 'terminal', label: 'Open Terminal', description: 'Start a remote shell session', icon: 'terminal', path: '/terminal', category: 'Tools' },
+  { id: 'ai', label: 'AI Copilot', description: 'Ask AI for help', icon: 'ai', path: '/ai', category: 'Tools' },
+  { id: 'install', label: 'Deploy Agent', description: 'Install agent on new device', icon: 'install', path: '/install', category: 'Actions' },
+  { id: 'reports', label: 'Generate Report', description: 'Create system report', icon: 'reports', path: '/reports', category: 'Actions' },
+  { id: 'audit', label: 'Audit Log', description: 'View system audit trail', icon: 'clipboard', path: '/audit', category: 'Navigation' },
+  { id: 'users', label: 'Manage Users', description: 'User and role management', icon: 'users', path: '/users', category: 'Navigation' },
+  { id: 'settings', label: 'Settings', description: 'System configuration', icon: 'gear', path: '/settings', category: 'Navigation' },
+  { id: 'software', label: 'Software Manager', description: 'Manage installed software', icon: 'software', path: '/software', category: 'Navigation' },
+  { id: 'clients', label: 'Clients & Sites', description: 'Manage clients and sites', icon: 'clients', path: '/clients', category: 'Navigation' },
 ]
 
 const QuickActions = () => {
@@ -132,7 +155,7 @@ const QuickActions = () => {
                 i === selectedIndex ? 'bg-blue-600/20 text-white' : 'text-gray-300 hover:bg-gray-700/50'
               }`}
             >
-              <span className="text-lg w-8 text-center">{action.icon}</span>
+              <span className="text-lg w-8 text-center">{iconMap[action.icon] || action.icon}</span>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium">{action.label}</div>
                 <div className="text-xs text-gray-500">{action.description}</div>

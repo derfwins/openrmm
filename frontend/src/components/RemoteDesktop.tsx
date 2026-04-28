@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { IconEye, IconMonitor, IconClipboardList, IconLock, IconKeyboard, IconDoor, IconExpand, IconCompress } from './Icons'
 
 interface Props {
   agentId: string
@@ -55,6 +56,8 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   const [showClipboard, setShowClipboard] = useState(false)
   const [remoteClipboard, setRemoteClipboard] = useState('')
   const [localClipboard, setLocalClipboard] = useState('')
+  const [sessions, setSessions] = useState<Array<{session_id: number, session_name: string, state: string, username: string, is_console: boolean}>>([])
+  const [selectedSession, setSelectedSession] = useState<number>(-1)  // -1 = console/default
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
@@ -63,6 +66,12 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   const sessionIdRef = useRef<string>('')
   const turnCredsRef = useRef<TurnCredentials | null>(null)
   const remoteSizeRef = useRef({ width: 1920, height: 1080 })
+  const shouldReconnectRef = useRef(false)
+  const reconnectAttemptsRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [reconnecting, setReconnecting] = useState(false)
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
+  const manualDisconnectRef = useRef(false)
 
   // Connect: open signaling WS, get TURN creds, then let backend signal agent
   const connect = useCallback(async () => {
@@ -72,7 +81,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    const wsUrl = `${protocol}//${host}/ws/desktop/${agentId}/?token=${token}`
+    const wsUrl = `${protocol}//${host}/ws/desktop/${agentId}/?token=${token}&target_session=${selectedSession}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
@@ -91,7 +100,15 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             sessionIdRef.current = msg.session_id
             // Store TURN credentials for PeerConnection creation
             turnCredsRef.current = msg.turn || null
+            // Request session list from agent
+            ws.send(JSON.stringify({ type: 'list_sessions' }))
             // Now wait for webrtc_offer from agent
+            break
+          }
+
+          case 'list_sessions_result': {
+            const sessionList = msg.sessions || []
+            setSessions(sessionList)
             break
           }
 
@@ -138,7 +155,10 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
                 console.log('[RemoteDesktop] DataChannel open')
                 setConnected(true)
                 setConnecting(false)
+                setReconnecting(false)
                 setError(null)
+                reconnectAttemptsRef.current = 0
+                shouldReconnectRef.current = true
               }
 
               channel.onclose = () => {
@@ -174,10 +194,23 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
               if (state === 'connected') {
                 setConnected(true)
                 setConnecting(false)
-              } else if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                if (state === 'failed') {
+                setReconnecting(false)
+                reconnectAttemptsRef.current = 0
+                shouldReconnectRef.current = true
+              } else if (state === 'failed') {
+                setConnected(false)
+                pc.close()
+                if (shouldReconnectRef.current && !manualDisconnectRef.current) {
+                  scheduleReconnect()
+                } else {
                   setError('WebRTC connection failed')
                 }
+              } else if (state === 'disconnected') {
+                setConnected(false)
+                if (shouldReconnectRef.current && !manualDisconnectRef.current) {
+                  scheduleReconnect()
+                }
+              } else if (state === 'closed') {
                 setConnected(false)
               }
             }
@@ -268,17 +301,32 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       console.log('[RemoteDesktop] WS closed, code:', event.code, 'reason:', event.reason)
       setConnecting(false)
       setConnected(false)
-      if (event.code === 4003) setError('Agent is offline')
-      else if (event.code === 4004) setError('Agent not found')
-      else if (event.code === 4001) setError('Authentication failed')
-      else setError('Connection closed')
+      wsRef.current = null
+      // Auth errors — don't reconnect
+      const authError = [4001, 4003, 4004].includes(event.code)
+      if (authError) {
+        if (event.code === 4003) setError('Agent is offline')
+        else if (event.code === 4004) setError('Agent not found')
+        else setError('Authentication failed')
+        shouldReconnectRef.current = false
+        manualDisconnectRef.current = false
+      } else if (shouldReconnectRef.current && !manualDisconnectRef.current) {
+        // Auto-reconnect on non-auth disconnects
+        scheduleReconnect()
+      } else {
+        setError('Connection closed')
+      }
     }
 
     ws.onerror = () => {
       setConnecting(false)
-      setError('Connection failed')
+      if (shouldReconnectRef.current && !manualDisconnectRef.current) {
+        scheduleReconnect()
+      } else {
+        setError('Connection failed')
+      }
     }
-  }, [agentId, token])
+  }, [agentId, token, selectedSession])
 
   const cleanup = useCallback(() => {
     // Close DataChannel
@@ -299,9 +347,43 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     }
     setConnected(false)
     setConnecting(false)
+    setReconnecting(false)
   }, [])
 
+  const scheduleReconnect = useCallback(() => {
+    const maxAttempts = 10
+    const attempt = reconnectAttemptsRef.current + 1
+    if (attempt > maxAttempts) {
+      setError('Connection lost — click Connect to retry')
+      shouldReconnectRef.current = false
+      setReconnecting(false)
+      return
+    }
+    reconnectAttemptsRef.current = attempt
+    setReconnectAttempt(attempt)
+    setReconnecting(true)
+    setError(null)
+    // Exponential backoff: 2s, 4s, 8s, 16s, 30s cap
+    const delay = Math.min(2000 * Math.pow(2, attempt - 1), 30000)
+    console.log(`[RemoteDesktop] Reconnecting in ${delay}ms (attempt ${attempt}/${maxAttempts})`)
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null
+      if (shouldReconnectRef.current && !manualDisconnectRef.current) {
+        connect()
+      }
+    }, delay)
+  }, [connect])
+
   const disconnect = useCallback(() => {
+    manualDisconnectRef.current = true
+    shouldReconnectRef.current = false
+    reconnectAttemptsRef.current = 0
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    setReconnecting(false)
     cleanup()
   }, [cleanup])
 
@@ -479,12 +561,24 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
     return () => clearInterval(interval)
   }, [connected])
 
-  // Cleanup on unmount
+  // Cleanup on unmount + visibility change reconnect
   useEffect(() => {
+    // On tab becoming visible again, try reconnecting if we were connected before
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && shouldReconnectRef.current && !manualDisconnectRef.current && !connected && !connecting) {
+        console.log('[RemoteDesktop] Tab visible, attempting reconnect')
+        reconnectAttemptsRef.current = 0 // reset backoff on visibility change
+        connect()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      shouldReconnectRef.current = false
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       cleanup()
     }
-  }, [cleanup])
+  }, [cleanup, connect, connected, connecting])
 
   // Auto-connect
   useEffect(() => {
@@ -496,9 +590,9 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : connecting ? 'bg-yellow-500' : 'bg-gray-500'}`} />
+          <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : reconnecting ? 'bg-yellow-400 animate-pulse' : connecting ? 'bg-yellow-500' : 'bg-gray-500'}`} />
           <span className="text-sm text-gray-300">
-            {connected ? 'Connected' : connecting ? 'Connecting...' : 'Disconnected'}
+            {connected ? 'Connected' : reconnecting ? `Reconnecting... (attempt ${reconnectAttempt}/10)` : connecting ? 'Connecting...' : 'Disconnected'}
           </span>
           {connected && stats.fps > 0 && (
             <span className="text-xs text-gray-400">{stats.fps} FPS</span>
@@ -509,13 +603,38 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
           <span className="text-xs text-violet-400">WebRTC</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Session selector */}
+          {sessions.length > 1 && (
+            <select
+              value={selectedSession}
+              onChange={(e) => {
+                const newSession = parseInt(e.target.value)
+                setSelectedSession(newSession)
+                // Reconnect with new session target
+                cleanup()
+                setTimeout(() => {
+                  // Re-connect will use the new selectedSession via the WS URL
+                  connect()
+                }, 500)
+              }}
+              className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded border border-gray-600"
+              title="Select desktop session"
+            >
+              <option value={-1}>Console (Default)</option>
+              {sessions.filter(s => !s.is_console).map(s => (
+                <option key={s.session_id} value={s.session_id}>
+                  {s.session_name} ({s.username || 'N/A'}) - {s.state}
+                </option>
+              ))}
+            </select>
+          )}
           {/* View Only toggle */}
           <button
             onClick={() => setViewOnly(!viewOnly)}
             className={`px-2 py-1 text-xs rounded ${viewOnly ? 'bg-yellow-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title={viewOnly ? 'View only - no input sent' : 'Full control'}
           >
-            {viewOnly ? '👁 View Only' : '🖥 Control'}
+            {viewOnly ? <><IconEye size={14} className="inline -mt-0.5" /> View Only</> : <><IconMonitor size={14} className="inline -mt-0.5" /> Control</>}
           </button>
 
           {/* Clipboard toggle */}
@@ -524,7 +643,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             className={`px-2 py-1 text-xs rounded ${showClipboard ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title="Toggle clipboard panel"
           >
-            📋
+            <IconClipboardList size={14} />
           </button>
 
           {/* Quality selector */}
@@ -545,21 +664,21 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
               className="px-2 py-1 text-xs rounded bg-orange-600 text-white hover:bg-orange-500"
               title="Lock remote screen"
             >
-              🔒 Lock
+              <IconLock size={14} className="inline -mt-0.5" /> Lock
             </button>
             <button
               onClick={() => sendSas('sas')}
               className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-500"
               title="Send Ctrl+Alt+Del"
             >
-              ⌨️ Ctrl+Alt+Del
+              <IconKeyboard size={14} className="inline -mt-0.5" /> Ctrl+Alt+Del
             </button>
             <button
               onClick={() => sendSas('signout')}
               className="px-2 py-1 text-xs rounded bg-gray-600 text-white hover:bg-gray-500"
               title="Sign out remote user"
             >
-              🚪 Sign Out
+              <IconDoor size={14} className="inline -mt-0.5" /> Sign Out
             </button>
           </div>
 
@@ -569,7 +688,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
             className="px-2 py-1 text-xs bg-gray-700 text-gray-300 rounded hover:bg-gray-600"
             title="Fullscreen"
           >
-            {fullscreen ? '⬜' : '⬛'}
+            {fullscreen ? <IconCompress size={14} /> : <IconExpand size={14} />}
           </button>
 
           {connected ? (
