@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import apiService from '../services/apiService'
 import { useClient } from '../contexts/ClientContext'
-import { IconDesktop, IconSearch } from './Icons'
+import { IconDesktop, IconSearch, IconCheck, IconClose } from './Icons'
 
 
 const DeviceList = () => {
@@ -26,7 +26,7 @@ const DeviceList = () => {
   const [search, setSearch] = useState('')
 
 
-  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'overdue' | 'offline'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'online' | 'overdue' | 'offline'>('all')
   const [platformFilter, setPlatformFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'hostname' | 'status' | 'last_seen'>('hostname')
 
@@ -47,6 +47,30 @@ const DeviceList = () => {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleApprove = async (agent: any) => {
+    try {
+      await apiService.approveAgent(agent.agent_id || agent.id)
+      setAgents(prev => prev.map(a =>
+        (a.agent_id || a.id) === (agent.agent_id || agent.id)
+          ? { ...a, status: a.status === 'pending' ? 'online' : a.status, approved: true }
+          : a
+      ))
+    } catch (e) {
+      alert('Failed to approve agent: ' + e)
+    }
+  }
+
+  const handleDeny = async (agent: any) => {
+    const name = agent.hostname || agent.agent_id || 'this agent'
+    if (!confirm(`Deny and remove "${name}"?\n\nThis will reject the agent and remove it from the system.`)) return
+    try {
+      await apiService.denyAgent(agent.agent_id || agent.id)
+      setAgents(prev => prev.filter(a => (a.agent_id || a.id) !== (agent.agent_id || agent.id)))
+    } catch (e) {
+      alert('Failed to deny agent: ' + e)
     }
   }
 
@@ -71,6 +95,8 @@ const DeviceList = () => {
         result = result.filter(a => a.status === 'overdue' || a.status === 'warning')
       } else if (statusFilter === 'offline') {
         result = result.filter(a => a.status === 'offline' || a.status === 'error')
+      } else if (statusFilter === 'pending') {
+        result = result.filter(a => a.status === 'pending' || !a.approved)
       } else {
         result = result.filter(a => a.status === statusFilter)
       }
@@ -97,6 +123,7 @@ const DeviceList = () => {
   const onlineCount = agents.filter(a => a.status === 'online').length
   const overdueCount = agents.filter(a => a.status === 'overdue' || a.status === 'warning').length
   const offlineCount = agents.filter(a => a.status === 'offline' || a.status === 'error').length
+  const pendingCount = agents.filter(a => a.status === 'pending' || !a.approved).length
   const platforms = [...new Set(agents.map(a => a.plat).filter(Boolean))]
 
   if (loading) {
@@ -137,7 +164,7 @@ const DeviceList = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Devices</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-            {agents.length} total · {onlineCount} online · {overdueCount} overdue · {offlineCount} offline
+            {agents.length} total · {onlineCount} online · {overdueCount} overdue · {offlineCount} offline{pendingCount > 0 ? ` · ${pendingCount} pending` : ''}
           </p>
         </div>
         <button
@@ -164,7 +191,7 @@ const DeviceList = () => {
 
         {/* Status Filter */}
         <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-          {(['all', 'online', 'overdue', 'offline'] as const).map(s => (
+          {(['all', 'pending', 'online', 'overdue', 'offline'] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
@@ -174,7 +201,7 @@ const DeviceList = () => {
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
-              {s === 'all' ? `${agents.length}` : s === 'online' ? `🟢 ${onlineCount}` : s === 'overdue' ? `🟡 ${overdueCount}` : `🔴 ${offlineCount}`}
+              {s === 'all' ? `${agents.length}` : s === 'pending' ? `⏳ ${pendingCount}` : s === 'online' ? `🟢 ${onlineCount}` : s === 'overdue' ? `🟡 ${overdueCount}` : `🔴 ${offlineCount}`}
             </button>
           ))}
         </div>
@@ -242,10 +269,18 @@ const DeviceList = () => {
                 </td>
               </tr>
             ) : (
-              filtered.map(agent => (
-                <tr key={agent.agent_id || agent.id} className="table-row-hover hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+              filtered.map(agent => {
+                const isPending = agent.status === 'pending' || !agent.approved
+                return (
+                <tr key={agent.agent_id || agent.id} className={`table-row-hover hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors ${isPending ? 'border-l-4 border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/10' : ''}`}>
                   <td className="px-4 py-3">
-                    <div className={`w-2.5 h-2.5 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : agent.status === 'overdue' || agent.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                    {isPending ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        ⏳ Pending
+                      </span>
+                    ) : (
+                      <div className={`w-2.5 h-2.5 rounded-full ${agent.status === 'online' ? 'bg-green-500 status-online' : agent.status === 'overdue' || agent.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Link
@@ -268,24 +303,43 @@ const DeviceList = () => {
                     {agent.last_seen ? timeAgo(agent.last_seen) : '—'}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Link
-                        to={`/device/${agent.agent_id || agent.id}`}
-                        className="text-xs text-blue-500 hover:text-blue-600 font-medium"
-                      >
-                        Manage →
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(agent)}
-                        className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Delete device"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                      </button>
-                    </div>
+                    {isPending ? (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleApprove(agent)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-500 transition-colors"
+                          title="Approve agent"
+                        >
+                          <IconCheck size={12} /> Approve
+                        </button>
+                        <button
+                          onClick={() => handleDeny(agent)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded bg-red-600 text-white hover:bg-red-500 transition-colors"
+                          title="Deny agent"
+                        >
+                          <IconClose size={12} /> Deny
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-2">
+                        <Link
+                          to={`/device/${agent.agent_id || agent.id}`}
+                          className="text-xs text-blue-500 hover:text-blue-600 font-medium"
+                        >
+                          Manage →
+                        </Link>
+                        <button
+                          onClick={() => handleDelete(agent)}
+                          className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          title="Delete device"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))
+              )})
             )}
           </tbody>
         </table>

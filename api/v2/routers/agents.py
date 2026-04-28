@@ -188,14 +188,28 @@ def _build_linux_installer(api_url: str, client_id: int, site_id: int, agent_typ
     return "\n".join(lines)
 
 
+@router.get("/pending-count/")
+async def pending_agent_count(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return count of agents where approved=False."""
+    result = await db.execute(select(func.count()).where(Agent.approved == False))
+    count = result.scalar_one()
+    return {"count": count}
+
+
 @router.get("/")
 async def list_agents(
     client_id: Optional[int] = Query(None),
     site_id: Optional[int] = Query(None),
+    pending_only: bool = Query(False),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Agent)
+    if pending_only:
+        stmt = stmt.where(Agent.approved == False)
     if site_id:
         stmt = stmt.where(Agent.site_id == site_id)
     elif client_id:
@@ -212,7 +226,7 @@ async def list_agents(
             "plat": a.plat, "goarch": a.goarch,
             "status": a.status, "last_seen": a.last_seen.isoformat() if a.last_seen else None,
             "monitoring_type": a.monitoring_type, "description": a.description,
-            "is_maintenance": a.is_maintenance,
+            "is_maintenance": a.is_maintenance, "approved": a.approved,
             "cpu_model": a.cpu_model, "cpu_cores": a.cpu_cores,
             "total_ram": a.total_ram, "os_name": a.os_name,
             "os_version": a.os_version, "public_ip": a.public_ip,
@@ -252,7 +266,7 @@ async def get_agent(
         "plat": agent.plat, "goarch": agent.goarch,
         "status": agent.status, "last_seen": agent.last_seen.isoformat() if agent.last_seen else None,
         "monitoring_type": agent.monitoring_type, "description": agent.description,
-        "is_maintenance": agent.is_maintenance,
+        "is_maintenance": agent.is_maintenance, "approved": agent.approved,
         "cpu_model": agent.cpu_model, "cpu_cores": agent.cpu_cores,
         "total_ram": agent.total_ram, "os_name": agent.os_name,
         "os_version": agent.os_version, "public_ip": agent.public_ip,
@@ -362,19 +376,28 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
             # Same machine re-registered with new agent_id — update the existing record
             logger.info(f"Agent {req.agent_id} matches existing hostname '{hostname}' (existing agent_id={existing.agent_id}), updating")
             existing.agent_id = req.agent_id
-            existing.status = "online"
+            # Keep existing approval status
+            if existing.approved:
+                existing.status = "online"
+            else:
+                existing.status = "pending"
             agent = existing
         else:
-            # Auto-register new agent
+            # Auto-register new agent as pending (not approved)
             agent = Agent(
                 agent_id=req.agent_id,
                 hostname=hostname,
-                status="online",
+                status="pending",
+                approved=False,
                 first_seen=datetime.now(timezone.utc),
             )
             db.add(agent)
     else:
-        agent.status = "online"
+        # Existing agent heartbeat
+        if agent.approved:
+            agent.status = "online"
+        else:
+            agent.status = "pending"
 
     # Update fields
     now = datetime.now(timezone.utc)
@@ -396,9 +419,7 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
         agent.mesh_node_id = mesh_val
 
     await db.commit()
-
-    # Auto-update: tell agent if newer version is available
-    response = {"status": "ok"}
+    response = {"status": "ok", "approved": bool(agent.approved)}
     try:
         import os
         agent_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "agent", "openrmm-agent.py"))
@@ -415,6 +436,48 @@ async def agent_heartbeat(req: HeartbeatRequest, db: AsyncSession = Depends(get_
         pass
 
     return response
+
+
+@router.post("/{agent_id}/approve/")
+async def approve_agent(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Approve a pending agent — sets approved=True and status='online'."""
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+            agent = result.scalar_one_or_none()
+        except ValueError:
+            pass
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    agent.approved = True
+    agent.status = "online"
+    await db.commit()
+    await db.refresh(agent)
+    return {
+        "id": agent.id, "hostname": agent.hostname, "agent_id": agent.agent_id,
+        "site_id": agent.site_id, "status": agent.status, "approved": agent.approved,
+    }
+
+
+@router.post("/{agent_id}/deny/")
+async def deny_agent(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Deny a pending agent — deletes the agent from the database."""
+    result = await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == int(agent_id)))
+            agent = result.scalar_one_or_none()
+        except ValueError:
+            pass
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    await db.delete(agent)
+    await db.commit()
+    return {"status": "deleted"}
+
 
 @router.post("/{agent_id}/restart/")
 async def restart_agent(agent_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

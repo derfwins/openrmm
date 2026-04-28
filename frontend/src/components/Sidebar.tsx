@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useLocation, Link } from 'react-router-dom'
 import { useClient } from '../contexts/ClientContext'
 import {
@@ -7,11 +7,13 @@ import {
   IconScripts, IconUsers, IconSettings, IconClients, IconMonitor,
   IconChevronLeft, IconChevronRight, IconLogout
 } from './Icons'
+import apiService from '../services/apiService'
 
 interface NavItem {
   icon: ReactNode
   label: string
   path: string
+  badge?: number
 }
 
 interface NavSection {
@@ -96,15 +98,31 @@ function ClientSelector({ collapsed }: { collapsed: boolean }) {
 
 const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
   const location = useLocation()
   const { selectedClient } = useClient()
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const data = await apiService.getPendingCount()
+      setPendingCount(data.count ?? 0)
+    } catch {
+      // Silently ignore — badge just won't show if API unavailable
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchPendingCount()
+    const interval = setInterval(fetchPendingCount, 30000)
+    return () => clearInterval(interval)
+  }, [fetchPendingCount])
 
   const clientNav: NavSection[] = [
     {
       label: selectedClient?.name || 'Client',
       items: [
         { icon: <IconDashboard size={18} />, label: 'Dashboard', path: '/dashboard' },
-        { icon: <IconDevices size={18} />, label: 'Devices', path: '/devices' },
+        { icon: <IconDevices size={18} />, label: 'Devices', path: '/devices', badge: pendingCount > 0 ? pendingCount : undefined },
         { icon: <IconMonitor size={18} />, label: 'Monitoring', path: '/monitoring' },
         { icon: <IconAlerts size={18} />, label: 'Alerts', path: '/alerts' },
         { icon: <IconScripts size={18} />, label: 'Scripts', path: '/scripts' },
@@ -175,8 +193,13 @@ const Sidebar = () => {
                         : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'
                     }`}
                   >
-                    <span className={`shrink-0 ${active ? 'drop-shadow-[0_0_6px_rgba(59,130,246,0.5)]' : ''}`}>
+                    <span className={`shrink-0 relative ${active ? 'drop-shadow-[0_0_6px_rgba(59,130,246,0.5)]' : ''}`}>
                       {item.icon}
+                      {item.badge && item.badge > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-bold text-white bg-red-500 rounded-full ring-2 ring-gray-950">
+                          {item.badge > 99 ? '99+' : item.badge}
+                        </span>
+                      )}
                     </span>
                     {!collapsed && <span>{item.label}</span>}
                   </Link>

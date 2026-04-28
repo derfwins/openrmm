@@ -31,6 +31,7 @@ class Agent(Base):
     
     # Settings
     is_maintenance = Column(Boolean, default=False, server_default="false")
+    approved = Column(Boolean, default=False, server_default="false")
     block_policy_inheritance = Column(Boolean, default=False, server_default="false")
 
     # System info (updated by agent)

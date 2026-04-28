@@ -384,6 +384,33 @@ export const apiService = {
     return response.json()
   },
 
+  // Agent Approval
+  async approveAgent(agentId: string) {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/approve/`, {
+      method: 'POST',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to approve agent')
+    return response.json()
+  },
+
+  async denyAgent(agentId: string) {
+    const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/deny/`, {
+      method: 'POST',
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to deny agent')
+    return response.json()
+  },
+
+  async getPendingCount(): Promise<{ count: number }> {
+    const response = await authFetch(`${API_BASE_URL}/agents/pending-count/`, {
+      headers: authHeaders(),
+    })
+    if (!response.ok) throw new Error('Failed to fetch pending count')
+    return response.json()
+  },
+
   async deleteAgent(agentId: string) {
     const response = await authFetch(`${API_BASE_URL}/agents/${agentId}/`, {
       method: 'DELETE',

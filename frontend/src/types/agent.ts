@@ -6,7 +6,8 @@ export interface AgentInfo {
   version: string
   plat: string // windows, linux, darwin
   goarch: string // amd64, arm64
-  status: 'online' | 'offline' | 'overdue' | 'error'
+  status: 'pending' | 'online' | 'offline' | 'overdue' | 'error'
+  approved: boolean
   last_seen: string | null
   first_seen: string
   monitoring_type: 'server' | 'workstation'
