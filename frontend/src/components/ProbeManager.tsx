@@ -38,14 +38,14 @@ export default function ProbeManager() {
           <div>
             <div className="text-xs font-medium text-gray-300 mb-1">Windows (PowerShell as Admin)</div>
             <pre className="text-xs bg-black/30 border border-white/[0.06] rounded-lg p-3 text-emerald-400 overflow-x-auto">
-{`Invoke-WebRequest -Uri "https://rmmapp.derfwins.com/probe/install.ps1" -OutFile install.ps1
-./install.ps1 -Server https://rmmapp.derfwins.com -SiteId 1`}
+{`Invoke-WebRequest -Uri "https://openrmm.derfwins.com/probe/install.ps1" -OutFile install.ps1
+./install.ps1 -Server https://openrmm.derfwins.com -SiteId 1`}
             </pre>
           </div>
           <div>
             <div className="text-xs font-medium text-gray-300 mb-1">Linux (Bash)</div>
             <pre className="text-xs bg-black/30 border border-white/[0.06] rounded-lg p-3 text-emerald-400 overflow-x-auto">
-{`curl -sSL https://rmmapp.derfwins.com/probe/install.sh | bash -s -- -s https://rmmapp.derfwins.com -c 1`}
+{`curl -sSL https://openrmm.derfwins.com/probe/install.sh | bash -s -- -s https://openrmm.derfwins.com -c 1`}
             </pre>
           </div>
           <button onClick={() => setShowDeploy(false)} className="text-xs text-gray-400 hover:text-white">Close</button>

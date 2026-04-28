@@ -105,7 +105,7 @@ async def get_install_command(
             f'$InstallDir = "C:\\Program Files\\RustDesk"\n'
             f'New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null\n\n'
             f'Write-Host "Downloading RustDesk..." -ForegroundColor Cyan\n'
-            f'Invoke-WebRequest -Uri "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe" '
+            f'Invoke-WebRequest -Uri "https://openrmm.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe" '
             f'-OutFile "$env:TEMP\\rustdesk-setup.exe" -UseBasicParsing\n\n'
             f'Write-Host "Installing RustDesk..." -ForegroundColor Cyan\n'
             f'Start-Process -FilePath "$env:TEMP\\rustdesk-setup.exe" '
@@ -127,7 +127,7 @@ async def get_install_command(
             '#!/bin/bash\n'
             '# Install RustDesk Agent for OpenRMM\n\n'
             'echo "Downloading RustDesk..."\n'
-            f'curl -sL https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb -o /tmp/rustdesk.deb\n'
+            f'curl -sL https://openrmm.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb -o /tmp/rustdesk.deb\n'
             'echo "Installing..."\n'
             f'sudo dpkg -i /tmp/rustdesk.deb || sudo apt-get install -f -y\n\n'
             'echo "Configuring server..."\n'
@@ -253,7 +253,7 @@ if ($rd) {{
     Log 'RustDesk not found, downloading installer...'
     $tmpFile = "$env:TEMP\\rustdesk-setup.exe"
     try {{
-        Invoke-WebRequest -Uri 'https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe' -OutFile $tmpFile -UseBasicParsing
+        Invoke-WebRequest -Uri 'https://openrmm.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe' -OutFile $tmpFile -UseBasicParsing
         Log "Downloaded ($(Get-Item $tmpFile).Length bytes)"
     }} catch {{
         Log "ERROR: Download failed: $($_.Exception.Message)"; exit 1
@@ -489,9 +489,9 @@ async def download_agent(
 ):
     """Redirect to the latest RustDesk client download."""
     downloads = {
-        "windows": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe",
-        "linux": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb",
-        "macos": "https://rmmapp.derfwins.com/downloads/rustdesk-1.4.6.dmg",
+        "windows": "https://openrmm.derfwins.com/downloads/rustdesk-1.4.6-x86_64.exe",
+        "linux": "https://openrmm.derfwins.com/downloads/rustdesk-1.4.6-x86_64.deb",
+        "macos": "https://openrmm.derfwins.com/downloads/rustdesk-1.4.6.dmg",
     }
     url = downloads.get(os_type.lower(), downloads["windows"])
     return RedirectResponse(url=url)

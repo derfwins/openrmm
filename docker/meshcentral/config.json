@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json",
   "settings": {
-    "cert": "rmmapp.derfwins.com",
+    "cert": "openrmm.derfwins.com",
     "port": 4430,
     "aliasPort": 443,
     "redirPort": 800,
@@ -21,7 +21,7 @@
       "agentInviteCodes": true,
       "NewAccounts": false,
       "localSessionRecording": true,
-      "certUrl": "rmmapp.derfwins.com"
+      "certUrl": "openrmm.derfwins.com"
     }
   }
 }

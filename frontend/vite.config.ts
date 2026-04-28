@@ -9,10 +9,10 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     allowedHosts: true,
-    origin: 'https://rmmapp.derfwins.com',
+    origin: 'https://openrmm.derfwins.com',
     hmr: {
       protocol: 'wss',
-      host: 'rmmapp.derfwins.com',
+      host: 'openrmm.derfwins.com',
       clientPort: 443,
     },
     proxy: {

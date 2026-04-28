@@ -19,7 +19,7 @@ router = APIRouter(prefix="/mesh/api")
 logger = logging.getLogger(__name__)
 
 # MeshCentral configuration from environment
-MESH_SERVER_URL = os.environ.get("MESH_SERVER_URL", "https://rmmapp.derfwins.com")
+MESH_SERVER_URL = os.environ.get("MESH_SERVER_URL", "https://openrmm.derfwins.com")
 MESH_INTERNAL_URL = os.environ.get("MESH_INTERNAL_URL", "http://meshcentral:4430")
 MESH_LOGIN_TOKEN = os.environ.get("MESH_LOGIN_TOKEN_KEY", "")
 MESH_MESH_ID = os.environ.get("MESH_MESH_ID", "")
@@ -162,7 +162,7 @@ def get_mesh_config():
         "server_id": server_id,
         "mesh_name": "Managed Devices",
         "mesh_type": 2,
-        "mesh_server": f"wss://rmmapp.derfwins.com/meshagents",
+        "mesh_server": f"wss://openrmm.derfwins.com/meshagents",
     }
 
 
