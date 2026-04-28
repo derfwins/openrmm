@@ -2429,29 +2429,47 @@ async def ws_agent_connect(server: str, agent_id: str):
 
                     elif msg_type == "uninstall_agent":
                         log.info("Uninstall command received, removing agent...")
+                        global running
+                        running = False  # Stop the main reconnect loop
+                        # Close WebSocket cleanly so server knows we're gone
+                        try:
+                            await ws.close(code=1001, reason="uninstall")
+                        except Exception:
+                            pass
                         if platform.system() == "Windows":
-                            # Remove scheduled task, then delete install dir
-                            import subprocess
+                            # Remove scheduled task first
                             try:
                                 subprocess.run(["schtasks", "/Delete", "/TN", "OpenRMM-Agent", "/F"], capture_output=True, timeout=10)
-                            except Exception:
-                                pass
-                            # Self-delete in background
+                                log.info("Scheduled task removed")
+                            except Exception as e:
+                                log.error(f"Failed to remove scheduled task: {e}")
+                            # Self-delete: remove install dir contents then the dir itself
+                            # Avoids rmdir /s /q which is dangerous if path is wrong
                             install_dir = os.path.dirname(os.path.abspath(__file__))
-                            subprocess.Popen(
-                                f'ping -n 3 127.0.0.1 >nul & rmdir /s /q "{install_dir}"',
-                                shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                            # Use a PowerShell one-liner for safer recursive deletion
+                            # Waits 3s for the agent process to exit, then removes files
+                            cleanup_cmd = (
+                                f'powershell -NoProfile -Command "'
+                                f'Start-Sleep -Seconds 3; '
+                                f'Remove-Item -Path \'{install_dir}\' -Recurse -Force -ErrorAction SilentlyContinue"'
                             )
+                            log.info(f"Scheduling cleanup of {install_dir} in 3 seconds")
+                            subprocess.Popen(cleanup_cmd, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                         else:
-                            # Linux: stop service, remove files
+                            # Linux: stop and disable service, then remove files
                             try:
                                 subprocess.run(["systemctl", "stop", "openrmm-agent"], capture_output=True, timeout=10)
                                 subprocess.run(["systemctl", "disable", "openrmm-agent"], capture_output=True, timeout=10)
-                            except Exception:
-                                pass
+                                log.info("Systemd service stopped and disabled")
+                            except Exception as e:
+                                log.error(f"Failed to stop service: {e}")
                             install_dir = os.path.dirname(os.path.abspath(__file__))
-                            subprocess.Popen(f'sleep 2 && rm -rf "{install_dir}" /etc/systemd/system/openrmm-agent.service', shell=True)
-                        sys.exit(1)  # Non-zero exit so scheduled task restart policy kicks in
+                            subprocess.Popen(
+                                f'sleep 3 && rm -rf "{install_dir}" /etc/systemd/system/openrmm-agent.service',
+                                shell=True
+                            )
+                        log.info("Agent uninstall complete, exiting")
+                        sys.exit(0)  # Clean exit code — scheduled task won't restart on exit 0
 
                     elif msg_type == "resize":
                         session_id = data.get("session_id")

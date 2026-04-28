@@ -29,7 +29,10 @@ const InstallAgent = () => {
 
   const token = localStorage.getItem('token')
   // Agent install scripts must use the public URL so remote machines can reach the server
-  const apiUrl = 'https://openrmm.derfwins.com'
+  // Dynamically detect the API URL based on the current environment
+  const apiUrl = window.location.hostname.includes('dev')
+    ? 'https://openrmm-dev.derfwins.com'
+    : 'https://openrmm.derfwins.com'
 
   const headers = {
     'Content-Type': 'application/json',
@@ -280,7 +283,7 @@ const InstallAgent = () => {
 
         <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
           <p className="text-xs text-yellow-700 dark:text-yellow-400">
-            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">openrmm.derfwins.com</code> (the RMM server). For production, use HTTPS and configure proper DNS.
+            ⚠️ The target machine must be able to reach <code className="px-1 bg-yellow-500/10 rounded">{apiUrl.replace('https://', '')}</code> (the RMM server). For production, use HTTPS and configure proper DNS.
           </p>
         </div>
       </div>

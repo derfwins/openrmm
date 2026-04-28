@@ -579,19 +579,29 @@ async def delete_agent(
         raise HTTPException(404, detail="Agent not found")
 
     # If uninstall requested, send uninstall command to agent via WebSocket
+    uninstall_sent = False
     if uninstall:
         from v2.routers.ws_state import agent_connections
         agent_ws = agent_connections.get(agent.agent_id)
         if agent_ws:
             try:
                 await agent_ws.send_json({"type": "uninstall_agent"})
+                uninstall_sent = True
             except Exception:
-                pass  # Best effort — agent may not be connected
+                pass
+        if not uninstall_sent:
+            raise HTTPException(
+                400,
+                detail="Agent is offline — cannot send uninstall command. Delete without ?uninstall=true or retry when agent is connected.",
+            )
 
     # Delete from database
     await db.delete(agent)
     await db.commit()
-    return {"status": "ok", "message": "Agent deleted" + (" and uninstall command sent" if uninstall else "")}
+    message = "Agent deleted"
+    if uninstall_sent:
+        message += " and uninstall command sent"
+    return {"status": "ok", "message": message}
 
 
 @router.post("/run-command/")
