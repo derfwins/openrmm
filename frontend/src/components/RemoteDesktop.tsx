@@ -565,7 +565,7 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
   useEffect(() => {
     // On tab becoming visible again, try reconnecting if we were connected before
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && shouldReconnectRef.current && !manualDisconnectRef.current && !connected && !connecting) {
+      if (document.visibilityState === 'visible' && shouldReconnectRef.current && !manualDisconnectRef.current) {
         console.log('[RemoteDesktop] Tab visible, attempting reconnect')
         reconnectAttemptsRef.current = 0 // reset backoff on visibility change
         connect()
@@ -578,7 +578,8 @@ const RemoteDesktop = ({ agentId, token, onClose }: Props) => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       cleanup()
     }
-  }, [cleanup, connect, connected, connecting])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- must only run on mount/unmount
+  }, [])
 
   // Auto-connect
   useEffect(() => {
