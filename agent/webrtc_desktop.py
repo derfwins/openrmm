@@ -2146,6 +2146,7 @@ class WebRTCDesktopSession:
         self.video_track = None
         self.input_channel = None
         self._target_session = target_session
+        self._input_helper_pid = None
         self.capture = ScreenCapture(target_session=target_session)
         self._running = False
 
@@ -2364,6 +2365,7 @@ class WebRTCDesktopSession:
     async def stop(self):
         """Clean up WebRTC session."""
         self._running = False
+        self._kill_input_helper()
         if self.video_track:
             self.video_track.stop()
             self.video_track = None
@@ -2465,8 +2467,12 @@ class WebRTCDesktopSession:
             return False
 
     def _launch_input_helper(self, target_session: int = -1):
-        """Launch input injection helper in Session 1 via CreateProcessAsUserW.
-        Uses named pipe \\\\.\\pipe\\openrmm_input for communication.
+        """Launch input injection helper as SYSTEM in the interactive session.
+        
+        The helper must run as SYSTEM to access the Winlogon (lock screen) desktop.
+        We duplicate the current process token (which is SYSTEM) and set its session
+        to the interactive session. This gives the helper SYSTEM access to all
+        desktops while running in the correct session for SendInput.
         """
         if sys.platform != "win32":
             return False
@@ -2475,95 +2481,126 @@ class WebRTCDesktopSession:
         from ctypes import wintypes
         
         kernel32 = ctypes.windll.kernel32
-        wtsapi32 = ctypes.windll.wtsapi32
         advapi32 = ctypes.windll.advapi32
+        user32 = ctypes.windll.user32
         
-        hUserToken = wintypes.HANDLE()
-        found_session = None
-        
-        if target_session >= 0:
-            # Use the explicitly specified session
-            if wtsapi32.WTSQueryUserToken(target_session, ctypes.byref(hUserToken)):
-                found_session = target_session
-                log.info(f"Input helper: WTSQueryUserToken({target_session}) succeeded (explicit)")
-            else:
-                err = kernel32.GetLastError()
-                log.error(f"Input helper: WTSQueryUserToken({target_session}) failed: {err}")
-        else:
-            for sid in [1, 2, 3, 4, 5]:
-                if wtsapi32.WTSQueryUserToken(sid, ctypes.byref(hUserToken)):
-                    found_session = sid
-                    log.info(f"Input helper: WTSQueryUserToken({sid}) succeeded")
-                    break
-            if found_session is None:
-                console = kernel32.WTSGetActiveConsoleSessionId()
-                if console not in [0, 0xFFFFFFFF] and wtsapi32.WTSQueryUserToken(console, ctypes.byref(hUserToken)):
-                    found_session = console
-                    log.info(f"Input helper: WTSQueryUserToken(console={console}) succeeded")
-        if found_session is None:
-            log.error("Input helper: WTSQueryUserToken failed for all sessions")
-            return False
+        # Kill any existing input helper process first
+        self._kill_input_helper()
         
         try:
-            hDupToken = wintypes.HANDLE()
-            if not advapi32.DuplicateTokenEx(
-                hUserToken, 0x000F00FF, None, 3, 1,
-                ctypes.byref(hDupToken)
+            # Get current process token (SYSTEM)
+            current_token = wintypes.HANDLE()
+            if not advapi32.OpenProcessToken(
+                kernel32.GetCurrentProcess(),
+                0x000F00FF,  # MAXIMUM_ALLOWED
+                ctypes.byref(current_token)
             ):
-                log.warning("Input helper: DuplicateTokenEx failed")
+                log.warning("Input helper: OpenProcessToken failed")
                 return False
             
             try:
-                script_path = r"C:\Program Files\OpenRMM\input_helper.py"
-                session_arg = target_session if target_session >= 0 else 0
-                cmdline = f'"{sys.executable.replace("python.exe", "pythonw.exe")}" "{script_path}" --session {session_arg}'
-                
-                class SIW(ctypes.Structure):
-                    _fields_ = [
-                        ("cb", ctypes.c_ulong), ("lpReserved", ctypes.c_wchar_p),
-                        ("lpDesktop", ctypes.c_wchar_p), ("lpTitle", ctypes.c_wchar_p),
-                        ("dwX", ctypes.c_ulong), ("dwY", ctypes.c_ulong),
-                        ("dwXSize", ctypes.c_ulong), ("dwYSize", ctypes.c_ulong),
-                        ("dwXCountChars", ctypes.c_ulong), ("dwYCountChars", ctypes.c_ulong),
-                        ("dwFillAttribute", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
-                        ("wShowWindow", ctypes.c_ushort), ("cbReserved2", ctypes.c_ushort),
-                        ("lpReserved2", ctypes.POINTER(ctypes.c_byte)),
-                        ("hStdInput", ctypes.c_void_p), ("hStdOutput", ctypes.c_void_p),
-                        ("hStdError", ctypes.c_void_p),
-                    ]
-                
-                class PI(ctypes.Structure):
-                    _fields_ = [
-                        ("hProcess", ctypes.c_void_p), ("hThread", ctypes.c_void_p),
-                        ("dwProcessId", ctypes.c_ulong), ("dwThreadId", ctypes.c_ulong),
-                    ]
-                
-                si = SIW()
-                si.cb = ctypes.sizeof(SIW)
-                si.lpDesktop = "WinSta0\\Default"
-                si.wShowWindow = 0
-                
-                pi = PI()
-                
-                if not advapi32.CreateProcessAsUserW(
-                    hDupToken, None, cmdline, None, None,
-                    False, 0x08000000, None, None,
-                    ctypes.byref(si), ctypes.byref(pi)
+                # Duplicate as primary token with SecurityDelegation
+                dup_token = wintypes.HANDLE()
+                if not advapi32.DuplicateTokenEx(
+                    current_token, 0x000F00FF, None, 3, 1,
+                    ctypes.byref(dup_token)
                 ):
-                    err = ctypes.GetLastError()
-                    log.warning(f"Input helper: CreateProcessAsUserW failed: error {err}")
+                    err = kernel32.GetLastError()
+                    log.warning(f"Input helper: DuplicateTokenEx failed: {err}")
                     return False
                 
-                kernel32.CloseHandle(pi.hProcess)
-                kernel32.CloseHandle(pi.hThread)
-                self._input_helper_pid = pi.dwProcessId
-                log.warning(f"Input helper launched in Session 1: PID={pi.dwProcessId}")
-                return True
-                
+                try:
+                    # Set the token's session to the interactive session
+                    console_session = kernel32.WTSGetActiveConsoleSessionId()
+                    if target_session >= 0:
+                        console_session = target_session
+                    
+                    if not advapi32.SetTokenInformation(
+                        dup_token, 0,  # TokenSessionId = 0
+                        ctypes.byref(ctypes.c_ulong(console_session)),
+                        ctypes.sizeof(ctypes.c_ulong)
+                    ):
+                        err = kernel32.GetLastError()
+                        log.warning(f"Input helper: SetTokenInformation(session={console_session}) failed: {err}")
+                        return False
+                    
+                    log.info(f"Input helper: token set to session {console_session}")
+                    
+                    script_path = r"C:\Program Files\OpenRMM\input_helper.py"
+                    session_arg = console_session
+                    pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+                    cmdline = f'"{pythonw}" "{script_path}" --session {session_arg}'
+                    
+                    class SIW(ctypes.Structure):
+                        _fields_ = [
+                            ("cb", ctypes.c_ulong), ("lpReserved", ctypes.c_wchar_p),
+                            ("lpDesktop", ctypes.c_wchar_p), ("lpTitle", ctypes.c_wchar_p),
+                            ("dwX", ctypes.c_ulong), ("dwY", ctypes.c_ulong),
+                            ("dwXSize", ctypes.c_ulong), ("dwYSize", ctypes.c_ulong),
+                            ("dwXCountChars", ctypes.c_ulong), ("dwYCountChars", ctypes.c_ulong),
+                            ("dwFillAttribute", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
+                            ("wShowWindow", ctypes.c_ushort), ("cbReserved2", ctypes.c_ushort),
+                            ("lpReserved2", ctypes.POINTER(ctypes.c_byte)),
+                            ("hStdInput", ctypes.c_void_p), ("hStdOutput", ctypes.c_void_p),
+                            ("hStdError", ctypes.c_void_p),
+                        ]
+                    
+                    class PI(ctypes.Structure):
+                        _fields_ = [
+                            ("hProcess", ctypes.c_void_p), ("hThread", ctypes.c_void_p),
+                            ("dwProcessId", ctypes.c_ulong), ("dwThreadId", ctypes.c_ulong),
+                        ]
+                    
+                    si = SIW()
+                    si.cb = ctypes.sizeof(SIW)
+                    si.lpDesktop = "WinSta0"
+                    si.wShowWindow = 0
+                    
+                    pi = PI()
+                    
+                    CREATE_NO_WINDOW = 0x08000000
+                    CREATE_UNICODE_ENVIRONMENT = 0x00000400
+                    
+                    if not advapi32.CreateProcessAsUserW(
+                        dup_token, None, cmdline, None, None,
+                        False, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                        None, None,
+                        ctypes.byref(si), ctypes.byref(pi)
+                    ):
+                        err = kernel32.GetLastError()
+                        log.warning(f"Input helper: CreateProcessAsUserW failed: error {err}")
+                        return False
+                    
+                    kernel32.CloseHandle(pi.hThread)
+                    kernel32.CloseHandle(pi.hProcess)
+                    self._input_helper_pid = pi.dwProcessId
+                    log.info(f"Input helper launched as SYSTEM in session {console_session}: PID={pi.dwProcessId}")
+                    return True
+                    
+                finally:
+                    kernel32.CloseHandle(dup_token)
             finally:
-                kernel32.CloseHandle(hDupToken)
-        finally:
-            kernel32.CloseHandle(hUserToken)
+                kernel32.CloseHandle(current_token)
+        except Exception as e:
+            log.error(f"Input helper launch exception: {e}")
+            return False
+    
+    def _kill_input_helper(self):
+        """Kill any existing input helper process."""
+        if not self._input_helper_pid:
+            return
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_TERMINATE = 0x0001
+            h = kernel32.OpenProcess(PROCESS_TERMINATE, False, self._input_helper_pid)
+            if h:
+                kernel32.TerminateProcess(h, 0)
+                kernel32.CloseHandle(h)
+                log.info(f"Killed input helper PID={self._input_helper_pid}")
+        except Exception:
+            pass
+        self._input_helper_pid = None
 
     def _inject_mouse(self, event: dict):
         """Inject mouse events via SendInput (Windows)."""
