@@ -106,12 +106,16 @@ def inject_sas(event):
     if action == "lock":
         user32.LockWorkStation()
     elif action == "sas":
-        # Try sas.dll EventCreateSAS (Win10+), fall back to LockWorkStation
+        # SendSAS(FALSE) from sas.dll sends Ctrl+Alt+Del as SYSTEM
+        # Do NOT fall back to LockWorkStation — that locks instead of SAS
         try:
-            sas_dll = ctypes.windll.sas
-            sas_dll.EventCreateSAS()
-        except Exception:
-            user32.LockWorkStation()
+            sas_dll = ctypes.WinDLL("sas.dll")
+            sas_dll.SendSAS.argtypes = [ctypes.c_int]
+            sas_dll.SendSAS.restype = ctypes.c_int
+            result = sas_dll.SendSAS(0)  # FALSE = send as service (SYSTEM)
+            log(f"SendSAS returned: {result}")
+        except Exception as e:
+            log(f"SendSAS failed: {e}")
     elif action == "signout":
         advapi32.ExitWindowsEx(0, 0)  # EWX_LOGOFF = 0
 
